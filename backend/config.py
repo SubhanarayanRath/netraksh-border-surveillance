@@ -1,0 +1,62 @@
+"""
+NETRAKSH Backend — Application settings loaded from environment / .env file.
+All secrets come from environment variables. No hardcoded credentials.
+"""
+import os
+from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # --- Server ---
+    SERVER_HOST: str = "0.0.0.0"
+    SERVER_PORT: int = 8443
+    DEBUG: bool = False
+    LOG_LEVEL: str = "INFO"
+    AUDIT_LOG_ENABLED: bool = True
+
+    # --- Database ---
+    DATABASE_URL: str = "postgresql://netraksh:netraksh_password@localhost:5432/netraksh"
+
+    # --- Security / JWT ---
+    SECRET_KEY: str = "CHANGE_ME_USE_openssl_rand_hex_32"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    TLS_ENABLED: bool = False  # Set True when certs are provisioned
+
+    # --- TLS / mTLS ---
+    SERVER_CERT_PATH: str = "certs/server/server.crt"
+    SERVER_KEY_PATH: str = "certs/server/server.key"
+    CA_CERT_PATH: str = "certs/ca/ca.crt"
+
+    # --- RBAC default users ---
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "CHANGE_ME_admin_password"
+    INITIAL_OPERATOR_USERNAME: str = "operator"
+    INITIAL_OPERATOR_PASSWORD: str = "CHANGE_ME_operator_password"
+    INITIAL_AUDITOR_USERNAME: str = "auditor"
+    INITIAL_AUDITOR_PASSWORD: str = "CHANGE_ME_auditor_password"
+
+    # --- Command identity ---
+    COMMAND_ID: str = "COMMAND_A"
+
+    # --- Blockchain ---
+    BLOCKCHAIN_MODE: str = "mock"  # "mock" | "fabric"
+    BLOCKCHAIN_MOCK_LABEL: str = "BLOCKCHAIN: MOCK MODE (Fabric not available on this host — WSL2/Docker required)"
+    FABRIC_PEER_BIN: str = "peer"
+    FABRIC_CHANNEL: str = "netraksh-channel"
+    FABRIC_CHAINCODE: str = "netraksh-cc"
+    FABRIC_ORG_MSP: str = "CommandAMSP"
+
+    # --- Frontend CORS ---
+    CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000", "https://localhost:5173"]
+
+
+settings = Settings()

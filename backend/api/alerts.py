@@ -1,0 +1,139 @@
+"""
+NETRAKSH — Alerts router.
+GET  /alerts               — list alerts (cross-command view)
+GET  /alerts/{id}          — get single alert
+POST /alerts/{id}/acknowledge — Command B acknowledges alert
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from backend.database.session import get_db
+from backend.models.orm import Alert, AlertAcknowledgement, User
+from backend.security.auth import audit, require_any_role, require_operator_or_admin
+from backend.services.blockchain import get_blockchain_client
+from shared.schemas import (
+    AlertAcknowledgeRequest,
+    AlertAcknowledgedTransaction,
+    AlertResponse,
+)
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+
+@router.get("", response_model=List[AlertResponse])
+async def list_alerts(
+    command_id: Optional[str] = Query(None, description="Filter by issuing or receiving command"),
+    cross_command_only: bool = Query(False),
+    severity: Optional[str] = Query(None),
+    acknowledged: Optional[bool] = Query(None),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0),
+    db: Session = Depends(get_db),
+    _user = Depends(require_any_role),
+):
+    q = db.query(Alert)
+    if command_id:
+        q = q.filter(
+            (Alert.command_id_issuing == command_id) | (Alert.command_id_receiving == command_id)
+        )
+    if cross_command_only:
+        q = q.filter(Alert.crosses_jurisdiction_boundary == True)
+    if severity:
+        q = q.filter(Alert.severity == severity)
+    if acknowledged is not None:
+        if acknowledged:
+            q = q.filter(Alert.acknowledged_at.isnot(None))
+        else:
+            q = q.filter(Alert.acknowledged_at.is_(None))
+    alerts = q.order_by(desc(Alert.created_at)).offset(offset).limit(limit).all()
+    return [_alert_to_response(a) for a in alerts]
+
+
+@router.get("/{alert_id}", response_model=AlertResponse)
+async def get_alert(
+    alert_id: str,
+    db: Session = Depends(get_db),
+    _user = Depends(require_any_role),
+):
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return _alert_to_response(alert)
+
+
+@router.post("/{alert_id}/acknowledge", response_model=AlertResponse)
+async def acknowledge_alert(
+    alert_id: str,
+    payload: AlertAcknowledgeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_operator_or_admin),
+):
+    """
+    Command B operator acknowledges a cross-command alert.
+    Submits AlertAcknowledged to blockchain if alert was issued via blockchain.
+    RBAC: OPERATOR or ADMIN only (AUDITOR cannot acknowledge).
+    """
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    if alert.acknowledged_at:
+        raise HTTPException(status_code=400, detail="Alert already acknowledged")
+
+    # Record acknowledgement
+    ack = AlertAcknowledgement(
+        alert_id=alert_id,
+        receiving_command_id=payload.receiving_command_id,
+        ack_timestamp=datetime.utcnow(),
+        status=payload.status,
+        notes=payload.notes,
+    )
+    db.add(ack)
+
+    alert.acknowledged_at = datetime.utcnow()
+    alert.acknowledged_by = current_user.username
+    alert.command_id_receiving = payload.receiving_command_id
+
+    # Submit AlertAcknowledged to blockchain (non-blocking — failure doesn't block dashboard)
+    if alert.blockchain_status == "CONFIRMED" or alert.blockchain_status == "MOCK":
+        bc = get_blockchain_client()
+        tx = AlertAcknowledgedTransaction(
+            alert_id=alert_id,
+            receiving_command_id=payload.receiving_command_id,
+            ack_timestamp=datetime.utcnow(),
+            status=payload.status,
+            signature="",  # would be org signature in real Fabric
+        )
+        try:
+            result = bc.submit_alert_acknowledged(tx)
+            ack.blockchain_tx_id = result.get("tx_id")
+            ack.blockchain_status = result.get("status", "MOCK")
+        except Exception as exc:
+            logger.error(f"Blockchain AlertAcknowledged failed (non-fatal): {exc}")
+            ack.blockchain_status = "FAILED"
+
+    db.commit()
+    audit(db, "ALERT_ACKNOWLEDGED", user_id=current_user.id, resource_type="alert", resource_id=alert_id)
+    return _alert_to_response(alert)
+
+
+def _alert_to_response(alert: Alert) -> AlertResponse:
+    return AlertResponse(
+        alert_id=alert.id,
+        event_id=alert.event_id,
+        severity=alert.severity,
+        crosses_jurisdiction_boundary=alert.crosses_jurisdiction_boundary,
+        command_id_issuing=alert.command_id_issuing,
+        command_id_receiving=alert.command_id_receiving,
+        blockchain_status=alert.blockchain_status,
+        blockchain_tx_id=alert.blockchain_tx_id,
+        acknowledged_at=alert.acknowledged_at,
+        acknowledged_by=alert.acknowledged_by,
+    )

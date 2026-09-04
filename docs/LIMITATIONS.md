@@ -1,0 +1,287 @@
+# NETRAKSH — Known Limitations
+
+This file is the single source of truth for "is X actually real, or a placeholder" — referenced
+from `docs/ARCHITECTURE.md`, `edge/detection/calibration.py`, and `edge/rules/modules.py`. If a
+claim in the PPT or a demo script isn't backed by a line in this file (or isn't flatly true of the
+code), don't make the claim. Update this file in the same change that closes or introduces a
+limitation — an out-of-date limitations file is worse than none.
+
+## 1. Fundamental limitations (not fixable by more engineering time alone)
+
+- **Detection model is COCO-pretrained YOLOv8n, not fine-tuned on a border-surveillance dataset.**
+  Night, fog, rain, and unusual terrain/viewpoint accuracy is a *data* problem, not an architecture
+  problem — no amount of pipeline engineering around it changes what the underlying detector was
+  trained to recognize. `edge/condition/scene_condition.py`'s CLAHE preprocessing (once wired, see
+  §3 below) and the calibration module's per-condition thresholds are mitigations, not fixes.
+- **Hybrid Reliability Engine weights and threshold are hand-picked, not calibrated.**
+  `RELIABILITY_WEIGHT_D/T/S/H` and `RELIABILITY_R_THRESHOLD` (`edge/reliability/decision.py`) are
+  shipped defaults chosen to preserve the qualitative behavior of the original 3-gate cascade on its
+  own test cases — they have not been fit against labeled outcomes. The scene-quality (`S`) and
+  health-quality (`H`) scoring functions are similarly hand-picked heuristics. Architecture v4 §8's
+  suggested upgrade path — fitting the weights via `LogisticRegression` over the same labeled clips
+  used for the Temporal Evidence Intelligence classifier (Mode B, below) — has not been done.
+- **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
+  `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
+  Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not
+  yet integrated into `T` — they exist as separate, zone-scoped bookkeeping inside
+  `edge/rules/modules.py::BehaviorModule` today, not exposed to the Reliability Engine. Mode B (a
+  `LogisticRegression` over labeled data) is not implemented — see `docs/ADR-TEMPORAL.md`.
+- **Detection thresholds are prototype values, not calibrated from labeled data.** The isotonic/Platt
+  calibration engineering in `edge/detection/calibration.py` is real and functional
+  (`CalibrationModule.fit()`), but no labeled dataset has been run through it yet — the thresholds
+  currently in force (`THRESHOLD_CLEAR_DAY` etc.) are hand-picked, conservative defaults, explicitly
+  logged as such at runtime. **Do not present these as calibrated in the PPT until `fit()` has
+  actually been run and `docs/PERFORMANCE_REPORT.md` reflects it.**
+- **No custom border-surveillance dataset exists.** A future dataset covering night/fog/rain/terrain
+  could be collected and used to fine-tune the detector — this is documented as future work, not
+  claimed as already done anywhere in this codebase.
+- **Hardware target is intentionally generic, not a named board.** Per architecture v4 §2, no
+  specific hardware (Jetson or otherwise) is claimed because the team has not benchmarked on one.
+  Every FPS/latency number in `docs/PERFORMANCE_REPORT.md` is only valid for the machine it was
+  actually measured on — see that file's metadata section.
+- **AES-256 evidence encryption key is stored on the edge device's local disk**
+  (`certs/edge/<camera_id>.aes`), not in a TPM/HSM. It protects evidence at rest from casual disk
+  access or exfiltration of the storage medium, but **not** from an attacker who has already
+  compromised the edge device itself. Hardware-backed key storage is future work.
+- **`demo/scripts/zones_config.json`'s four zones are grounded in real footage (`demo/videos/vtest.avi`)
+  but are still NOT the team's actual demo camera.** They were placed by visually inspecting real
+  frames and matching each zone to something actually visible (a taped restricted area, a real
+  pedestrian chokepoint, the only vehicle-parking area in frame, a signpost pause-point) — confirmed
+  live by running the real benchmark against the fence zone (36 real candidate crossings fired) — not
+  hand-picked round numbers with no visual basis, which is what they were before. This is a genuine
+  improvement, but `scripts/define_zone.py` itself was never run interactively: that requires a live
+  GUI window and real mouse clicks from a human operator, which isn't something that can be driven
+  from here. Run it for real against your actual camera or video before a live demo — see
+  `docs/ARCHITECTURE.md`'s changelog entry for exact usage.
+- **A real, pre-existing `edge/data/sync.db` in this repository has an 8,578-deep never-synced queue**
+  from an actual prior run (`edge/data/clips/` holds real JPEGs dated 2026-09-01). This suggests sync
+  to a backend never actually succeeded during that run — worth checking directly (is a backend
+  running? reachable? was `SIMULATE_OFFLINE` left on?) rather than assuming the store-and-forward path
+  has been exercised end-to-end against a live server just because the code is tested.
+- **Evidence captured before the AES-256 encryption change is not retroactively encrypted.** The real
+  JPEGs in `edge/data/clips/` from that same prior run are plain, unencrypted files, because they
+  predate `EvidenceEncryptor` (`edge/evidence/packager.py`) existing at all. Only evidence captured
+  after that change is encrypted at rest. If demoing tamper-evidence or at-rest encryption specifically,
+  use a freshly-generated event, not one of these historical files.
+- **CLAHE's parameters and the night-motion fallback's cooldown are hand-picked, not calibrated.**
+  `clipLimit=2.0` and `tileGridSize=(8,8)` (`edge/condition/preprocessing.py`) are the commonly-cited
+  starting point for CLAHE on natural images, not values tuned against this project's own night/fog
+  footage. `NIGHT_MOTION_COOLDOWN_SECONDS=30.0` (`shared/constants.py`) is similarly a starting guess
+  at a reasonable debounce window. CLAHE is explicitly a mitigation for the detector's existing
+  COCO-trained weights, not a fix for the underlying training-data gap (see the first bullet in this
+  section) — it improves local contrast; it does not add information the sensor didn't capture.
+- **Adaptive Compute Gate's thresholds are hand-picked, not calibrated.**
+  `MOTION_GATE_VARIANCE_THRESHOLD` (15.0) and `IDLE_INFERENCE_INTERVAL_FRAMES` (5) in
+  `shared/constants.py` are starting points chosen for plausibility relative to the existing frozen-
+  frame threshold (5.0), not fit against real footage of an actually-idle border scene. A threshold
+  set too low risks treating genuine slow motion as idle and briefly delaying detection; set too high,
+  it saves little compute. This has not been measured on real footage — `docs/PERFORMANCE_REPORT.md`'s
+  skip-ratio field, once populated from a real run, is exactly the number that would validate or
+  correct this choice.
+- **Track Continuity Guard's thresholds are hand-picked, not calibrated.** The border-tuned
+  `track_buffer: 120` (`edge/config/bytetrack_border.yaml`), the histogram-similarity threshold
+  (0.7), and the max centroid distance (150px) in `edge/tracking/continuity_guard.py` are starting
+  points chosen for plausibility, not fit against real occlusion footage. Ultralytics' own comment on
+  `track_buffer` is an honest tradeoff to repeat here: a higher value handles occlusion better but
+  increases the risk of two different objects being wrongly merged into one identity. This has not
+  been measured on real footage.
+- **The one real false-positive measurement so far used a generic public test video, not the team's
+  own footage, and found no measurable effect from temporal verification.** `docs/
+  PERFORMANCE_REPORT.md` records this precisely: on `demo/videos/vtest.avi` (OpenCV's own sample
+  clip), 23 of 52 raw fence-crossing candidates became alerts under *both* the 1-confirmation and the
+  shipped 3-confirmation policy — the Event Verifier cost nothing but also proved nothing on this
+  clip, because it contained no single-frame tracking jitter for it to catch. The Hybrid Reliability
+  Engine's own filtering (52→23) is real and measured; the Event Verifier's specific benefit is not
+  demonstrated by this run and needs footage with actual tracking instability to measure honestly. Do
+  not claim a false-positive reduction number from temporal verification without re-running this
+  against footage that actually exercises it.
+- **That same run's CPU% reading (0.0) is not credible and must not be quoted.** A single end-of-run
+  `psutil` sample doesn't capture sustained usage from a CPU-bound YOLO inference workload the way a
+  periodic sampler would — `docs/PERFORMANCE_REPORT.md` flags this explicitly rather than reporting it
+  as a real "0% CPU" result. The RSS memory reading (~410–430MB) from the same run is plausible and is
+  reported normally.
+
+## 2. Implemented, but scoped narrower than it might sound
+
+- **ANPR is a simplified, non-production heuristic**, not a real license-plate detector. It crops a
+  fixed lower-middle-third region of the *vehicle* bounding box (a rough heuristic for typical plate
+  location) and runs EasyOCR directly on that crop — there is no dedicated plate-detection model
+  ahead of OCR. This is fragile at odd angles, occluded plates, or non-standard vehicle proportions.
+  It is scoped to checkpoint-angle cameras only (`ZoneType.CHECKPOINT`) and is intentionally kept out
+  of the primary demo narrative — mention it only if directly asked, and describe it exactly this
+  honestly.
+- **Face detection is detection-only, no recognition** — this is a deliberate, correct scope decision
+  (not a limitation to apologize for), using OpenCV Haar cascade with RetinaFace as an optional
+  higher-accuracy fallback when installed. No ArcFace or any face-recognition/matching capability
+  exists anywhere in this codebase.
+- **Blockchain is MOCK mode.** `MockBlockchainAdapter` is the active adapter because WSL2/Docker are
+  unavailable on the development machine, so Hyperledger Fabric's `test-network` cannot run. The
+  `FabricCLIAdapter` class implements the identical interface and is a one-line config swap
+  (`BLOCKCHAIN_MODE=fabric`) away from being live, but it has never actually been exercised against a
+  real Fabric network. On-chain scope is intentionally narrow either way — only `AlertIssued` /
+  `AlertAcknowledged` transactions, never raw video or continuous health data.
+- **RBAC has 3 roles (ADMIN/OPERATOR/AUDITOR)** with no granular per-zone or per-camera permission
+  model. A richer Authorization & Context module (person/vehicle database, zone/time permissions) is
+  explicitly Phase 2 per the architecture roadmap, not an MVP gap.
+- **Clock drift detection is opportunistic**, comparing the edge device's system clock to frame
+  timestamps — there is no hard NTP dependency or verification that the system clock itself is
+  accurate, only that it is internally consistent with the frame stream.
+- **`GET /events/{event_id}/evidence-image` only works because the backend and edge process share a
+  filesystem in this project's current single-machine deployment.** `Event.evidence_clip_ref` has
+  always been a local file path string, not the image bytes — `edge/sync/sync_client.py` never
+  transmits the actual snapshot during sync, only this path. A real distributed deployment (edge and
+  backend on different machines) would need the edge to upload the evidence bytes themselves during
+  sync — a separate, larger change, not implemented.
+- **The evidence-key KEK is derived from `settings.SECRET_KEY`, an application secret, not a
+  dedicated secrets manager or HSM.** Anyone who has `SECRET_KEY` (already sensitive — it also signs
+  every JWT) can derive the KEK (`backend/security/evidence_key_wrap.py`) and unwrap every camera's
+  evidence key. HKDF with a domain-separation label at least prevents that derivation from also
+  compromising anything else `SECRET_KEY` is used for, but this is a proportionate MVP tradeoff, not
+  production-grade key management.
+- **~~`GET /events/{event_id}` had no auth dependency at all~~ — FIXED.** As part of the pre-deployment
+  hardening pass, both `GET /events/{event_id}` and `POST /events/{event_id}/verify`
+  (`backend/api/events.py`) now require `require_any_role`, matching `GET /events/{id}/evidence-image`.
+  Fixing this also surfaced two independent, unrelated frontend bugs in `Evidence.jsx`'s "Verify
+  Netraksh Integrity Chain" button, both now fixed too: (1) it called the endpoint with a bare
+  `fetch()`, which defaults to `GET` — the real route is `POST`, so this button had been silently
+  405'ing (caught by the `catch` block) on every click since it was written; (2) even on a successful
+  call it read a `data.is_valid` field that doesn't exist on `VerificationResponse` (the real fields are
+  `hash_valid`/`signature_valid`/`chain_valid`), so it would have always reported "failed" regardless of
+  the actual verification result. `list_events` (`GET /events`) still has no auth dependency — left as
+  an open gap below, since making the dashboard's own live event feed require auth is a larger,
+  deliberate call for the team, not a drive-by fix.
+- **`GET /events` (`list_events`) still has no auth dependency.** Unlike the three endpoints above, this
+  one is left open deliberately: the dashboard's live WebSocket feed and REST fallback both depend on
+  reading events without a login gate today, and closing it means deciding whether unauthenticated
+  viewers should see live event data at all — a product decision, not a one-line fix.
+- **The frontend's `/health` SPA route (Camera Health Matrix) was renamed to `/camera-health`** — it
+  collided with the backend's `GET /health` liveness probe (`backend/api/system.py`), which a real
+  hosting platform (Render, Railway, Fly.io, etc.) will poll at that exact path for container health
+  checks. Hitting `/health` directly (not via in-app client-side navigation) returned the backend's raw
+  JSON instead of the page, since FastAPI's own route wins over the SPA catch-all. The backend's
+  `/health` endpoint itself is untouched — it's the conventional liveness-check path and should stay
+  there.
+- **Every hardcoded `http://localhost:8443` / `ws://localhost:8443` string in the frontend (10 call
+  sites) was replaced with a runtime-derived `BACKEND_URL`/`WS_URL` (`frontend/src/services/auth.js`,
+  from `window.location`).** They worked only by coincidence, since the backend has always served the
+  built frontend from that exact origin — deploying to any real domain would have silently broken
+  every fetch and the live WebSocket. No config needed going forward; it resolves correctly under any
+  origin automatically.
+- **The "Demo Scenario Control" panel's four buttons (`frontend/src/components/DemoSidebar.jsx`) call
+  backend routes that do not exist** — `/demo/inject-condition`, `/demo/trigger-camera-failure`,
+  `/demo/simulate-offline`. Confirmed by grepping the entire backend; there is no `demo` router at all.
+  Every click always falls through to the local-only "Simulated" UI state. This was already disclosed
+  honestly in the UI (each button carries a "Simulated" badge) — not a hidden gap — but is recorded
+  here explicitly now that it's been confirmed rather than merely flagged as unchecked. Implementing
+  real scenario injection (forcing a camera's health/scene-condition state server-side for a live demo)
+  is a real, if modest, feature — not attempted here.
+- **`Header.jsx`'s periodic `GET /sync/status` poll (every 5s) requires `require_any_role`
+  (`backend/api/system.py`) but nothing in the header ever prompts for login** — it 401s for the
+  duration of any session that never visits the Evidence page's login form (which is the only place a
+  viewer can sign in). Switched the call to `authFetch()` so it succeeds once a viewer is logged in,
+  but the underlying design question — should sync status require auth at all, given the rest of the
+  dashboard is viewable without logging in? — is left open, same category as `GET /events` below.
+- **Pre-live-deployment checklist, not yet actioned (all require an explicit decision, not a drive-by
+  fix):**
+  - `SECRET_KEY` (`backend/config.py`) defaults to the literal string `"CHANGE_ME_USE_openssl_rand_hex_32"`
+    when not set via environment/`.env`. It signs every JWT and (via HKDF) derives the evidence-key KEK
+    — a real deployment MUST set a real, random `SECRET_KEY` via the hosting platform's environment
+    variables, never commit one to source control.
+  - `ADMIN_PASSWORD`/`INITIAL_OPERATOR_PASSWORD`/`INITIAL_AUDITOR_PASSWORD` default to
+    `CHANGE_ME_*_password` placeholders, used only to bootstrap the three seed accounts on a first boot
+    against an empty database — a fresh deployment MUST override these via environment variables before
+    first boot, or anyone can look up the default in this repo and log in as admin.
+  - `DATABASE_URL` defaults to SQLite locally (`sqlite:///./netraksh.db`, currently a 3.5MB real file
+    with real seeded data in this repo). Most container-hosting platforms' filesystems are ephemeral —
+    the database would be silently wiped on every redeploy/restart. `psycopg2-binary` is already in
+    `requirements.txt` for exactly this reason; a real deployment needs an actual Postgres instance
+    (managed or self-hosted) and `DATABASE_URL` pointed at it, not the SQLite default.
+  - This repository is not a git repository at all (`git status` fails with "not a git repository") —
+    there is no version history and nothing to push to a platform that deploys from a git remote.
+  - No `Dockerfile` exists yet for a containerized deploy target.
+- **Endpoint-level HTTP tests for the two new evidence-image/evidence-key routes do not exist.**
+  `tests/integration/` and `tests/e2e/` are empty for every endpoint in this codebase already, not
+  just these two — the crypto/wrapping/migration logic each endpoint depends on is fully unit-tested,
+  but the HTTP wiring itself (auth enforcement, status codes, request/response shape) is not covered
+  by an automated test yet.
+
+## 3. Designed in architecture v4, not yet implemented in code
+
+These are real, open gaps — tracked here so nothing is silently assumed to exist. Each links to the
+architecture section that specifies it.
+
+| Item | Architecture ref | Status |
+|---|---|---|
+| Adaptive compute gating's resolution tiers (higher-res crop on candidate-forming, full-res on verified) | v4 §6 | **Not implemented.** Only the idle/active inference-*rate* gating is built (`edge/detection/adaptive_gate.py`) — see §1 below. No tier changes resolution; there's nothing to "restore" resolution from. |
+| Edge transmitting evidence bytes (not just a path) during sync, for a real distributed deployment | v4 §10 | **Not implemented.** `Event.evidence_clip_ref` is a local file path string; `edge/sync/sync_client.py` never uploads the actual snapshot. `GET /events/{event_id}/evidence-image` only works when the backend and edge share a filesystem, as they do in this project's current deployment — see §1 above. |
+| Re-running the false-positive measurement against real staged demo footage | v4 §11, `docs/PERFORMANCE_REPORT.md` | **Not run.** The one real run so far used a generic public test clip (`demo/videos/vtest.avi`, OpenCV's own sample), not the team's actual demo footage or a staged intrusion scenario, and doesn't cover night/fog/glare conditions — see §1 below. |
+
+## 4. What IS real and measured (as of this writing)
+
+- Camera health (frozen-frame, blur, exposure, FPS ratio, clock drift) and scene condition
+  (brightness/contrast/glare) are computed from real OpenCV/numpy signal processing on every frame —
+  not simulated.
+- YOLOv8n + ByteTrack detection/tracking is real, running via `ultralytics`.
+- The Event Verifier state machine (CANDIDATE → VERIFIED/ALERTED, confirmation-gated) is implemented
+  and unit-tested (`tests/unit/test_event_verifier.py`).
+- The Hybrid Reliability Engine (Gate-1 hard override + weighted-sum `R = wD·D+wT·T+wS·S+wH·H`) is
+  implemented and unit-tested (`tests/unit/test_reliability.py`), including a deliberate, documented
+  behavior change from the original cascade (see `docs/ARCHITECTURE.md`). Its weights are real code,
+  not a slide — but see §1 above for their calibration status.
+- Temporal Evidence Intelligence Mode A (track age, path smoothness, speed consistency →
+  `T`) is implemented and unit-tested (`tests/unit/test_track_features.py`), per the no-SSM decision
+  recorded in `docs/ADR-TEMPORAL.md`.
+- The Track Continuity Guard (border-tuned ByteTrack `track_buffer` + classical-CV color-histogram
+  re-association) is implemented and unit-tested (`tests/unit/test_continuity_guard.py`,
+  `tests/unit/test_detector_tracker_config.py`) — but see §1 above for its threshold-calibration
+  status.
+- Line crossing (`edge/rules/modules.py::LineCrossingModule`) is implemented and unit-tested
+  (`tests/unit/test_line_crossing.py`), routed through the same Event Verifier confirmation logic as
+  fence crossing — but see §1 above: it has no configured zones to actually fire against yet.
+- The Adaptive Compute Gate (idle/active inference-rate scheduling) is implemented and unit-tested
+  (`tests/unit/test_adaptive_gate.py`), with its skip ratio logged and persisted alongside the rest of
+  the real performance instrumentation — but see §1 above for its threshold-calibration status, and
+  see §3 above for the resolution-tiering half of v4 §6 that isn't built.
+- CLAHE preprocessing and the night-motion fallback are both implemented and unit-tested
+  (`tests/unit/test_preprocessing.py`, `tests/unit/test_night_motion_fallback.py`) — the latter
+  closing out real, previously-dead code, not new logic from scratch. Both are mitigations with
+  hand-picked parameters; see §1 above for exactly what that does and doesn't claim.
+- The offline sync queue is priority-ordered (`severity DESC, sequence_number ASC`) and unit-tested
+  (`tests/unit/test_sync_client_priority.py`), including a migration path verified against the actual
+  pre-existing `edge/data/sync.db` in this repo, not just a synthetic test database.
+- Backend decrypt-on-view for encrypted evidence is implemented (`shared/crypto.py`,
+  `backend/security/evidence_key_wrap.py`, `PUT /cameras/{id}/evidence-key`,
+  `GET /events/{id}/evidence-image`) and its crypto/wrapping/migration logic is unit-tested — but see
+  §1 above for the single-machine deployment constraint, the KEK's security tradeoff, and the
+  untested HTTP layer.
+- The frontend now actually calls that endpoint (`frontend/src/pages/Evidence.jsx`, via the new
+  `frontend/src/services/auth.js`) instead of it only proving itself over curl — including the
+  minimal login flow this required, since the frontend previously had no auth infrastructure at all.
+  Verified via a real `vite build` and lint pass, not an automated test — this project has no frontend
+  test suite yet, a pre-existing gap.
+- The Dashboard's Reliability Decision panel (`frontend/src/pages/Dashboard.jsx`) now shows the real
+  D/T/S/H factors, R score, and threshold parsed from the real `decision_reason` string, instead of
+  hardcoded placeholder values — verified end-to-end by POSTing a real event through the real
+  ingestion endpoint and confirming the rendered numbers in a live screenshot, not just reading the
+  code. **Found but not yet fixed, while wiring this:** the dashboard's "Demo Scenario Control" panel
+  (Normal Ops / Dense Fog / Sensor Failure / Offline buttons) was not inspected or verified this pass —
+  whether those buttons trigger anything real is unknown and not claimed either way.
+- Zone matching (`edge/rules/modules.py::normalize_point`) is now resolution-independent and
+  unit-tested end-to-end at two different frame sizes from the same config
+  (`tests/unit/test_zone_normalization.py`) — closing a real bug where raw-pixel comparisons against
+  an undefined coordinate unit would silently misbehave on any camera resolution other than whatever
+  one the config happened to be authored against.
+- The Hybrid Reliability Engine's filtering effect is measured, not just designed: on a real 795-frame
+  test clip, it independently reduced 52 raw fence-crossing candidates to 23 (`docs/
+  PERFORMANCE_REPORT.md`) — but see §1 above for what that same run does and does not show about the
+  Event Verifier specifically.
+- Evidence hashing (SHA-256), signing (Ed25519), and hash-chaining (append-only SQLite) are real
+  cryptography, not placeholders — including tamper detection on chain verification.
+- Evidence-at-rest encryption (AES-256-GCM) is real and active for every snapshot written to disk.
+- Offline store-and-forward uses a real, durable SQLite queue with ordered, retry-on-failure upload —
+  not an in-memory structure that would be lost on restart.
+- Pipeline performance instrumentation (`edge/instrumentation/metrics.py`) measures real
+  `time.perf_counter()` latency at every stage and real FPS from actual frame timestamps — CPU/RAM
+  are real `psutil` readings when installed, `null` otherwise, never fabricated. No number in
+  `docs/PERFORMANCE_REPORT.md` should ever be filled in by hand; only paste what this instrumentation
+  actually printed.

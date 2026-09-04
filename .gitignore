@@ -1,0 +1,41 @@
+# Secrets — never commit real values
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Databases (real local data — a deployment should point DATABASE_URL at Postgres, not ship this file)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Edge runtime data
+edge/data/
+edge/data/clips/
+demo/videos/*.avi
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# TLS material
+certs/*.key
+certs/*.crt
+certs/*/*.key
+certs/*/*.crt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Machine-local dev-preview config (hardcoded local paths/python.exe location,
+# not portable — see docs/LIMITATIONS.md)
+.claude/
