@@ -380,9 +380,20 @@ limitation — an out-of-date limitations file is worse than none.
   single/pairwise-condition dataset this session), and **DETECTED reached 92% (48/52)** — `H=1.0`
   across all candidates (the region-aware contrast fix correctly firing, `contrast_std_excluding_glare
   ≈18-19`, genuinely below `FOG_CONTRAST_THRESHOLD`), confirming both the Gate-1 and blur-exemption
-  fixes generalize correctly to this milder triple-compound case too. The 4 remaining residuals show
-  the same genuine, moderate `D`/`T` pattern (no floor, `H`=1.0, `S`≈0.72 for all) as every other
-  residual this session — real evidence-based uncertainty, not a further bug.
+  fixes generalize correctly to this milder triple-compound case too.
+  **This residual — the classified `GLARE` case for a milder triple compound — was investigated with
+  the same rigor as the standalone glare residual, and surfaced one genuine, honest nuance the
+  standalone case didn't have.** Sorting all 52 by `D` shows the boundary is *mostly* clean (as it was
+  for standalone `glare`), but not purely `D`-driven this time: `candidate_004` (`D=0.68` — higher than
+  several DETECTED candidates) is still UNCERTAIN, because it is a genuinely very young track
+  (`T_age_score=0.06`, only 4 trajectory points — the fence-crossing event fired almost immediately
+  after the track was first created). The other 3 residuals (`candidate_026`, `032`, `042`) show the
+  same real, moderate `D`+`T` combination pattern (short or mildly inconsistent tracks). All 4 visually
+  re-confirmed as genuine, correctly-detected people — no anomaly. `S`≈0.72 and `H`=1.0 for all four,
+  so neither is the driver here — unlike standalone `glare`'s residual, where `D` alone cleanly
+  separated DETECTED from UNCERTAIN, this milder triple-compound residual is jointly explained by `D`
+  AND `T`: real evidence, correctly and conservatively weighed by the formula, not a bug in either
+  factor considered alone.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

@@ -501,9 +501,18 @@ positives.
 
 Candidate yield recovered to the same order of magnitude as every other dataset this session, and
 DETECTED reached 92% with `H=1.0` across all candidates — confirming both the Gate-1 and blur-exemption
-fixes generalize correctly to this milder triple-compound case too. The 4 remaining residuals show the
-same genuine, moderate `D`/`T` pattern as every other residual this session — real evidence-based
-uncertainty, not a further bug.
+fixes generalize correctly to this milder triple-compound case too.
+
+**The residual, investigated with the same rigor as standalone glare's, surfaced one genuine nuance.**
+Sorting all 52 by `D` shows the boundary is mostly clean, but not purely `D`-driven this time:
+`candidate_004` (`D=0.68` — higher than several DETECTED candidates) is still UNCERTAIN because it's a
+genuinely very young track (`T_age_score=0.06`, only 4 trajectory points — the fence-crossing event
+fired almost immediately after the track was created). The other 3 residuals show the same real,
+moderate `D`+`T` combination pattern. All 4 visually re-confirmed as genuine, correctly-detected
+people. `S`≈0.72 and `H`=1.0 for all four, so neither is the driver — unlike standalone `glare`'s
+residual (`D` alone cleanly separated DETECTED/UNCERTAIN), this milder triple-compound residual is
+jointly explained by `D` AND `T`: real evidence, correctly and conservatively weighed, not a bug in
+either factor alone.
 
 ## Honesty checklist before this goes in the PPT
 
