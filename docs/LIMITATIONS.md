@@ -155,6 +155,35 @@ limitation — an out-of-date limitations file is worse than none.
   through 0.75. Same conclusion as night: this is the Reliability Engine correctly expressing more
   caution on the objectively weakest evidence, not a defect, and left open for the same reason (no
   real dataset to fit against, no real fog footage to validate the transform's intensity).
+  **Sixth fix — GLARE, the fourth and last real `SceneCondition`, tested the same way.** A synthetic
+  glare transform was added to `scripts/collect_calibration_data.py`
+  (`--synthetic-condition glare`: scale pixel values ×1.8+20 and clip at 255, empirically measured
+  against this video's own first frame to reliably classify `GLARE` via the real `glare_fraction`
+  path — ~0.43, well past the real 0.15 cutoff — rather than the `brightness>220` path). All 795
+  frames genuinely classified `GLARE`; manual review of all 55 real candidates again found zero false
+  positives. The SAME real double-penalty pattern as fog was found here too: glare genuinely blows
+  out highlights, which `S` already penalizes via `glare_fraction`, **and** the same real
+  overexposure genuinely trips the Camera Health Monitor's OWN, unrelated exposure-clipping check
+  (`clip_fraction` — fraction of pixels at exactly 255 — measured at 30-41% here, far past its 0.10
+  threshold) into `ABNORMAL_EXPOSURE`, which used to *also* halve `H` for the same real cause,
+  producing an initial, honestly-measured 0/55 (0%) DETECTED — identical to fog's original result.
+  The fix generalizes fix 1's exemption from a single hardcoded case into a real
+  `_WEATHER_EXPLAINED_DEGRADED_REASONS` mapping (`edge/reliability/decision.py`) — `{EXCESSIVE_BLUR:
+  {FOG_RAIN, LOW_LIGHT_NIGHT}, ABNORMAL_EXPOSURE: {GLARE}}` — so a third such pairing, if ever found,
+  is a one-line addition, not new code (4 new tests,
+  `tests/unit/test_reliability.py::TestWeatherExplainedExposureDoesNotDoublePenalize`; full suite
+  239/239). Re-measured: glare rose from 0/55 (0%) to **33/55 (60%) DETECTED**.
+  **Unlike fog/night, the remaining 40% was investigated and found to be a genuinely different
+  situation, not the same class of reference-point bug** — checked before assuming one existed, not
+  after: fog and night's classification rules structurally GUARANTEE every classified frame fails the
+  old reference (fog *requires* contrast<30; night *requires* brightness<60, both below their old
+  60/128 "good" targets, for 100% of instances, no exceptions). GLARE's classification
+  (`glare_fraction > 0.15`) has no such ceiling — a frame right at that boundary scores a reasonable
+  `glare_score` of 0.5 under the CURRENT formula, not floored; only frames at or past
+  `glare_fraction ≥ 0.30` (double the classification minimum) floor to 0. This specific synthetic
+  transform's measured severity (~0.43) simply sits well past that point — a transform-intensity
+  limitation, the same honestly-disclosed category as fog/night's transform intensity, not a formula
+  defect to fix. No further change applied.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

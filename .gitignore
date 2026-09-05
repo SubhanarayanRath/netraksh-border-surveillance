@@ -27,6 +27,7 @@ demo/videos/*.avi
 scripts/calibration_data/snapshots/
 scripts/calibration_data_night/snapshots/
 scripts/calibration_data_fog/snapshots/
+scripts/calibration_data_glare/snapshots/
 
 # Frontend
 frontend/node_modules/

@@ -19,20 +19,21 @@ has to actually look at each snapshot. That is the deliberate next step
 (see scripts/fit_reliability_weights.py's docstring for the labeling
 file format), not something this script fabricates or skips.
 
-SYNTHETIC CONDITIONS (--synthetic-condition night|fog): this project has no
-real night or fog footage (see docs/LIMITATIONS.md — the daytime
-demo/videos/vtest.avi run already found zero false positives, which is
-itself the honest reason a degraded-condition dataset is worth trying).
-Rather than fabricate fake candidates or invent numbers, this flag applies
-an honest, disclosed OpenCV brightness/contrast/haze transform to each REAL
-frame before it reaches the pipeline — the people and motion are the same
-real footage; only the lighting is synthetic. Every downstream number
-(brightness_mean, contrast_std, the resulting SceneCondition, YOLO's actual
-detections on the degraded pixels, D/T/S/H) is still genuinely measured by
-the real pipeline on the real (if now-darker/hazier) pixel data — nothing
-about the transform is faked or backfilled into the output. The manifest
-and every snapshot say plainly that a synthetic condition was applied, so
-this is never confusable with the real, unmodified vtest.avi dataset in
+SYNTHETIC CONDITIONS (--synthetic-condition night|fog|glare): this project
+has no real night, fog, or glare footage (see docs/LIMITATIONS.md — the
+daytime demo/videos/vtest.avi run already found zero false positives,
+which is itself the honest reason a degraded-condition dataset is worth
+trying). Rather than fabricate fake candidates or invent numbers, this
+flag applies an honest, disclosed OpenCV brightness/contrast/haze
+transform to each REAL frame before it reaches the pipeline — the people
+and motion are the same real footage; only the lighting is synthetic.
+Every downstream number (brightness_mean, contrast_std, glare_fraction,
+the resulting SceneCondition, YOLO's actual detections on the degraded
+pixels, D/T/S/H) is still genuinely measured by the real pipeline on the
+real (if now-darker/hazier/washed-out) pixel data — nothing about the
+transform is faked or backfilled into the output. The manifest and every
+snapshot say plainly that a synthetic condition was applied, so this is
+never confusable with the real, unmodified vtest.avi dataset in
 scripts/calibration_data/.
 
 TRACK-AGE CLOCK (real methodology fix, see docs/LIMITATIONS.md): T's
@@ -115,6 +116,19 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         haze_color = np.full_like(frame, 190)
         blended = cv2.addWeighted(frame, 0.42, haze_color, 0.58, 0)
         return cv2.GaussianBlur(blended, (7, 7), 0)
+    if condition_sim == "glare":
+        # Simulate sun glare/lens flare: scale pixel values up and clip at
+        # 255 (real glare washes out highlights into flat white). Intensity
+        # (x1.8 + 20) was empirically measured against this real video's own
+        # first frame before picking it: it drives glare_fraction (fraction
+        # of near-white pixels, the real signal GLARE's classification rule
+        # actually uses) to ~0.43 — comfortably past the real
+        # BRIGHTNESS_GLARE_THRESHOLD-adjacent 0.15 cutoff — while brightness_
+        # mean (~203) stays just BELOW BRIGHTNESS_GLARE_THRESHOLD (220), so
+        # this reliably classifies as GLARE via the glare_fraction path
+        # specifically, not by accident of both paths firing at once.
+        brightened = frame.astype(np.float32) * 1.8 + 20
+        return np.clip(brightened, 0, 255).astype(np.uint8)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -136,7 +150,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "fog"], default="none",
+        "--synthetic-condition", choices=["none", "night", "fog", "glare"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",

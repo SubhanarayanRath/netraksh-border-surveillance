@@ -334,11 +334,25 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   independent): daytime rose from 49/52 (94%) to **52/52 (100%)**; night from 39/51 (76%) to
   **47/51 (92%)**; fog from 45/52 (87%) to **49/52 (94%)** — by a wide margin the largest single fix
   this session, since it corrects a genuine defect in the real, deployed edge pipeline itself, not
-  just a calibration-script measurement. See `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry
-  and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after of all five
-  fixes. `D/T/S/H`'s hand-picked *weight values* themselves remain unchanged — these fixed how `H`,
-  `S`, and now `T` are computed, not the weights applied to them — pending real labeled data with
-  actual false positives to fit against.
+  just a calibration-script measurement. **A sixth fix generalized fix 1's H-exemption for a fourth
+  real `SceneCondition`, GLARE.** A synthetic glare transform (scale pixels ×1.8+20, clip at 255)
+  reliably classified `GLARE` via the real `glare_fraction` path, and found the SAME real
+  double-penalty pattern fix 1 fixed for fog/night: glare genuinely blows out highlights (penalized
+  by `S`), and the same overexposure genuinely trips the Camera Health Monitor's own exposure-clipping
+  check into `ABNORMAL_EXPOSURE` (which used to *also* halve `H`) — initially 0/55 (0%) DETECTED,
+  identical in shape to fix 1's original finding. Rather than special-case it, fix 1's single
+  hardcoded exemption became a real `_WEATHER_EXPLAINED_DEGRADED_REASONS` mapping —
+  `{EXCESSIVE_BLUR: {FOG_RAIN, LOW_LIGHT_NIGHT}, ABNORMAL_EXPOSURE: {GLARE}}` — so a third such
+  pairing is a one-line addition, not new code. Re-measured: glare rose from 0/55 (0%) to 33/55 (60%).
+  Unlike fog/night, glare's remaining 40% was checked and found to be a genuinely different
+  situation, not a further reference-point bug: GLARE's classification (`glare_fraction > 0.15`) has
+  no structural ceiling the way fog/night's rules do (which guarantee every classified instance fails
+  the old reference) — this specific transform's severity (~0.43, well past the 0.30 point where
+  `glare_score` fully floors) is a transform-intensity limitation, not a formula defect. See
+  `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s
+  night/fog/glare section for the full, honest before/after of all six fixes. `D/T/S/H`'s hand-picked
+  *weight values* themselves remain unchanged — these fixed how `H`, `S`, and `T` are computed, not
+  the weights applied to them — pending real labeled data with actual false positives to fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating

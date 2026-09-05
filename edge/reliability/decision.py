@@ -158,11 +158,27 @@ _HEALTH_QUALITY_SCORE = {
 # uses for its OWN, unrelated purpose (detecting a broken/dirty/defocused
 # camera) — so the SAME real visual-softening signal was silently counted
 # twice, once as S and again as H, for conditions where it isn't actually
-# two independent problems. FROZEN_STREAM, ABNORMAL_EXPOSURE, FPS_DEGRADED,
-# CLOCK_DRIFT, and STREAM_UNAVAILABLE are genuinely independent of scene
-# condition and are NOT touched by this — only EXCESSIVE_BLUR specifically
-# coinciding with a scene already classified FOG_RAIN or LOW_LIGHT_NIGHT.
-_WEATHER_EXPLAINED_BLUR_CONDITIONS = frozenset({SceneCondition.FOG_RAIN, SceneCondition.LOW_LIGHT_NIGHT})
+# two independent problems.
+#
+# The SAME real pattern was later found for GLARE too, at 0/55 (0%) DETECTED
+# under a real, honest glare measurement: glare genuinely blows out
+# highlights, which S already measures and penalizes via glare_fraction,
+# AND the same real overexposure genuinely trips
+# edge/health/camera_health.py's OWN, unrelated exposure-clipping check
+# (a real camera fault detector, not a weather detector) into
+# ABNORMAL_EXPOSURE — the same double-count, different reason/condition
+# pair. Both pairs are listed below; this dict is deliberately a mapping
+# (not two separate special-cased conditionals) so a third such pairing, if
+# ever found, is a one-line addition, not a new code path.
+#
+# FROZEN_STREAM, FPS_DEGRADED, and CLOCK_DRIFT are genuinely independent of
+# scene condition and are NOT touched by this — only the specific
+# reason/condition pairs below, where the DEGRADED reason and the scene
+# classification are reacting to the exact same real pixel signal.
+_WEATHER_EXPLAINED_DEGRADED_REASONS: dict = {
+    HealthReason.EXCESSIVE_BLUR: frozenset({SceneCondition.FOG_RAIN, SceneCondition.LOW_LIGHT_NIGHT}),
+    HealthReason.ABNORMAL_EXPOSURE: frozenset({SceneCondition.GLARE}),
+}
 
 
 def _scene_quality_score(condition_report: SceneConditionReport) -> float:
@@ -199,21 +215,22 @@ def _health_quality_score(
     scored here — FAILED is handled exclusively by Gate 1 before this is
     ever reached.
 
-    One deliberate exception (see _WEATHER_EXPLAINED_BLUR_CONDITIONS above
-    for the real, measured failure mode this fixes): when the ONLY reason
-    health is DEGRADED is EXCESSIVE_BLUR, and the scene is independently
-    classified FOG_RAIN or LOW_LIGHT_NIGHT, H is scored as healthy (1.0)
-    instead of the usual 0.5 — S already penalizes this exact real signal,
-    so this avoids double-counting one real degradation as two. Any OTHER
-    DEGRADED reason still fully penalizes H exactly as before — those are
-    genuinely independent hardware/pipeline problems S has no signal for.
+    One deliberate exception (see _WEATHER_EXPLAINED_DEGRADED_REASONS above
+    for the real, measured failure modes this fixes): when health is
+    DEGRADED for a reason whose real cause overlaps with the scene's own
+    independent classification (EXCESSIVE_BLUR under FOG_RAIN/
+    LOW_LIGHT_NIGHT; ABNORMAL_EXPOSURE under GLARE), H is scored as healthy
+    (1.0) instead of the usual 0.5 — S already penalizes this exact real
+    signal, so this avoids double-counting one real degradation as two. Any
+    OTHER DEGRADED reason (or the SAME reason under an unrelated scene
+    condition, e.g. EXCESSIVE_BLUR during CLEAR_DAY) still fully penalizes H
+    exactly as before — those are genuinely independent hardware/pipeline
+    problems S has no signal for.
     """
-    if (
-        health_report.health_state == CameraHealthState.DEGRADED
-        and health_report.health_reason == HealthReason.EXCESSIVE_BLUR
-        and condition_report.condition in _WEATHER_EXPLAINED_BLUR_CONDITIONS
-    ):
-        return 1.0
+    if health_report.health_state == CameraHealthState.DEGRADED:
+        explained_conditions = _WEATHER_EXPLAINED_DEGRADED_REASONS.get(health_report.health_reason)
+        if explained_conditions and condition_report.condition in explained_conditions:
+            return 1.0
     return _HEALTH_QUALITY_SCORE.get(health_report.health_state, 0.5)
 
 

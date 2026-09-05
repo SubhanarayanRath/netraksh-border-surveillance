@@ -281,6 +281,62 @@ class TestWeatherExplainedBlurDoesNotDoublePenalize:
         assert result.decision_state == DecisionState.UNCERTAIN
 
 
+class TestWeatherExplainedExposureDoesNotDoublePenalize:
+    """
+    Real follow-up fix, same pattern and reason/condition-pair mapping as
+    TestWeatherExplainedBlurDoesNotDoublePenalize above
+    (docs/PERFORMANCE_REPORT.md's "Reliability Engine behavior under real
+    night/fog/glare conditions"): a real glare scene genuinely reduces S
+    (via glare_fraction) AND genuinely trips the camera health monitor's
+    exposure-clipping check (a real, unrelated camera-fault detector) into
+    ABNORMAL_EXPOSURE, which used to also halve H for the exact same real
+    overexposure signal — measured at 0/55 (0%) DETECTED before this fix.
+    """
+
+    def test_abnormal_exposure_during_glare_is_not_health_penalized(self):
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.ABNORMAL_EXPOSURE),
+            condition_report=_condition(SceneCondition.GLARE),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
+
+    def test_abnormal_exposure_during_clear_day_is_still_fully_penalized(self):
+        """The exemption is scoped to GLARE only — the same exposure fault
+        during CLEAR_DAY has no scene-quality explanation for it (more
+        likely a genuinely malfunctioning auto-exposure/sensor), so H stays
+        fully penalized, exactly as before this fix."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.ABNORMAL_EXPOSURE),
+            condition_report=_condition(SceneCondition.CLEAR_DAY),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+    def test_excessive_blur_during_glare_is_still_fully_penalized(self):
+        """The mapping is per (reason, condition) PAIR, not per condition
+        alone — EXCESSIVE_BLUR is not one of GLARE's explained reasons (only
+        ABNORMAL_EXPOSURE is), so it must still penalize H even under GLARE."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition(SceneCondition.GLARE),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+    def test_other_degraded_reasons_during_glare_are_still_fully_penalized(self):
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.FROZEN_STREAM),
+            condition_report=_condition(SceneCondition.GLARE),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+
 class TestSceneQualityFogContrastReference:
     """
     Real follow-up fix (docs/PERFORMANCE_REPORT.md's "Reliability Engine

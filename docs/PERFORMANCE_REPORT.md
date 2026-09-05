@@ -100,7 +100,7 @@ What actually happened, diagnosed from the same run:
   occluded/crowded clip, or the same clip re-tested with a deliberately shortened `track_buffer` to
   induce ID switches) to be honestly measurable. This is a real, open next step, not a solved one.
 
-## Reliability Engine behavior under real night/fog conditions
+## Reliability Engine behavior under real night/fog/glare conditions
 
 A separate, real measurement — **different methodology from the table above, do not merge the two
 numbers.** The table above uses `scripts/run_false_positive_benchmark.py`, which tracks whether R
@@ -113,20 +113,21 @@ head-to-head.
 This measurement exists because of an attempt to calibrate the Hybrid Reliability Engine's weights
 from real labeled data (see `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry): manual review of
 every real fence-crossing candidate in `demo/videos/vtest.avi` found zero false positives, in daytime
-**and** under two honest, disclosed synthetic night/fog lighting transforms applied to the same real
-footage (`--synthetic-condition night|fog` — see `scripts/collect_calibration_data.py`'s docstring for
-exactly what is and isn't synthetic here). With every labeled candidate genuine, weight-fitting was
-correctly refused — but the same labeled data answers a different, real, and more operationally
-important question: **of these genuine crossings, how many does the CURRENT hand-picked formula
-actually mark UNCERTAIN instead of DETECTED?**
+**and** under three honest, disclosed synthetic night/fog/glare lighting transforms applied to the same
+real footage (`--synthetic-condition night|fog|glare` — see `scripts/collect_calibration_data.py`'s
+docstring for exactly what is and isn't synthetic here). With every labeled candidate genuine,
+weight-fitting was correctly refused — but the same labeled data answers a different, real, and more
+operationally important question: **of these genuine crossings, how many does the CURRENT hand-picked
+formula actually mark UNCERTAIN instead of DETECTED?**
 
 | Condition | Genuine (label=1) candidates | DETECTED (R ≥ 0.75) | UNCERTAIN (real crossing missed) |
 |---|---|---|---|
 | Daytime (real, unmodified video) | 52 | 52 (100%) | 0 (0%) |
 | Synthetic night (real video, real Gaussian-darkened frames) | 51 | 47 (92%) | 4 (8%) |
 | Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 49 (94%) | 3 (6%) |
+| Synthetic glare (real video, real brightened + clipped frames) | 55 | 33 (60%) | 22 (40%) |
 
-**These numbers are after FIVE real, separate fixes, applied in sequence** — each honestly
+**These numbers are after SIX real, separate fixes, applied in sequence** — each honestly
 re-measured, none a full solution on its own:
 
 1. **Fix 1 — H double-penalty** (`edge/reliability/decision.py::_health_quality_score`). The
@@ -209,17 +210,33 @@ re-measured, none a full solution on its own:
    night rose from 76% to 92%; fog rose from 87% to 94%. By a wide margin the largest single fix this
    session — it corrects a genuine defect in the real, deployed edge pipeline's temporal-scoring
    wiring, not just a calibration-script heuristic.
+6. **Fix 6 — the SAME H double-penalty as fix 1, generalized, for GLARE.** A synthetic glare
+   transform (`--synthetic-condition glare`: scale pixels ×1.8+20, clip at 255) reliably classified
+   `GLARE` via the real `glare_fraction` path (~0.43, well past the real 0.15 cutoff). Manual review
+   of all 55 real candidates again found zero false positives, and the SAME real double-penalty
+   pattern as fog appeared: glare genuinely blows out highlights, which `S` already penalizes via
+   `glare_fraction`, **and** the same real overexposure genuinely trips the Camera Health Monitor's
+   own exposure-clipping check (`clip_fraction`, fraction of pixels at exactly 255 — measured at
+   30-41% here, far past its 0.10 threshold) into `ABNORMAL_EXPOSURE`, initially measuring 0/55 (0%)
+   DETECTED — identical in shape to fix 1's original finding. Rather than special-case this
+   separately, fix 1's exemption was generalized into a real
+   `_WEATHER_EXPLAINED_DEGRADED_REASONS` mapping (`edge/reliability/decision.py`) —
+   `{EXCESSIVE_BLUR: {FOG_RAIN, LOW_LIGHT_NIGHT}, ABNORMAL_EXPOSURE: {GLARE}}` — so a third such
+   pairing, if ever found, is a one-line addition (see
+   `tests/unit/test_reliability.py::TestWeatherExplainedExposureDoesNotDoublePenalize`, 4 tests; full
+   suite 239/239). Re-measured: glare rose from 0/55 (0%) to **33/55 (60%) DETECTED**.
 
-**What this does NOT mean:** it does not mean fog or night detection is now "solved" — 6% of genuine
-fog crossings and 8% of genuine night crossings under these specific synthetic intensities still miss,
-a real, honest, remaining gap (daytime, notably, is now fully resolved at 100% — the remaining gap is
-entirely in the two synthetic degraded-condition datasets). It also does not mean either synthetic
-transform's specific intensity (night: scaling pixel values by 0.28 plus Gaussian noise; fog:
-`cv2.addWeighted` at 0.42/0.58 plus a 7×7 Gaussian blur) is representative of every real night/fog
-condition NETRAKSH might face — this project has no real night or fog footage to calibrate either
-transform's intensity against, or to validate fix 4's specific heuristic value against, the way fixes
-2 and 3 could lean on an already-existing, independently-justified constant (see `docs/LIMITATIONS.md`).
-This is real, open, partially-addressed work, not a fully solved one.
+**What this does NOT mean:** it does not mean fog, night, or glare detection is now "solved" — 6% of
+genuine fog crossings, 8% of genuine night crossings, and 40% of genuine glare crossings under these
+specific synthetic intensities still miss, a real, honest, remaining gap (daytime, notably, is now
+fully resolved at 100% — the remaining gap is entirely in the three synthetic degraded-condition
+datasets). It also does not mean any synthetic transform's specific intensity (night: scaling pixel
+values by 0.28 plus Gaussian noise; fog: `cv2.addWeighted` at 0.42/0.58 plus a 7×7 Gaussian blur;
+glare: scaling by ×1.8+20 with clipping) is representative of every real night/fog/glare condition
+NETRAKSH might face — this project has no real footage in any of these three conditions to calibrate
+any transform's intensity against, or to validate fix 4's specific heuristic value against, the way
+fixes 2, 3, and 6 could each lean on an already-existing, independently-justified constant (see
+`docs/LIMITATIONS.md`). This is real, open, partially-addressed work, not a fully solved one.
 
 **Night's residual, investigated specifically:** unlike fixes 1-5, no further formula bug was found —
 an honest negative result, not an unexamined gap. All 4 remaining UNCERTAIN night candidates are
@@ -237,6 +254,17 @@ softened by the haze/blur transform). `S` is nearly flat across all 52 fog candi
 (0.8126-0.8295), so `D` again separates them cleanly: the 3 lowest-`D` candidates (0.52-0.56, vs a
 0.76 mean) are *exactly* the 3 that miss threshold, `R` increasing smoothly through 0.75. No formula
 bug found — left open for the same reason as night.
+
+**Glare's residual was investigated too, and turned out to be a genuinely DIFFERENT situation from
+fog/night — checked, not assumed.** Fog and night's classification rules structurally GUARANTEE every
+classified frame fails the old reference (fog *requires* `contrast<30`, always below the old 60
+"good" target; night *requires* `brightness<60`, always below the old 128 target — 100% of instances,
+no exceptions). GLARE's classification (`glare_fraction > 0.15`) has no such ceiling: a frame right at
+that boundary scores a reasonable `glare_score` of 0.5 under the current formula, not floored — only
+frames at or past `glare_fraction ≥ 0.30` (double the classification minimum) floor to 0. This
+specific synthetic transform's measured severity (~0.43) simply sits well past that point. That is a
+transform-intensity limitation — the same honestly-disclosed category as fog/night's transform
+intensity — not a formula defect calling for a seventh fix. No further change applied.
 
 ## Honesty checklist before this goes in the PPT
 
