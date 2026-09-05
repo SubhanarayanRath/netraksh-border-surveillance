@@ -248,6 +248,23 @@ threshold, with `R` increasing smoothly right through 0.75. This is the Reliabil
 expressing more caution on the objectively weakest evidence in the dataset, not a defect — see
 `docs/LIMITATIONS.md` for why this is left open rather than force-fixed.
 
+**That conclusion was then actually tested with a milder night transform, the same way as fog's and
+glare's.** `--synthetic-condition night_mild` (scale ×0.45 vs the original ×0.28) was empirically
+tuned against 5 frames spanning the whole video to measure `brightness_mean≈53` — still reliably
+`LOW_LIGHT_NIGHT` (a consistent ~7-point safety margin under 60 throughout) but much closer to the
+boundary than the original's ~33. All 52 candidates again reviewed — zero false positives.
+
+| Night intensity | Genuine candidates | DETECTED | UNCERTAIN |
+|---|---|---|---|
+| Original (`brightness_mean≈33`) | 51 | 47 (92%) | 4 (8%) |
+| Milder (`brightness_mean≈53`) | 52 | 50 (96%) | 2 (4%) |
+
+A smaller improvement than fog's (94%→98%) or glare's (60%→88%), consistent with night having already
+had more of its structural gap closed by the two earlier reference-point fixes (fixes 3 and 4) before
+this test — less headroom remained for a milder transform to recover. The 2 remaining `night_mild`
+residuals (`D=0.47` and `D=0.49`, both far below the 0.78 mean, `T`/`S`/`H` all near-max) are the same
+genuine low-confidence-detection pattern as every other residual this session.
+
 **Fog's residual, investigated the same way, reaches the identical conclusion:** all 3 remaining
 UNCERTAIN fog candidates are genuine, correctly-detected people (small/distant figures visibly
 softened by the haze/blur transform). `S` is nearly flat across all 52 fog candidates

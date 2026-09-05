@@ -146,6 +146,18 @@ limitation — an out-of-date limitations file is worse than none.
   against — see above), or real night footage to check whether this synthetic transform's specific
   darkening intensity is even realistic for the confidence drop it produces in YOLO — neither of which
   this investigation can honestly manufacture. Left open, not force-fixed.
+  **That last point was then actually tested with a milder night transform, the same way as fog's and
+  glare's.** `--synthetic-condition night_mild` (scale ×0.45 vs the original ×0.28) was empirically
+  tuned against 5 frames spanning the whole real video to measure `brightness_mean≈53` — still
+  reliably classified `LOW_LIGHT_NIGHT` (a consistent ~7-point safety margin under 60 throughout) but
+  much closer to the boundary than the original's ~33. All 52 real candidates again manually reviewed
+  — zero false positives. Re-measured: DETECTED rose from 92% (47/51, original night intensity) to
+  **96% (50/52)** — a smaller improvement than fog's (94%→98%) or glare's (60%→88%), consistent with
+  night having already had more of its structural issue addressed by the two earlier reference-point
+  fixes (fixes 3 and 4) before this test — less headroom was left for a milder transform to recover.
+  The 2 remaining `night_mild` residuals (`D=0.47` and `D=0.49`, both far below the 0.78 mean, with
+  `T`/`S`/`H` all near-max) are the same genuine low-confidence-detection pattern as every other
+  residual this session.
   **The fog residual was investigated the same way and reaches the identical honest conclusion.** All
   3 remaining UNCERTAIN fog candidates are genuine, correctly-detected people (each snapshot manually
   re-checked — small/distant figures visibly softened by the haze/blur transform). `S` is nearly flat

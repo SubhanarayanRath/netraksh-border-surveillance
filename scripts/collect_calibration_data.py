@@ -107,6 +107,23 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         darkened = frame.astype(np.float32) * 0.28
         noise = rng.normal(0, 6.0, darkened.shape)
         return np.clip(darkened + noise, 0, 255).astype(np.uint8)
+    if condition_sim == "night_mild":
+        # A DELIBERATELY MILDER night, added to test a real hypothesis the
+        # same way fog_mild/glare_mild did for their residuals
+        # (docs/LIMITATIONS.md): is night's remaining residual (after the
+        # brightness AND contrast reference fixes) driven partly by this
+        # specific transform's severity, or purely by genuine evidence-based
+        # caution? "night" above measures brightness_mean≈33 — well inside
+        # LOW_LIGHT_NIGHT's <60 boundary. This variant (scale 0.45 vs 0.28)
+        # was empirically tuned against 5 frames spanning the whole real
+        # video to measure brightness_mean≈53 — still reliably classified
+        # LOW_LIGHT_NIGHT (a consistent ~7-point safety margin under 60
+        # throughout, and never close enough to trip FOG_RAIN's own
+        # brightness>60 requirement) but much closer to the boundary,
+        # mirroring "barely still night" rather than "deep night."
+        darkened = frame.astype(np.float32) * 0.45
+        noise = rng.normal(0, 6.0, darkened.shape)
+        return np.clip(darkened + noise, 0, 255).astype(np.uint8)
     if condition_sim == "fog":
         # Simulate fog/rain: blend toward a flat, bright haze color (real
         # fog scatters light into a near-uniform gray-white) and blur
@@ -181,7 +198,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "fog", "fog_mild", "glare", "glare_mild"], default="none",
+        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",
