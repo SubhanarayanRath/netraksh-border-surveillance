@@ -161,12 +161,32 @@ limitation — an out-of-date limitations file is worse than none.
   yet integrated into `T` — they exist as separate, zone-scoped bookkeeping inside
   `edge/rules/modules.py::BehaviorModule` today, not exposed to the Reliability Engine. Mode B (a
   `LogisticRegression` over labeled data) is not implemented — see `docs/ADR-TEMPORAL.md`.
-- **Detection thresholds are prototype values, not calibrated from labeled data.** The isotonic/Platt
-  calibration engineering in `edge/detection/calibration.py` is real and functional
-  (`CalibrationModule.fit()`), but no labeled dataset has been run through it yet — the thresholds
-  currently in force (`THRESHOLD_CLEAR_DAY` etc.) are hand-picked, conservative defaults, explicitly
-  logged as such at runtime. **Do not present these as calibrated in the PPT until `fit()` has
-  actually been run and `docs/PERFORMANCE_REPORT.md` reflects it.**
+- **Detection thresholds are prototype values, not calibrated from labeled data — and a real attempt
+  was made, reusing the SAME real labeled data as the Reliability Engine's weight-calibration
+  attempt above, which found the same fundamental limit AND a real bug in `fit()` itself.**
+  `scripts/fit_detection_thresholds.py` fed `CalibrationModule.fit()` the already-reviewed,
+  already-labeled fence-crossing candidates from all three real datasets
+  (`scripts/calibration_data{,_night,_fog}/manifest.json`), bucketed by their real scene condition —
+  the first real caller this module has ever had. As already established above, every one of these
+  real candidates is a genuine detection (label=1) in every condition — zero false positives — so
+  there is no real precision/recall signal anywhere in this project's footage to fit a threshold
+  against, for the same underlying reason the weight-calibration attempt was refused.
+  **A real, previously-latent bug was found in `fit()` while attempting this**: unlike
+  `scripts/fit_reliability_weights.py` (built with an explicit single-class guard from the start),
+  `CalibrationModule.fit()` had NO such guard — fed a single-class `labels` array, isotonic
+  regression collapses to a constant ~1.0 regardless of confidence, every threshold in the F1 search
+  then scores a meaningless perfect F1=1.0 (no negatives ever exist to produce a false positive), and
+  the loop silently returns its very first candidate (0.1) as if it were a real, "calibrated"
+  threshold — actively worse than the honest prototype default it would have replaced, and
+  `is_calibrated()` would have reported `True`. This has been fixed: `fit()` now raises a `ValueError`
+  and leaves the existing thresholds/`is_calibrated()` state completely unchanged when given
+  single-class labels (8 new tests in the module's first-ever test file,
+  `tests/unit/test_calibration.py`, including a regression check that the original, real isotonic/
+  Platt logic still works correctly on genuine two-class synthetic data; full suite 235/235). The
+  thresholds currently in force (`THRESHOLD_CLEAR_DAY` etc.) remain hand-picked, conservative
+  defaults, explicitly logged as such at runtime. **Do not present these as calibrated in the PPT** —
+  `fit()` has now actually been run, for real, against real labeled data, and correctly refused for
+  all three conditions; that refusal is the honest, current status, not an untried gap anymore.
 - **No custom border-surveillance dataset exists.** A future dataset covering night/fog/rain/terrain
   could be collected and used to fine-tune the detector — this is documented as future work, not
   claimed as already done anywhere in this codebase.

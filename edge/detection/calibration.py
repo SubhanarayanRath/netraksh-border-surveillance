@@ -1,10 +1,10 @@
 """
-NETRAKSH Edge — Calibration module.
+NETRAKSH Edge -- Calibration module.
 Provides per-condition confidence thresholds for Gate 3.
 
 Architecture §17: "Gate 3 (Calibrated confidence): detector confidence vs.
 a threshold specific to the Gate 2 bucket, fit via isotonic regression /
-Platt scaling on a labeled validation set per bucket — never hand-picked."
+Platt scaling on a labeled validation set per bucket -- never hand-picked."
 
 Implementation status:
   - Calibration ARCHITECTURE is fully implemented (isotonic regression via scikit-learn).
@@ -28,7 +28,7 @@ from shared.constants import CONDITION_THRESHOLD_KEYS, SceneCondition
 logger = logging.getLogger(__name__)
 
 # Prototype thresholds (labeled explicitly as such)
-# Source: .env THRESHOLD_* vars — defaults chosen to be conservative for demo.
+# Source: .env THRESHOLD_* vars -- defaults chosen to be conservative for demo.
 # These are NOT scientifically calibrated values.
 _PROTOTYPE_THRESHOLDS: Dict[SceneCondition, float] = {
     SceneCondition.CLEAR_DAY: float(os.environ.get("THRESHOLD_CLEAR_DAY", "0.45")),
@@ -100,6 +100,31 @@ class CalibrationModule:
         from sklearn.linear_model import LogisticRegression
 
         logger.info(f"[Calibration] Fitting {method} calibration for {condition} with {len(confidences)} samples")
+
+        # Real bug found and fixed here (see docs/LIMITATIONS.md and
+        # scripts/fit_detection_thresholds.py for the full, honest writeup):
+        # with a single-class `labels` array (e.g. a real dataset that
+        # happens to contain zero false positives -- exactly what this
+        # project's own manually-reviewed fence-crossing candidates turned
+        # out to be, across all three scene conditions), isotonic regression
+        # collapses to a constant ~1.0 output regardless of confidence, and
+        # every threshold in the search below then scores a meaningless
+        # perfect F1=1.0 (no negatives exist to ever produce a false
+        # positive) -- silently returning the search's very first candidate
+        # threshold (0.1) as if it were "calibrated," which is actively
+        # worse than the honest prototype default it would replace. Refuse
+        # instead of computing this degenerate result, leaving the current
+        # thresholds and is_calibrated() state completely unchanged.
+        unique_labels = np.unique(labels)
+        if unique_labels.size < 2:
+            raise ValueError(
+                f"CalibrationModule.fit() refused for {condition}: labels contains only "
+                f"{unique_labels.tolist()} -- a single-class dataset has no real precision/recall "
+                f"signal to fit a threshold against (isotonic regression would collapse to a "
+                f"constant, and every threshold would score a meaningless perfect F1). This is a "
+                f"real, honest limitation of the labeled data, not a bug in this check -- see "
+                f"docs/LIMITATIONS.md. Existing thresholds are left unchanged."
+            )
 
         if method == "isotonic":
             calibrator = IsotonicRegression(out_of_bounds="clip")
