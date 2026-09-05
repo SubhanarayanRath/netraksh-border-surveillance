@@ -1383,6 +1383,17 @@ Render's own database access, in FK-safe order (`alerts` → `evidence_packages`
 `events`) — that step needs the user's own database credentials, which this session
 correctly never had.
 
+**Follow-up, completed:** the user provided the live Postgres's external connection string
+directly. Before touching anything, re-queried the exact same 8 `event_id`s directly
+against the real database (via `psycopg2`) to confirm the count and FK relationships
+matched what the API had already shown (8 events, 8 evidence_packages, 2 alerts) — not
+assumed from the earlier read. Ran the three deletes in one transaction, in FK-safe order,
+committing only after all three succeeded. Verified immediately after via the real
+`GET /system/verify-chain`: `"is_valid": true, "message": "Successfully verified 6 blocks
+across all edge hash chains."` — confirmed live in the browser too (the Sync Status panel
+now shows this in green), and confirmed the remaining 2 real cross-command alerts and both
+camera health cards still render correctly, nothing else was disturbed by the cleanup.
+
 ---
 
 ## Assumptions and Limitations

@@ -107,16 +107,13 @@ limitation — an out-of-date limitations file is worse than none.
   for its "Chain Integrity" line** (previously a hardcoded "Chain Integrity OK" regardless
   of any real state) — this means it shows "N block(s) failed integrity verification. Chain
   compromised." in red for any event whose `EvidencePackage` doesn't carry a real,
-  verifiable Ed25519 signature. `scripts/seed_demo_events.py` was rewritten to generate a
-  real keypair per demo camera and sign every event properly (replacing an earlier version
-  that used a clearly-labeled stub signature) — new events seeded this way verify `True`.
-  **Not fully resolved on the live Render deployment**: the 8 events from the *earlier*,
-  unsigned seed run are still there (there's no `DELETE /events` endpoint — evidence is
-  meant to be append-only — and no direct database access from this environment), so
-  `GET /system/verify-chain` still reports "8 block(s) failed" alongside the 6 new
-  correctly-signed ones. The exact 8 `event_id`s (and 2 `alerts` rows referencing them) were
-  identified and handed to the user as copy-paste SQL to remove via Render's own database
-  access — that step needs the user's own credentials.
+  verifiable Ed25519 signature. `scripts/seed_demo_events.py` generates a real keypair per
+  demo camera and signs every event properly. The live Render deployment's demo events are
+  all real-signed as of this writing (`GET /system/verify-chain` reports
+  `"Successfully verified 6 blocks across all edge hash chains."`) — an earlier batch of 8
+  unsigned demo events was found, identified precisely by `event_id`, and removed directly
+  from the live database (with the user's own credentials, in FK-safe order:
+  `alerts` → `evidence_packages` → `events`) once discovered.
 - **Every backend-generated timestamp is stored and returned as a naive datetime with no
   UTC marker** (`SQLAlchemy`'s `DateTime` columns, populated via `datetime.utcnow()`
   throughout the codebase — the same call this project's own test suite already flags as
