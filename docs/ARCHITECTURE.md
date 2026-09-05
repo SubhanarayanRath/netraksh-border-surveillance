@@ -1206,6 +1206,35 @@ no frontend test suite, pre-existing gap); verified via a standalone Node script
 
 ---
 
+## Sidebar Logo Label Overflow Fix
+
+Reported by the user with a screenshot: the "NETRAKSH" caption under the sidebar's logo
+mark showed as "ETRAKSH" — the leading "N" visibly missing.
+
+**Root cause:** `.sidebar-left` (`index.css`) is a fixed 60px column, the leftmost in the
+page's grid layout (`x=0`). The label was `text-[9px]` with Tailwind's `tracking-widest`
+(extra letter-spacing) in Space Grotesk — a wide geometric display font — with no width
+constraint on the `<span>` itself, so it sized to its own content rather than the sidebar's
+60px column. At 9 characters plus the extra tracking, the rendered text was wider than the
+column, and because this is the leftmost column with nothing further left, the overflow ran
+off the left edge of the browser viewport itself and was clipped there — not wrapped, not
+shrunk, just cut off at whatever pixel happened to be x=0.
+
+**Fixed:** `frontend/src/components/Sidebar.jsx` — the label now has an explicit
+`width: '40px'` (matching the icon rail below it), no extra letter-spacing, a smaller
+`fontSize: '6px'`, and `whiteSpace: 'normal'` / `wordBreak: 'break-word'` as a deliberate
+safety net: even if a future font swap or text change runs slightly wide again, it wraps to
+a second line inside its own box instead of silently overflowing off-screen the way this
+bug did.
+
+**Verified live, not just visually:** rebuilt, reloaded, and confirmed via
+`find("NETRAKSH")`/accessibility-tree inspection (not just eyeballing a screenshot) that the
+rendered text node is the complete, untruncated word — then re-checked at a mobile
+viewport width to confirm the fix holds there too, since the original bug was itself a
+viewport-edge clipping issue.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

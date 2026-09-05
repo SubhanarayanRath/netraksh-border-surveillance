@@ -19,7 +19,21 @@ export default function Sidebar() {
         <div className="w-10 h-10 flex items-center justify-center rounded border" style={{backgroundColor: 'var(--bg-elevated)'}}>
           <Logo size={26} />
         </div>
-        <span className="text-[9px] font-display font-bold tracking-widest text-ok" style={{lineHeight: 1}}>NETRAKSH</span>
+        {/* This sidebar column is a fixed 60px (.sidebar-left, index.css) — at
+            9px + tracking-widest, "NETRAKSH" in Space Grotesk (a wide
+            geometric font) overflowed past the container's left edge and,
+            since this is the leftmost column at x=0, past the browser
+            viewport itself, clipping the "N" instead of wrapping or
+            shrinking to fit. Constrained to the icon rail's own 40px width
+            with no extra letter-spacing and explicit wrapping allowed as a
+            safety net, so even if a font metric runs slightly wide again,
+            it wraps to a second line instead of clipping off-screen. */}
+        <span
+          className="font-display font-bold text-ok text-center"
+          style={{ fontSize: '6px', lineHeight: 1.2, width: '40px', whiteSpace: 'normal', wordBreak: 'break-word' }}
+        >
+          NETRAKSH
+        </span>
       </div>
 
       <div className="flex-col gap-4" style={{width: '40px', height: '40px'}}>
