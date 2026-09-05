@@ -8,6 +8,7 @@ export default function Header() {
   const [timeStr, setTimeStr] = useState('');
   const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ queued: 0, synced: 0, failed: 0 });
+  const [pendingAlerts, setPendingAlerts] = useState(null); // null = not yet known
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -35,6 +36,25 @@ export default function Header() {
     };
     fetchSync();
     const timer = setInterval(fetchSync, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // The "⚠ 04" badge used to be a hardcoded literal "04" — never reflected
+  // anything real. /system/status already returns a real
+  // pending_acknowledgements count (backend/api/system.py); it just wasn't
+  // being read anywhere in the frontend.
+  useEffect(() => {
+    const fetchAlertCount = async () => {
+      try {
+        const res = await authFetch('/system/status');
+        if (res.ok) {
+          const data = await res.json();
+          setPendingAlerts(data.pending_acknowledgements);
+        }
+      } catch (_e) {}
+    };
+    fetchAlertCount();
+    const timer = setInterval(fetchAlertCount, 5000);
     return () => clearInterval(timer);
   }, []);
 
@@ -67,8 +87,8 @@ export default function Header() {
             </button>
           </div>
           
-          <Link to="/alerts" className="badge badge-danger hover:scale-105 transition-transform">
-            <AlertTriangle size={14} /> 04
+          <Link to="/cross-command-alerts" className="badge badge-danger hover:scale-105 transition-transform">
+            <AlertTriangle size={14} /> {pendingAlerts != null ? String(pendingAlerts).padStart(2, '0') : '--'}
           </Link>
           
           <div className="w-8 h-8 rounded-full bg-elevated flex items-center justify-center border text-ok">

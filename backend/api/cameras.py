@@ -1,13 +1,15 @@
 """
 NETRAKSH — Cameras router.
-GET /cameras          — list all cameras with latest health
-GET /cameras/{id}     — get camera detail + health history
-POST /cameras         — register camera (ADMIN)
-PUT /cameras/{id}/public-key    — upload edge device public key (ADMIN)
-PUT /cameras/{id}/evidence-key  — upload edge device evidence-encryption key (ADMIN)
+GET  /cameras          — list all cameras with latest health
+GET  /cameras/{id}     — get camera detail + health history
+POST /cameras          — register camera (ADMIN)
+POST /cameras/{id}/health       — periodic real health telemetry from the edge
+PUT  /cameras/{id}/public-key   — upload edge device public key (ADMIN)
+PUT  /cameras/{id}/evidence-key — upload edge device evidence-encryption key (ADMIN)
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import List, Optional
@@ -20,7 +22,7 @@ from backend.database.session import get_db
 from backend.models.orm import Camera, CameraHealth
 from backend.security.auth import require_admin, require_any_role
 from backend.security.evidence_key_wrap import wrap_key
-from shared.schemas import CameraStatusResponse
+from shared.schemas import CameraHealthReport, CameraStatusResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cameras", tags=["cameras"])
@@ -45,6 +47,62 @@ async def get_camera(
     if not cam:
         raise HTTPException(status_code=404, detail="Camera not found")
     return _camera_to_response(cam, db)
+
+
+@router.post("/{camera_id}/health", status_code=status.HTTP_201_CREATED)
+async def report_camera_health(
+    camera_id: str,
+    payload: CameraHealthReport,
+    db: Session = Depends(get_db),
+    # MVP: edge authentication disabled for local demo, same posture as
+    # POST /events (backend/api/events.py) — see docs/LIMITATIONS.md.
+):
+    """
+    Periodic real health telemetry push from the edge (edge/main.py's
+    EdgePipeline._report_camera_health, roughly every 5s), independent of
+    any detection event.
+
+    Before this endpoint existed, CameraHealthMonitor
+    (edge/health/camera_health.py) computed real health every frame but
+    nothing ever persisted it — the CameraHealth table was never written to
+    by any code path, so GET /cameras always returned health_state=UNKNOWN
+    for every real camera and the frontend's Camera Health Matrix page ran
+    entirely on mock data. This is what actually connects the two.
+    """
+    camera = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not camera:
+        logger.warning(f"Health report from unknown camera {camera_id} — creating stub camera")
+        camera = Camera(id=camera_id, name=f"Unknown-{camera_id[:8]}", location="unknown")
+        db.add(camera)
+        db.flush()
+
+    record = CameraHealth(
+        camera_id=camera_id,
+        health_state=str(payload.health_state),
+        health_reason=str(payload.health_reason),
+        timestamp=payload.health_timestamp,
+        fps_actual=payload.fps_actual,
+        fps_declared=payload.fps_declared,
+        drift_seconds=payload.drift_seconds,
+        blur_score=payload.blur_score,
+        exposure_clip_fraction=payload.exposure_clip_fraction,
+        frame_variance=payload.frame_variance,
+    )
+    db.add(record)
+    db.commit()
+
+    from backend.api.websocket import broadcast_camera_health
+    asyncio.create_task(broadcast_camera_health({
+        "camera_id": camera_id,
+        "status": record.health_state,
+        "health_reason": record.health_reason,
+        "fps": record.fps_actual,
+        "blur_score": record.blur_score,
+        "exposure_clip_fraction": record.exposure_clip_fraction,
+        "drift_seconds": record.drift_seconds,
+    }))
+
+    return {"camera_id": camera_id, "health_state": record.health_state}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -135,9 +193,12 @@ def _camera_to_response(cam: Camera, db: Session) -> CameraStatusResponse:
         camera_id=cam.id,
         name=cam.name,
         location=cam.location,
-        health_state=latest_health.health_state if latest_health else "UNKNOWN",
+        health_state=latest_health.health_state if latest_health else None,
         health_reason=latest_health.health_reason if latest_health else None,
         last_health_check=latest_health.timestamp if latest_health else None,
+        fps_declared=latest_health.fps_declared if latest_health else None,
+        blur_score=latest_health.blur_score if latest_health else None,
+        exposure_clip_fraction=latest_health.exposure_clip_fraction if latest_health else None,
         fps_actual=latest_health.fps_actual if latest_health else None,
         drift_seconds=latest_health.drift_seconds if latest_health else None,
     )

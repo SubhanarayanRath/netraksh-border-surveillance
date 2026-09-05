@@ -263,9 +263,30 @@ architecture section that specifies it.
   D/T/S/H factors, R score, and threshold parsed from the real `decision_reason` string, instead of
   hardcoded placeholder values — verified end-to-end by POSTing a real event through the real
   ingestion endpoint and confirming the rendered numbers in a live screenshot, not just reading the
-  code. **Found but not yet fixed, while wiring this:** the dashboard's "Demo Scenario Control" panel
-  (Normal Ops / Dense Fog / Sensor Failure / Offline buttons) was not inspected or verified this pass —
-  whether those buttons trigger anything real is unknown and not claimed either way.
+  code. The dashboard's "Demo Scenario Control" panel (Normal Ops / Dense Fog / Sensor Failure /
+  Offline buttons) was later confirmed (not just left unverified) to call backend routes that don't
+  exist at all — see the frontend audit entry below.
+- **Camera Health Matrix, Cross-Command Alerts, and the Dashboard's video overlay label are now wired
+  to real backend data** (a full audit + fix pass — see `docs/ARCHITECTURE.md`'s "Frontend Audit + Full
+  Real-Data Wiring Pass" for complete detail on each). Summary: `GET /cameras` is now actually called
+  (it never was); a real `POST /cameras/{id}/health` ingestion endpoint was added because the backend
+  had never once written a `CameraHealth` row despite the edge computing real values every frame;
+  `GET /alerts` is now actually called and the 2 hardcoded fake alerts that used to be permanently
+  mixed into the real WS feed are now a true empty-state fallback only; the video overlay's detection
+  label now uses the real event's `detection_class`/`track_id`/`confidence` instead of a hardcoded
+  placeholder that could never be replaced (the dead `eventData.bbox` check it depended on can never
+  be true — `EventResponse` has no `bbox` field). The header's "⚠ 04" alert badge is now a real count
+  from `/system/status`'s `pending_acknowledgements`.
+- **A second `/health`-class route collision was found and fixed:** the frontend's `/alerts` SPA route
+  collided with the real backend route `GET /alerts`, identically to the earlier `/health` collision.
+  Renamed to `/cross-command-alerts`. Every remaining frontend route was then checked against every
+  backend router prefix to confirm no further collisions exist.
+- **A real, previously-latent 500 error in `GET /cameras` was found and fixed:** `_camera_to_response()`
+  passed the literal string `"UNKNOWN"` as a `CameraHealthState` for any camera with no health row yet
+  — but that enum only has `OK`/`DEGRADED`/`FAILED`. This endpoint would 500 for every real camera in
+  the database until its very first health report, which (see above) had never happened for any camera
+  before this pass, meaning this endpoint had never once returned successfully for real camera data.
+  Fixed by making `CameraStatusResponse.health_state` `Optional`.
 - Zone matching (`edge/rules/modules.py::normalize_point`) is now resolution-independent and
   unit-tested end-to-end at two different frame sizes from the same config
   (`tests/unit/test_zone_normalization.py`) — closing a real bug where raw-pixel comparisons against

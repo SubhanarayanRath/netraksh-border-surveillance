@@ -252,12 +252,46 @@ class EdgePipeline:
                 if frame_count % frame_skip != 0:
                     continue
 
-                self._process_frame(frame, meta, last_health_report_time)
+                self._process_frame(frame, meta)
                 if time.time() - last_health_report_time > 5.0:
                     last_health_report_time = time.time()
+                    self._report_camera_health()
                 if time.time() - last_metrics_report_time > self._metrics_report_interval:
                     last_metrics_report_time = time.time()
                     self._report_metrics()
+
+    def _report_camera_health(self) -> None:
+        """
+        Push a periodic real health snapshot to the backend
+        (POST /cameras/{id}/health), independent of any detection event —
+        this is what actually populates the Camera Health Matrix dashboard
+        page's per-camera FPS/blur/exposure/drift readings.
+
+        Before this method existed, `last_health_report_time` was threaded
+        through `_process_frame`'s signature every frame but never actually
+        read there — a dead timer implying a heartbeat that was never sent,
+        despite this module's docstring claiming one existed. CameraHealth
+        rows were never written by any code path (see docs/LIMITATIONS.md).
+
+        Best-effort only, same posture as SyncClient's offline tolerance —
+        a failed POST here must never interrupt the frame loop. This is
+        NOT routed through the offline sync queue (unlike events): it's a
+        best-effort heartbeat, not evidence: losing one is fine, and the
+        next one is only 5 seconds away.
+        """
+        health = getattr(self, "_last_health", None)
+        if health is None:
+            return
+        try:
+            import httpx
+            httpx.post(
+                f"{self.sync_client.backend_url}/cameras/{self.camera_id}/health",
+                content=health.model_dump_json(),
+                headers={"Content-Type": "application/json"},
+                timeout=3.0,
+            )
+        except Exception as exc:
+            logger.debug(f"[Health] Periodic health report failed (non-fatal): {exc}")
 
     def _apply_continuity_guard(self, tracks: List, frame) -> List:
         """
@@ -286,7 +320,7 @@ class EdgePipeline:
             self._known_track_ids.add(track.track_id)
         return tracks
 
-    def _process_frame(self, frame, meta, last_health_report_time: float) -> None:
+    def _process_frame(self, frame, meta) -> None:
         """Process a single frame through the full pipeline."""
         import numpy as np
 
@@ -297,6 +331,7 @@ class EdgePipeline:
 
         # === Layer 2: Gate 1 — Camera Health ===
         health = self.health_monitor.update(frame, meta.timestamp)
+        self._last_health = health
 
         # === Layer 2: Gate 2 — Scene Condition ===
         condition = self.condition_classifier.classify(frame)

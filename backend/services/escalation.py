@@ -77,6 +77,8 @@ def check_and_escalate(event: Event, db: Session) -> None:
                 "crosses_jurisdiction_boundary": crosses_boundary,
                 "decision_state": event.decision_state,
                 "camera_id": event.camera_id,
+                "event_type": event.event_type,
+                "zone_id": event.zone_id,
                 "timestamp": event.timestamp.isoformat() if event.timestamp else None,
             }))
     except Exception as exc:

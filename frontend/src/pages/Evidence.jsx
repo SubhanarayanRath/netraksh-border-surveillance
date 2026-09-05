@@ -1,22 +1,21 @@
-import { useState, useEffect } from 'react';
-import { Search, Shield, CheckCircle, Database, GitBranch, Cloud, Lock } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, Shield, CheckCircle, Database, GitBranch, Cloud } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
-import { authFetch, login, WS_URL } from '../services/auth';
+import { authFetch, WS_URL } from '../services/auth';
+import LoginPrompt from '../components/LoginPrompt';
 
 export default function Evidence() {
   const { events } = useWebSocket(WS_URL);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [verifyStatus, setVerifyStatus] = useState(null); // 'verifying', 'verified', 'failed'
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Real decrypted evidence image (GET /events/{id}/evidence-image), separate
   // from the static /mock-fence.jpg placeholder this page already had.
   const [evidenceImageUrl, setEvidenceImageUrl] = useState(null);
   const [evidenceImageStatus, setEvidenceImageStatus] = useState('idle');
   // idle | loading | ready | no-evidence | no-key | auth-required | error
-  const [loginUsername, setLoginUsername] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState(null);
-  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [evidenceImageSizeBytes, setEvidenceImageSizeBytes] = useState(null);
 
   // Use mock events if none from websocket
   const displayEvents = events.length > 0 ? events : [
@@ -30,9 +29,26 @@ export default function Evidence() {
     }
   }, [displayEvents]);
 
+  // The search box previously had no onChange at all — typing in it did
+  // nothing. Matches event_id and hash (what the placeholder promises),
+  // plus event_type/decision_state — the visible title text on every list
+  // item — since a real user typing a word they can see on screen (e.g.
+  // "Perimeter") expects it to match, even though it isn't literally an
+  // "ID or Hash".
+  const filteredEvents = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return displayEvents;
+    return displayEvents.filter((ev) =>
+      ev.event_id?.toLowerCase().includes(q) ||
+      ev.hash?.toLowerCase().includes(q) ||
+      ev.event_type?.toLowerCase().includes(q) ||
+      ev.decision_state?.toLowerCase().includes(q)
+    );
+  }, [displayEvents, searchQuery]);
+
   const loadEvidenceImage = async (eventId) => {
     setEvidenceImageStatus('loading');
-    setLoginError(null);
+    setEvidenceImageSizeBytes(null);
     try {
       const res = await authFetch(`/events/${eventId}/evidence-image`);
       if (res.status === 401 || res.status === 403) {
@@ -48,6 +64,7 @@ export default function Evidence() {
         return;
       }
       const blob = await res.blob();
+      setEvidenceImageSizeBytes(blob.size);
       setEvidenceImageUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return URL.createObjectURL(blob);
@@ -76,20 +93,6 @@ export default function Evidence() {
       });
     };
   }, []);
-
-  const handleLoginSubmit = async (e) => {
-    e.preventDefault();
-    setLoginSubmitting(true);
-    setLoginError(null);
-    try {
-      await login(loginUsername, loginPassword);
-      if (selectedEvent) await loadEvidenceImage(selectedEvent.event_id);
-    } catch (err) {
-      setLoginError(err.message);
-    } finally {
-      setLoginSubmitting(false);
-    }
-  };
 
   const handleVerify = async () => {
     if (!selectedEvent) return;
@@ -149,22 +152,31 @@ export default function Evidence() {
           </div>
           <div className="relative mb-4">
             <Search size={16} className="absolute left-3 top-2.5 text-muted" />
-            <input type="text" placeholder="Search by ID or Hash..." className="w-full bg-dark border border-color rounded py-2 pl-10 pr-3 text-sm text-main" />
+            <input
+              type="text" placeholder="Search by ID or Hash..." value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-dark border border-color rounded py-2 pl-10 pr-3 text-sm text-main"
+            />
           </div>
 
           <div className="flex flex-col gap-2 overflow-y-auto pr-2">
-            {displayEvents.map((ev) => {
+            {filteredEvents.length === 0 && (
+              <div className="text-muted text-xs text-center mt-4">No events match "{searchQuery}"</div>
+            )}
+            {filteredEvents.map((ev) => {
               const isSelected = selectedEvent?.event_id === ev.event_id;
               let badgeColor = ev.decision_state === 'DETECTED' ? 'ok' : ev.decision_state === 'UNCERTAIN' ? 'warning' : 'danger';
               return (
-                <div 
-                  key={ev.event_id} 
+                <div
+                  key={ev.event_id}
                   onClick={() => setSelectedEvent(ev)}
                   className={`p-3 border rounded cursor-pointer transition-colors ${isSelected ? 'border-ok bg-[rgba(74,222,128,0.05)]' : 'border-color hover-bg-elevated'}`}
                 >
                   <div className="flex justify-between items-center mb-2">
                     <span className="font-display text-main text-sm">#{ev.event_id.split('-')[0]}</span>
-                    <span className={`text-[10px] px-1 border rounded text-${badgeColor} border-${badgeColor}`}>SIGNED</span>
+                    <span className={`text-[10px] px-1 border rounded text-${badgeColor} border-${badgeColor}`}>
+                      {ev.signature ? 'SIGNED' : 'UNSIGNED'}
+                    </span>
                   </div>
                   <div className="text-sm text-main mb-1 truncate">{ev.event_type || ev.decision_state}</div>
                   <div className="text-xs text-muted font-body">
@@ -246,29 +258,10 @@ export default function Evidence() {
 
                 {evidenceImageStatus === 'auth-required' && (
                   <div className="absolute inset-0 bg-black/85 flex items-center justify-center p-3">
-                    <form onSubmit={handleLoginSubmit} className="w-full flex flex-col gap-2">
-                      <div className="flex items-center gap-1 text-muted mb-1">
-                        <Lock size={12} />
-                        <span className="text-[10px] font-display uppercase tracking-widest">Sign in to view evidence</span>
-                      </div>
-                      <input
-                        type="text" placeholder="Username" value={loginUsername}
-                        onChange={(e) => setLoginUsername(e.target.value)}
-                        className="w-full bg-dark border border-color rounded py-1.5 px-2 text-xs text-main"
-                      />
-                      <input
-                        type="password" placeholder="Password" value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                        className="w-full bg-dark border border-color rounded py-1.5 px-2 text-xs text-main"
-                      />
-                      {loginError && <span className="text-[10px] text-danger">{loginError}</span>}
-                      <button
-                        type="submit" disabled={loginSubmitting}
-                        className="w-full bg-white hover:bg-gray-200 text-black py-1.5 rounded font-display text-xs uppercase tracking-widest transition-colors"
-                      >
-                        {loginSubmitting ? 'Signing in...' : 'Sign in'}
-                      </button>
-                    </form>
+                    <LoginPrompt
+                      message="Sign in to view evidence"
+                      onSuccess={() => selectedEvent && loadEvidenceImage(selectedEvent.event_id)}
+                    />
                   </div>
                 )}
 
@@ -313,15 +306,22 @@ export default function Evidence() {
               {/* Connecting line */}
               <div className="absolute top-6 left-[10%] right-[10%] h-[1px] bg-color border-b border-color -z-10"></div>
               
-              <VerificationStep 
-                icon={Database} title="Event Data Extracted" 
-                status="RAW: 1.4MB" 
-                active={verifyStatus !== null} 
+              <VerificationStep
+                icon={Database} title="Event Data Extracted"
+                // Real decrypted evidence size when we actually have the
+                // bytes (evidenceImageSizeBytes, set in loadEvidenceImage);
+                // this used to be a hardcoded "RAW: 1.4MB" for every event
+                // regardless of whether one existed at all.
+                status={evidenceImageSizeBytes != null ? `RAW: ${(evidenceImageSizeBytes / 1024).toFixed(1)}KB` : 'NO FILE'}
+                active={verifyStatus !== null}
               />
-              <VerificationStep 
-                icon={Shield} title="SHA-256 Generated" 
-                status={verifyStatus === 'verified' ? "A94F...72C1" : "PENDING"} 
-                active={verifyStatus !== null} 
+              <VerificationStep
+                icon={Shield} title="SHA-256 Generated"
+                // Real hash from EventResponse.hash, truncated for display —
+                // this used to be the literal string "A94F...72C1" for
+                // every single event, never the event's actual hash.
+                status={selectedEvent?.hash ? `${selectedEvent.hash.slice(0, 4)}...${selectedEvent.hash.slice(-4)}` : 'PENDING'}
+                active={verifyStatus !== null}
               />
               <VerificationStep 
                 icon={GitBranch} title="Local Chain Check" 

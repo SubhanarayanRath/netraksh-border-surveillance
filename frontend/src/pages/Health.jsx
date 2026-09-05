@@ -1,107 +1,147 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CameraOff, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
-import { WS_URL } from '../services/auth';
+import { WS_URL, authFetch } from '../services/auth';
+import LoginPrompt from '../components/LoginPrompt';
 
+// This entire page used to be 3 hardcoded mock cameras (CAM-07/12/04) with
+// a "82%" / "36 OK / 5 DEGRADED / 3 FAILED" summary that didn't even
+// arithmetically match the 3 cameras rendered below it — and a WebSocket
+// merge that could never actually fire, since nothing in the backend ever
+// broadcast a `camera_health` message. Both gaps are now closed:
+//   - GET /cameras (backend/api/cameras.py) is now actually called here.
+//   - POST /cameras/{id}/health (added alongside this change) is what the
+//     edge pipeline now calls periodically (edge/main.py's new
+//     _report_camera_health), and its handler broadcasts camera_health
+//     over the WebSocket — so the merge below can genuinely fire now.
+// See docs/ARCHITECTURE.md for the full account.
 export default function Health() {
   const { health } = useWebSocket(WS_URL);
+  const [cameras, setCameras] = useState([]);
+  const [status, setStatus] = useState('loading'); // loading | ready | auth-required | error
+  const [filter, setFilter] = useState('all'); // all | attention
 
-  const mockCameras = [
-    { id: 'CAM-07', zone: 'North Fence', status: 'OK', fps: 30, jitter: 2, blur: 0.1, exposure: 'BAL', drift: 0.8, ai: 'NOMINAL' },
-    { id: 'CAM-12', zone: 'Sector B', status: 'DEGRADED', fps: 12, jitter: 45, blur: 0.7, exposure: 'LOW', drift: 1.2, ai: '< 40%' },
-    { id: 'CAM-04', zone: 'East Gate', status: 'FAILED', fps: 0, jitter: null, blur: null, exposure: 'N/A', drift: null, ai: 'FROZEN' },
-  ];
-
-  // Merge websocket health data with mock data if available
-  const cameras = mockCameras.map(cam => {
-    if (health[cam.id]) {
-      const h = health[cam.id];
-      return {
-        ...cam,
-        status: h.status, // OK, DEGRADED, FAILED
-        fps: h.fps,
-        blur: h.blur_score,
-      };
+  const loadCameras = useCallback(async () => {
+    setStatus('loading');
+    try {
+      const res = await authFetch('/cameras');
+      if (res.status === 401 || res.status === 403) {
+        setStatus('auth-required');
+        return;
+      }
+      if (!res.ok) {
+        setStatus('error');
+        return;
+      }
+      setCameras(await res.json());
+      setStatus('ready');
+    } catch (_e) {
+      setStatus('error');
     }
-    return cam;
-  });
+  }, []);
+
+  useEffect(() => { loadCameras(); }, [loadCameras]);
+
+  // Merge live WS camera_health pushes (now real — see module comment
+  // above) into the list fetched from GET /cameras, keyed by camera_id.
+  const mergedCameras = useMemo(() => cameras.map((cam) => {
+    const h = health[cam.camera_id];
+    if (!h) return cam;
+    return {
+      ...cam,
+      health_state: h.status ?? cam.health_state,
+      health_reason: h.health_reason ?? cam.health_reason,
+      fps_actual: h.fps ?? cam.fps_actual,
+      blur_score: h.blur_score ?? cam.blur_score,
+      exposure_clip_fraction: h.exposure_clip_fraction ?? cam.exposure_clip_fraction,
+      drift_seconds: h.drift_seconds ?? cam.drift_seconds,
+    };
+  }), [cameras, health]);
+
+  const okCount = mergedCameras.filter((c) => c.health_state === 'OK').length;
+  const degradedCount = mergedCameras.filter((c) => c.health_state === 'DEGRADED').length;
+  const failedCount = mergedCameras.filter((c) => c.health_state === 'FAILED').length;
+  const unknownCount = mergedCameras.length - okCount - degradedCount - failedCount;
+  const sightPct = mergedCameras.length > 0 ? Math.round((okCount / mergedCameras.length) * 100) : null;
+  const needsAttentionCount = degradedCount + failedCount + unknownCount;
+
+  const visibleCameras = filter === 'attention'
+    ? mergedCameras.filter((c) => c.health_state !== 'OK')
+    : mergedCameras;
 
   const CameraCard = ({ cam }) => {
     let borderColor = 'border-color';
-    let badgeColor = 'bg-neutral text-white';
-    
-    if (cam.status === 'OK') {
-      borderColor = 'border-ok';
-      badgeColor = 'bg-ok text-black';
-    } else if (cam.status === 'DEGRADED') {
-      borderColor = 'border-warning';
-      badgeColor = 'bg-warning text-black';
-    } else if (cam.status === 'FAILED') {
-      borderColor = 'border-danger';
-      badgeColor = 'bg-danger text-white';
-    }
+    if (cam.health_state === 'OK') borderColor = 'border-ok';
+    else if (cam.health_state === 'DEGRADED') borderColor = 'border-warning';
+    else if (cam.health_state === 'FAILED') borderColor = 'border-danger';
 
     return (
       <div className={`bg-panel border rounded flex flex-col overflow-hidden ${borderColor}`}>
         <div className="h-32 w-full relative bg-black flex items-center justify-center">
-          {cam.status === 'FAILED' ? (
+          {cam.health_state === 'FAILED' ? (
             <div className="flex flex-col items-center gap-2 text-danger">
               <CameraOff size={32} />
               <span className="text-xs font-display tracking-widest">NO SIGNAL</span>
             </div>
           ) : (
-            <div className="w-full h-full relative" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', filter: cam.status === 'DEGRADED' ? 'blur(4px) brightness(0.5)' : 'none' }}>
-              <div className="absolute top-2 left-2 text-[10px] font-display bg-white text-black px-1 rounded">{cam.status === 'OK' ? 'ONLINE' : 'DEGRADED'}</div>
+            <div className="w-full h-full relative" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', filter: cam.health_state === 'DEGRADED' ? 'blur(4px) brightness(0.5)' : 'none' }}>
+              <div className="absolute top-2 left-2 text-[10px] font-display bg-white text-black px-1 rounded">{cam.health_state === 'OK' ? 'ONLINE' : cam.health_state === 'DEGRADED' ? 'DEGRADED' : 'UNKNOWN'}</div>
               <div className="absolute bottom-2 right-2 text-[10px] font-display bg-dark border rounded px-1 text-muted text-white">LIVE</div>
             </div>
           )}
-          {cam.status === 'DEGRADED' && (
+          {cam.health_state === 'DEGRADED' && (
             <div className="absolute top-2 right-2 text-[10px] font-display bg-dark border rounded px-1 text-muted text-white">IR FALLBACK</div>
           )}
-          {cam.status === 'FAILED' && (
+          {cam.health_state === 'FAILED' && (
             <div className="absolute top-2 left-2 text-[10px] font-display bg-danger text-white px-1 rounded">FAILED</div>
           )}
         </div>
-        
+
         <div className="p-4 flex flex-col gap-4">
           <div className="flex justify-between items-center border-b border-color pb-2">
-            <span className="text-main font-display">{cam.id}</span>
-            <span className="text-xs text-muted">{cam.zone}</span>
+            <span className="text-main font-display">{cam.camera_id}</span>
+            <span className="text-xs text-muted">{cam.location}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-xs font-display text-muted uppercase">
             <div className="flex-col">
-              <span>FPS / JITTER</span>
-              <span className="text-main mt-1 block">{cam.fps} <span className="lowercase">Δ {cam.jitter || 0}ms</span></span>
+              <span>FPS {cam.fps_declared ? `(of ${cam.fps_declared})` : ''}</span>
+              <span className="text-main mt-1 block">{cam.fps_actual != null ? cam.fps_actual.toFixed(1) : '-'}</span>
             </div>
             <div className="flex-col">
-              <span>BLUR INDEX {cam.status === 'DEGRADED' ? '(FOG)' : ''}</span>
-              <span className="text-main mt-1 block">{cam.blur !== null ? cam.blur : '-'}</span>
+              <span>BLUR INDEX {cam.health_state === 'DEGRADED' ? '(FOG)' : ''}</span>
+              <span className="text-main mt-1 block">{cam.blur_score != null ? cam.blur_score.toFixed(1) : '-'}</span>
             </div>
             <div className="flex-col">
-              <span>EXPOSURE</span>
-              <span className="text-main mt-1 block">{cam.exposure}</span>
+              <span>EXPOSURE CLIP</span>
+              <span className="text-main mt-1 block">{cam.exposure_clip_fraction != null ? `${(cam.exposure_clip_fraction * 100).toFixed(0)}%` : '-'}</span>
             </div>
             <div className="flex-col">
               <span>SYNC DRIFT</span>
-              <span className="text-main mt-1 block lowercase">Δ {cam.drift !== null ? `${cam.drift}s` : 'N/A'}</span>
+              <span className="text-main mt-1 block lowercase">Δ {cam.drift_seconds != null ? `${cam.drift_seconds.toFixed(2)}s` : 'N/A'}</span>
             </div>
           </div>
 
           <div className="mt-auto pt-4 border-t border-color flex justify-between items-center text-xs font-display">
-            <span className="text-muted">AI ENGINE</span>
-            {cam.status === 'FAILED' ? (
-              <span className="text-danger flex items-center gap-1"><CameraOff size={12}/> {cam.ai}</span>
-            ) : cam.status === 'DEGRADED' ? (
-              <span className="text-warning flex items-center gap-1"><AlertTriangle size={12}/> {cam.ai}</span>
+            <span className="text-muted">HEALTH</span>
+            {cam.health_state === 'FAILED' ? (
+              <span className="text-danger flex items-center gap-1"><CameraOff size={12}/> {cam.health_reason || 'FAILED'}</span>
+            ) : cam.health_state === 'DEGRADED' ? (
+              <span className="text-warning flex items-center gap-1"><AlertTriangle size={12}/> {cam.health_reason || 'DEGRADED'}</span>
+            ) : cam.health_state === 'OK' ? (
+              <span className="text-ok flex items-center gap-1"><ShieldCheck size={12}/> NOMINAL</span>
             ) : (
-              <span className="text-ok flex items-center gap-1"><ShieldCheck size={12}/> {cam.ai}</span>
+              <span className="text-muted flex items-center gap-1"><Activity size={12}/> NO DATA YET</span>
             )}
           </div>
-          
-          {cam.status === 'FAILED' && (
-            <button className="w-full mt-2 py-2 border border-danger text-danger text-xs font-display rounded hover:bg-[rgba(239,68,68,0.1)]">
-              ⟲ INITIATE REBOOT
+
+          {cam.health_state === 'FAILED' && (
+            <button
+              disabled
+              title="No remote reboot capability exists in this deployment — the backend has no endpoint for it. Left visible, disabled, rather than silently doing nothing on click."
+              className="w-full mt-2 py-2 border border-danger text-danger text-xs font-display rounded opacity-40 cursor-not-allowed"
+            >
+              ⟲ INITIATE REBOOT (not implemented)
             </button>
           )}
         </div>
@@ -118,31 +158,67 @@ export default function Health() {
             Real-time status of all perimeter visual sensors. Highlighting optical clarity, latency drift, and connection state to ensure continuous intelligence gathering.
           </p>
         </div>
-        <div className="bg-panel border rounded p-4 flex gap-4 items-center">
-          <div className="relative w-16 h-16 rounded-full border-4 border-ok flex items-center justify-center">
-            <span className="font-display text-main text-lg">82%</span>
+        {status === 'ready' && (
+          <div className="bg-panel border rounded p-4 flex gap-4 items-center">
+            <div className="relative w-16 h-16 rounded-full border-4 border-ok flex items-center justify-center">
+              <span className="font-display text-main text-lg">{sightPct != null ? `${sightPct}%` : '-'}</span>
+            </div>
+            <div className="flex flex-col gap-1 text-xs font-display">
+              <span className="text-muted">System Sight</span>
+              <span className="text-ok flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-ok"></div> {okCount} OK</span>
+              <span className="text-warning flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-warning"></div> {degradedCount} DEGRADED</span>
+              <span className="text-danger flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-danger"></div> {failedCount} FAILED</span>
+            </div>
           </div>
-          <div className="flex flex-col gap-1 text-xs font-display">
-            <span className="text-muted">System Sight</span>
-            <span className="text-ok flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-ok"></div> 36 OK</span>
-            <span className="text-warning flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-warning"></div> 5 DEGRADED</span>
-            <span className="text-danger flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-danger"></div> 3 FAILED</span>
-          </div>
+        )}
+      </div>
+
+      {status === 'loading' && (
+        <div className="text-muted text-sm text-center mt-8">Loading real camera fleet…</div>
+      )}
+
+      {status === 'error' && (
+        <div className="text-danger text-sm text-center mt-8">Could not reach the backend.</div>
+      )}
+
+      {status === 'auth-required' && (
+        <div className="max-w-xs mx-auto mt-8 bg-panel border rounded p-4">
+          <LoginPrompt message="Sign in to view camera health" onSuccess={loadCameras} />
         </div>
-      </div>
+      )}
 
-      <div className="flex gap-4">
-        <button className="bg-ok text-black px-4 py-2 rounded text-sm font-display flex items-center gap-2">
-           All Sectors
-        </button>
-        <button className="bg-transparent border border-color text-muted px-4 py-2 rounded text-sm font-display flex items-center gap-2 hover-bg-elevated">
-          <AlertTriangle size={14} /> Needs Attention (8)
-        </button>
-      </div>
+      {status === 'ready' && (
+        <>
+          <div className="flex gap-4">
+            <button
+              onClick={() => setFilter('all')}
+              className={filter === 'all'
+                ? 'bg-ok text-black px-4 py-2 rounded text-sm font-display flex items-center gap-2'
+                : 'bg-transparent border border-color text-muted px-4 py-2 rounded text-sm font-display flex items-center gap-2 hover-bg-elevated'}
+            >
+              All Sectors ({mergedCameras.length})
+            </button>
+            <button
+              onClick={() => setFilter('attention')}
+              className={filter === 'attention'
+                ? 'bg-warning text-black px-4 py-2 rounded text-sm font-display flex items-center gap-2'
+                : 'bg-transparent border border-color text-muted px-4 py-2 rounded text-sm font-display flex items-center gap-2 hover-bg-elevated'}
+            >
+              <AlertTriangle size={14} /> Needs Attention ({needsAttentionCount})
+            </button>
+          </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {cameras.map(cam => <CameraCard key={cam.id} cam={cam} />)}
-      </div>
+          {mergedCameras.length === 0 ? (
+            <div className="text-muted text-sm text-center mt-8">No cameras registered yet.</div>
+          ) : visibleCameras.length === 0 ? (
+            <div className="text-muted text-sm text-center mt-8">No cameras need attention right now.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {visibleCameras.map((cam) => <CameraCard key={cam.camera_id} cam={cam} />)}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

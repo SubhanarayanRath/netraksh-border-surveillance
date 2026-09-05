@@ -312,6 +312,14 @@ class AlertResponse(BaseModel):
     blockchain_tx_id: Optional[str]
     acknowledged_at: Optional[datetime]
     acknowledged_by: Optional[str]
+    created_at: Optional[datetime] = None
+    # Sourced from the related Event (Alert.event, already a real ORM
+    # relationship) — widened so the frontend's Alerts page can show real
+    # camera/timing/type info instead of the placeholder title/description
+    # text it used to always show for every alert, real or not.
+    camera_id: Optional[str] = None
+    event_type: Optional[str] = None
+    zone_id: Optional[str] = None
 
     class Config:
         use_enum_values = True
@@ -328,11 +336,27 @@ class CameraStatusResponse(BaseModel):
     camera_id: str
     name: str
     location: str
-    health_state: CameraHealthState
+    # Optional, not CameraHealthState — a camera that has never reported
+    # health (no CameraHealth row yet) has no state to report. This used to
+    # be a bare CameraHealthState with the endpoint passing the literal
+    # string "UNKNOWN" as a fallback — an enum value that doesn't exist
+    # (CameraHealthState is only OK/DEGRADED/FAILED) — which made
+    # GET /cameras 500 for every real camera before any health had ever
+    # been ingested for it, i.e. always, before POST /cameras/{id}/health
+    # existed. Now: None means "no data yet", handled explicitly by the
+    # frontend rather than crashing the endpoint.
+    health_state: Optional[CameraHealthState]
     health_reason: Optional[HealthReason]
     last_health_check: Optional[datetime]
     fps_actual: Optional[float]
+    fps_declared: Optional[float]
     drift_seconds: Optional[float]
+    # blur_score / exposure_clip_fraction have always been computed and stored
+    # on CameraHealth (edge/health/camera_health.py) but never exposed here —
+    # widened so the frontend's Camera Health Matrix can show real values
+    # instead of the mock BLUR INDEX / EXPOSURE fields it had before.
+    blur_score: Optional[float]
+    exposure_clip_fraction: Optional[float]
 
     class Config:
         use_enum_values = True

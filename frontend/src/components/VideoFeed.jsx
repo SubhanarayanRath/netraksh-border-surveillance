@@ -13,37 +13,29 @@ export default function VideoFeed({ eventData, isConnected }) {
     );
   }
 
-  // Bounding box logic
-  let bboxStyle = {};
-  let label = "";
-  if (eventData && eventData.bbox) {
-    // If bbox is [x, y, w, h] normalized 0-1
-    const [x, y, w, h] = eventData.bbox;
-    bboxStyle = {
-      position: 'absolute',
-      left: `${x * 100}%`,
-      top: `${y * 100}%`,
-      width: `${w * 100}%`,
-      height: `${h * 100}%`,
-      border: '2px solid var(--color-ok)',
-      backgroundColor: 'rgba(74, 222, 128, 0.1)',
-      zIndex: 10
-    };
-    label = `${eventData.detection_class.toUpperCase()} #${eventData.track_id || '---'} | ${(eventData.confidence * 100).toFixed(0)}% CONF`;
-  } else {
-    // Mock default bbox if connected but no specific event
-    bboxStyle = {
-      position: 'absolute',
-      left: '30%',
-      top: '20%',
-      width: '20%',
-      height: '60%',
-      border: '2px solid var(--color-ok)',
-      backgroundColor: 'rgba(74, 222, 128, 0.1)',
-      zIndex: 10
-    };
-    label = "PERSON #184 | 91% CONF";
-  }
+  // Bounding box logic. NOTE: EventResponse (shared/schemas.py) — what
+  // actually crosses the WebSocket — has no `bbox` field at all; it exists
+  // only on the edge-internal EvidencePackage schema and never reaches the
+  // frontend. So `eventData.bbox` was always undefined for every real
+  // event, and this always fell to the hardcoded "PERSON #184 | 91% CONF"
+  // placeholder even while eventData held a real detection_class/
+  // confidence/track_id. Fixed to use the real fields for the label
+  // whenever a real event exists, keeping only the box's on-screen
+  // position as a placeholder (no real pixel coordinates exist to draw it
+  // at without a real video stream, which this project doesn't have).
+  const bboxStyle = {
+    position: 'absolute',
+    left: '30%',
+    top: '20%',
+    width: '20%',
+    height: '60%',
+    border: '2px solid var(--color-ok)',
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    zIndex: 10
+  };
+  const label = eventData
+    ? `${eventData.detection_class.toUpperCase()} #${eventData.track_id ?? '---'} | ${(eventData.confidence * 100).toFixed(0)}% CONF`
+    : "PERSON #184 | 91% CONF";
 
   return (
     <div className="w-full h-full relative bg-black border rounded overflow-hidden" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>

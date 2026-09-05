@@ -136,4 +136,8 @@ def _alert_to_response(alert: Alert) -> AlertResponse:
         blockchain_tx_id=alert.blockchain_tx_id,
         acknowledged_at=alert.acknowledged_at,
         acknowledged_by=alert.acknowledged_by,
+        created_at=alert.created_at,
+        camera_id=alert.event.camera_id if alert.event else None,
+        event_type=alert.event.event_type if alert.event else None,
+        zone_id=alert.event.zone_id if alert.event else None,
     )

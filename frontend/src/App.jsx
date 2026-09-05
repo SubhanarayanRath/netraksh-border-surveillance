@@ -21,7 +21,13 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/camera-health" element={<Health />} />
             <Route path="/evidence" element={<Evidence />} />
-            <Route path="/alerts" element={<Alerts />} />
+            {/* Not "/alerts" — that collides with the real backend route
+                GET /alerts (backend/api/alerts.py), same class of bug as
+                the earlier /health collision (see docs/LIMITATIONS.md).
+                A direct hard-navigation to /alerts hit the backend's JSON
+                instead of this page; in-app <Link> navigation masked it
+                because that's client-side routing, never a real request. */}
+            <Route path="/cross-command-alerts" element={<Alerts />} />
             <Route path="/architecture" element={<Architecture />} />
           </Routes>
         </main>

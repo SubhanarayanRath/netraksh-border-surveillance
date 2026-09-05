@@ -913,6 +913,146 @@ did not silently break the live event path. Test event deleted from the real dat
 
 ---
 
+## Frontend Audit + Full Real-Data Wiring Pass
+
+Prompted by "check each and everything, all the functions in the frontend fully working... or no?"
+followed by "make the project more and more advanced and fully workable/functionable" — a systematic
+audit of every page, button, and fetch call in the frontend, then a full pass fixing everything
+unambiguous. This is the largest single change in the project's history in terms of files touched;
+full detail is broken out by area below.
+
+### 1. Camera Health Matrix — was 100% mock, now genuinely real end-to-end
+
+This was the single biggest gap found. `GET /cameras` (`backend/api/cameras.py`) already existed and
+returned real `health_state`/`fps_actual`/`drift_seconds` — but `frontend/src/pages/Health.jsx` never
+called it, running instead on 3 hardcoded cameras (CAM-07/12/04) with a "82%" / "36 OK / 5 DEGRADED /
+3 FAILED" summary that didn't even arithmetically match the 3 cameras shown below it. Investigating
+further surfaced that **the gap went deeper than the frontend**: no backend code path had ever
+written a single row to the `CameraHealth` table, despite `edge/health/camera_health.py`'s
+`CameraHealthMonitor` computing real blur/exposure/FPS/drift values every frame. The reason: the
+"periodic health heartbeat" `edge/main.py`'s own docstring described didn't exist — `last_health_report_time`
+was threaded through `_process_frame()`'s signature every frame but never actually read there, a dead
+timer implying behavior that was never implemented.
+
+**What changed, end to end:**
+- `edge/main.py`: added `_report_camera_health()`, called from the (now-live) 5-second timer in
+  `_run_frame_loop()`. Best-effort POST of the real `CameraHealthReport` to the backend — never
+  interrupts the frame loop on failure, same offline-tolerant posture as `SyncClient`. This is
+  deliberately NOT routed through the offline sync queue: it's a heartbeat, not evidence — losing one
+  is fine, the next is 5 seconds away.
+- `backend/api/cameras.py`: new `POST /cameras/{id}/health` endpoint — writes the real `CameraHealth`
+  row and broadcasts it over `/ws/dashboard` via `broadcast_camera_health()`, a function that has
+  existed since early in this project but had never once been called by anything.
+- `shared/schemas.py`: widened `CameraStatusResponse` with `fps_declared`/`blur_score`/
+  `exposure_clip_fraction` — real fields `CameraHealth` already stored but never exposed via the API.
+- **A real, previously-latent bug found and fixed in the same pass:** `_camera_to_response()` fell back
+  to the literal string `"UNKNOWN"` for `health_state` when a camera had no health row yet — but
+  `CameraHealthState` is a strict enum of only `OK`/`DEGRADED`/`FAILED`. This made `GET /cameras`
+  **500 for every real camera in the database**, always, from the moment it was written, since no
+  camera had ever had a health row before this change either. Fixed by making `health_state: Optional`
+  and passing `None` instead of a fabricated enum value — caught only because this session was the
+  first time anything actually called this endpoint end-to-end with real data.
+- `frontend/src/pages/Health.jsx`: fully rewritten. Real `GET /cameras` fetch (auth-gated, same
+  `LoginPrompt` pattern as Evidence.jsx — see below), live WS merge (now genuinely reachable), real
+  "System Sight" percentage computed from the real fleet, working "All Sectors"/"Needs Attention"
+  filters (previously two `<button>`s with no `onClick` at all), and an honest "NO DATA YET" state per
+  camera instead of ever fabricating a reading. The "⟲ INITIATE REBOOT" button — no backend endpoint
+  exists for it — is left visible but `disabled`, with a tooltip explaining why, rather than either
+  removed or left silently doing nothing on click.
+
+**Verified live, not just read:** POSTed a real health report via `POST /cameras/{id}/health` (hit the
+500 bug first, fixed it, then confirmed 201 + real DB row), confirmed `GET /cameras` returns it,
+logged into the page via the new `LoginPrompt`, confirmed the real FPS/blur/exposure/drift numbers
+render, confirmed the "Needs Attention" filter actually hides the OK camera, then deleted the test row.
+
+### 2. Evidence Vault — remaining fake bits closed out
+
+- Extracted the inline login form (previously duplicated verbatim inline) into a shared
+  `frontend/src/components/LoginPrompt.jsx`, now used by both Evidence.jsx and Health.jsx.
+- Search box had no `onChange` at all — typing did nothing. Now filters the real event list by
+  `event_id`/`hash`/`event_type`/`decision_state`. (Caught during live verification: an initial version
+  matched only `event_id`/`hash`, literally what the placeholder text promises, but a real user typing
+  "Perimeter" — visible right there in the list — reasonably expects a match; broadened accordingly.)
+- The "Cryptographic Hash Verification" strip showed the literal hardcoded strings `"RAW: 1.4MB"` and
+  `"A94F...72C1"` for every single event, real or not. Now shows the real decrypted-evidence byte size
+  (captured from the actual fetched blob) and the real `EventResponse.hash`, truncated for display —
+  or an honest `"NO FILE"`/`"PENDING"` when neither exists yet.
+- The event-list "SIGNED" badge was a hardcoded label. Now reads the real `signature` field
+  (`SIGNED`/`UNSIGNED`) — the mock placeholder events correctly now show `UNSIGNED`, since they aren't.
+
+### 3. Cross-Command Alerts — was real WS data permanently polluted with fake alerts
+
+`GET /alerts` (real, RBAC-gated) existed and was never called; the page ran only on live WS pushes
+(`new_alert`), permanently concatenated with 2 hardcoded fake alerts ("Multiple Armed Intruders",
+"Vehicle Ramming Attempt") rendered identically to real ones, with zero visual distinction.
+
+**What changed:**
+- `Alerts.jsx` now fetches `GET /alerts` on load and merges it with live WS pushes (deduped by
+  `alert_id`) — same convention Evidence.jsx already used for its own mock fallback: the 2 demo alerts
+  now only appear when there are zero real alerts, clearly labeled `DEMO`.
+- `AlertResponse` (`shared/schemas.py`) had no camera/event-type/timing fields at all — only
+  severity/jurisdiction/blockchain/ack fields. Widened with `camera_id`/`event_type`/`zone_id`/
+  `created_at`, sourced from `Alert.event` (an ORM relationship that already existed) — this is what
+  lets the page show a real derived title ("HIGH — Abandoned Object") and real camera/elapsed-time
+  instead of nothing. `backend/services/escalation.py`'s live WS broadcast payload was widened the same
+  way for parity between the REST and WS paths.
+- The real `POST /alerts/{id}/acknowledge` endpoint existed with no UI control anywhere. Added an
+  "Acknowledge" button, wired to the real endpoint, using the seeded admin's session.
+- **A second `/health`-class route collision found and fixed:** the frontend's `/alerts` SPA route
+  collided with the real backend route `GET /alerts` (`backend/api/alerts.py`) — a direct
+  hard-navigation to `/alerts` returned `{"detail":"Not authenticated"}` JSON instead of the page, for
+  the identical reason `/health` did two changes ago. Missed when fixing `/health`, because nothing
+  had checked every other frontend route against every other backend prefix at the time. Renamed to
+  `/cross-command-alerts`; this session then audited every remaining frontend route against every
+  backend router prefix to confirm no others collide.
+- The tactical map view remains intentionally decorative — there is no real-world lat/lon or geodata
+  model anywhere in this project (zones are 0-1 normalized within one camera's own frame, not a map).
+  Left as-is, now explicitly labeled "(illustrative)" rather than silently implying real geodata.
+
+**Verified live:** logged in, hit `/cross-command-alerts` directly (confirmed the collision first,
+then confirmed the fix), saw 9 real alerts render with real derived titles/cameras/elapsed-time,
+clicked Acknowledge on one, confirmed via `read_network_requests` a real `200 OK` to
+`POST /alerts/{id}/acknowledge`, and confirmed the header's alert-count badge dropped 09→08 live in
+response — a real cross-page side effect, not a local-only UI change. Two orphaned test-artifact
+alert rows (from earlier sessions' synthetic testing, confirmed to reference no existing event) were
+found and deleted from the real database as part of this verification.
+
+### 4. Dashboard video overlay — dead bbox branch removed
+
+`VideoFeed.jsx` checked `eventData.bbox` to decide whether to show a real detection label — but
+`EventResponse` (what actually crosses the WebSocket) has no `bbox` field at all; it exists only on
+the edge-internal `EvidencePackage` schema and never reaches the frontend. This branch could never
+fire for any real event, so the label always showed the hardcoded "PERSON #184 | 91% CONF" even while
+a real `detection_class`/`track_id`/`confidence` sat right there in the same object. Fixed to use the
+real fields for the label whenever a real event exists (the box's on-screen position stays a
+placeholder — there's no real pixel coordinate to draw it at without an actual video stream, which
+this project doesn't have). Verified live: POSTed a real event with `detection_class: 'vehicle'`,
+`track_id: 888`, confirmed the overlay updated to "VEHICLE #888 | 88% CONF".
+
+### 5. Header — real alert count
+
+The "⚠ 04" badge was a hardcoded literal, never reflecting anything. `/system/status` already
+returned a real `pending_acknowledgements` count; the header just never read it. Now polled every 5s
+alongside the existing sync-status poll, shown as `--` (not `00`) before the first successful fetch so
+"no data yet" is never confused with "zero alerts".
+
+**What did NOT change:** `GET /events` (`list_events`) still has no auth dependency — this remains a
+deliberate open gap, same reasoning as before (see `docs/LIMITATIONS.md`). No changes to the edge
+detection/reliability/temporal/evidence pipeline. The "Demo Scenario Control" panel's four buttons
+remain unimplemented (no backend routes exist for them) — already honestly labeled "Simulated" in the
+UI; building real scenario injection is a modest but real separate feature, not attempted here.
+
+**Tests:** backend suite 201/201 passing throughout every step of this pass. No new backend HTTP-level
+tests were added for the new `POST /cameras/{id}/health` endpoint (same pre-existing gap as every other
+endpoint in this codebase — see `docs/LIMITATIONS.md` §2); verified instead via live POST + real DB
+read + live screenshot, the same method used throughout this project for exactly this kind of check.
+Frontend has no test suite (pre-existing gap); verified via `vite build` (zero errors each time),
+`oxlint` (36 warnings throughout, all pre-existing patterns already present elsewhere in the codebase —
+no new warning class introduced), and extensive live browser verification of every single fix in this
+pass, documented above per area.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

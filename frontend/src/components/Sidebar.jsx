@@ -32,7 +32,7 @@ export default function Sidebar() {
         <Link to="/evidence" className={getClassName("/evidence")} title="Evidence Vault">
           <Shield size={20} />
         </Link>
-        <Link to="/alerts" className={getClassName("/alerts")} title="Cross-Command Alerts">
+        <Link to="/cross-command-alerts" className={getClassName("/cross-command-alerts")} title="Cross-Command Alerts">
           <Bell size={20} />
         </Link>
         <Link to="/architecture" className={getClassName("/architecture")} title="Architecture">
