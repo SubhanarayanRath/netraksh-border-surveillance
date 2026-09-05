@@ -357,6 +357,34 @@ positives, as always):
 observation on a small sample, not a statistically confident rate, unlike the ~52-candidate figures
 elsewhere in this report.
 
+## A second compound condition: night AND glare together
+
+`--synthetic-condition night_glare` tests a different real compound scenario from `night_fog`: darken
+the whole frame (real night), then add a real, LOCALIZED bright glow (empirically tuned to
+`glare_fraction≈0.164`) — modeling a dark scene with a strong nearby light source (headlights, a
+floodlight), not a uniformly bright one. Because GLARE's classification check runs FIRST in the real
+decision order, this compound scene is classified `GLARE`, not `LOW_LIGHT_NIGHT` — the opposite
+categorical outcome from `night_fog`. All 52 real candidates manually reviewed — zero false positives.
+
+| Compound condition | Classified as | Candidates formed | DETECTED |
+|---|---|---|---|
+| `night_fog` (uniform low contrast everywhere) | `LOW_LIGHT_NIGHT` | 7 | 5/7 (71%) |
+| `night_glare` (localized bright glow, dark elsewhere) | `GLARE` | 52 | 45/52 (87%) |
+
+Two real, useful findings from the contrast between them:
+
+1. **Unlike `night_fog`, candidate yield did not collapse.** 52 real candidates formed — the same
+   order of magnitude as every single-degradation condition, not `night_fog`'s 7. A concentrated
+   bright glow next to an otherwise dark scene does not crush detection/tracking the way UNIFORM low
+   contrast across the whole frame does. The honest lesson: it is specifically *uniform* contrast
+   collapse, not "any severe compound degradation," that threatens candidate yield.
+2. **DETECTED (87%) is actually higher than the original single-condition "glare" transform's 60%**,
+   because this compound scene's `glare_fraction` (≈0.164) sits in the same mild-severity regime as
+   `glare_mild` (≈0.21) rather than the original severe transform (≈0.43) — confirming the earlier
+   mild-intensity findings generalize here, not a new result on its own. The 7 remaining residuals
+   show the same moderate `D`/`T` pattern as every other residual this session — genuine
+   evidence-based uncertainty, no new bug.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

@@ -253,6 +253,31 @@ limitation — an out-of-date limitations file is worse than none.
      preprocessing tuned to this compound case specifically) outside this session's scope. `n=7` is
      also too small to treat the 71% DETECTED figure itself as a precise measurement — it is reported
      as an honest observation on this small a sample, not a statistically confident rate.
+  **A second real compound condition — night AND glare together — was tested too, and the contrast
+  with `night_fog` above is itself an honest, useful finding.** `--synthetic-condition night_glare`
+  darkens the whole frame the same way "night" does, then adds a real, LOCALIZED bright glow (a
+  blurred filled circle, empirically tuned against 5 frames spanning the whole video to drive
+  `glare_fraction≈0.164` — comfortably past the real 0.15 cutoff) — modeling a real scenario a border
+  camera can face: a dark scene with a strong nearby light source (oncoming headlights, a floodlight,
+  lens flare), not a uniformly bright one. Because GLARE's classification check runs FIRST in the real
+  decision order (`edge/condition/scene_condition.py::_decide()`), this compound scene is classified
+  `GLARE`, not `LOW_LIGHT_NIGHT` — the opposite categorical outcome from `night_fog`'s compound scene,
+  which always fell to `LOW_LIGHT_NIGHT` since `FOG_RAIN` requires `brightness>60`. All 52 real
+  candidates manually reviewed — zero false positives, as always. Two real findings:
+  1. **Unlike `night_fog`, candidate YIELD did not collapse — 52 real fence-crossing candidates
+     formed, the same order of magnitude as every single-degradation condition, not `night_fog`'s 7.**
+     A concentrated bright glow next to an otherwise dark scene does not crush detection/tracking the
+     way UNIFORM low contrast across the whole frame does — if anything, the glow's sharp edges may
+     even help. This is a genuine, useful contrast between two compound scenarios that both sound
+     "severe" in isolation.
+  2. **DETECTED rose to 87% (45/52)** — actually higher than the original single-condition "glare"
+     transform's 60%, because this compound scene's `glare_fraction` (≈0.164) is much closer to the
+     real classification boundary than the original glare transform's (≈0.43), putting it in the same
+     mild-severity regime as `glare_mild` rather than the original severe one — this is expected,
+     confirming the fog/night/glare mild-intensity findings above generalize here too, not a new
+     result on its own. The 7 remaining residuals show the same moderate `D`/`T` pattern (no floor, no
+     single dominant factor, `S`≈0.666-0.667, `H`=1.0 for all) as every other residual this session —
+     genuine evidence-based uncertainty, no new bug.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

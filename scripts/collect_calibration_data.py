@@ -208,6 +208,35 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         haze_color = np.full_like(dark, 45)
         blended = cv2.addWeighted(dark, 0.5, haze_color, 0.5, 0)
         return cv2.GaussianBlur(blended, (5, 5), 0)
+    if condition_sim == "night_glare":
+        # A SECOND real compound condition, same motivation as night_fog
+        # above but with a different, equally real scenario: a real border
+        # camera at night facing a strong, localized light source (oncoming
+        # headlights, a floodlight, lens flare from a spotlight) — most of
+        # the frame stays genuinely dark, but a concentrated bright patch
+        # pushes glare_fraction (near-white pixel fraction) over the real
+        # 0.15 GLARE cutoff. Unlike night_fog (which is always classified
+        # LOW_LIGHT_NIGHT, since FOG_RAIN needs brightness>60), GLARE's
+        # classification check runs FIRST in the real decision order
+        # (edge/condition/scene_condition.py's _decide()), so this compound
+        # scene is classified GLARE regardless of how dark the rest of the
+        # frame is — a real test of whether GLARE's own fixes (the H
+        # exemption) hold up when the scene is ALSO genuinely dark, not just
+        # bright-and-washed-out the way the original "glare"/"glare_mild"
+        # transforms are. The glow (a blurred filled circle, empirically
+        # tuned against 5 frames spanning the whole video) drives
+        # glare_fraction≈0.164 — comfortably past 0.15 — while most of the
+        # frame outside its footprint stays genuinely night-dark (only
+        # ~0.28x scaled, same as "night" above).
+        darkened = frame.astype(np.float32) * 0.28
+        noise = rng.normal(0, 6.0, darkened.shape)
+        dark = darkened + noise
+        h, w = frame.shape[:2]
+        glow_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(glow_mask, (150, 120), 160, 255, -1)
+        glow_mask = cv2.GaussianBlur(glow_mask, (21, 21), 0)
+        glow = np.stack([glow_mask] * 3, axis=-1).astype(np.float32)
+        return np.clip(dark + glow, 0, 255).astype(np.uint8)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -229,7 +258,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog"], default="none",
+        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog", "night_glare"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",
