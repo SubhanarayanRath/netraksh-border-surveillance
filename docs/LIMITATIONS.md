@@ -103,6 +103,18 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 2. Implemented, but scoped narrower than it might sound
 
+- **The header's Sync Status panel now honestly calls the real `GET /system/verify-chain`
+  for its "Chain Integrity" line (previously a hardcoded "Chain Integrity OK" regardless of
+  any real state) — but this means it will now show "N block(s) failed integrity
+  verification. Chain compromised." in red for any deployment whose events don't carry
+  real Ed25519 signatures.** This includes the live Render deployment's own demo-seed data
+  (seeded via `POST /events` with a clearly-labeled `"demo-seed-not-a-real-signature"`
+  stub, not a real signature) — as of this writing it reports 8 such blocks. This is the
+  check working correctly, not a bug, but it means opening this panel during a live demo
+  will show red "Chain Compromised" text unless the demo events are re-seeded with real
+  signatures first, or the presenter is ready to explain why. Not resolved here — a call
+  for the team, not something decided unilaterally while doing the button audit that found
+  it.
 - **Every backend-generated timestamp is stored and returned as a naive datetime with no
   UTC marker** (`SQLAlchemy`'s `DateTime` columns, populated via `datetime.utcnow()`
   throughout the codebase — the same call this project's own test suite already flags as

@@ -44,9 +44,32 @@ const DECISION_META = {
   ABSTAIN: { label: 'ABSTAIN', icon: ShieldAlert, colorClass: 'text-danger border-danger bg-[rgba(248,113,113,0.1)]' },
 };
 
+// Builds the actual plain-English explanation from the same parsed
+// decision_reason data the Reliability Decision panel already displays —
+// "WHY THIS ALERT?" used to be a <span> with no onClick at all, styled to
+// look like a clickable button (border, padding, hover-implying color)
+// but doing nothing. Rather than just stripping that affordance, this
+// wires it to something real: the exact factors that produced the
+// decision, in one place, instead of requiring the viewer to read four
+// separate numbers out of the Gate 3 grid themselves.
+function explainDecision(parsed) {
+  if (!parsed) return null;
+  if (parsed.kind === 'abstain') {
+    return `Camera health is FAILED (${parsed.healthReason}) — Gate 1's hard override abstained before any reliability score was computed. This is not a scoring decision; a failed camera is never trusted regardless of what a detector reports.`;
+  }
+  const factorNote = (label, value) =>
+    `${label}=${value.toFixed(2)} (${value >= 0.75 ? 'strong' : value >= 0.5 ? 'moderate' : 'weak'})`;
+  const verdict = parsed.aboveThreshold
+    ? `R (${parsed.r.toFixed(3)}) met or exceeded the ${parsed.threshold.toFixed(3)} threshold, so this was DETECTED`
+    : `R (${parsed.r.toFixed(3)}) fell below the ${parsed.threshold.toFixed(3)} threshold, so this was held as UNCERTAIN`;
+  const degradedNote = parsed.degraded ? ' The camera was in a DEGRADED state at the time, which is reflected in a lower H factor above.' : '';
+  return `${verdict}, from: ${factorNote('Detection confidence (D)', parsed.d)}, ${factorNote('Temporal consistency (T)', parsed.t)}, ${factorNote('Scene clarity (S)', parsed.s)}, ${factorNote('Camera health (H)', parsed.h)}.${degradedNote}`;
+}
+
 export default function Dashboard() {
   const { events, health } = useWebSocket(WS_URL);
   const [latestEvent, setLatestEvent] = useState(null);
+  const [showWhy, setShowWhy] = useState(false);
 
   useEffect(() => {
     if (events.length > 0) {
@@ -58,6 +81,7 @@ export default function Dashboard() {
   const healthState = latestEvent?.camera_health_state; // 'OK' | 'DEGRADED' | 'FAILED'
   const sceneCondition = latestEvent?.scene_condition;
   const decisionMeta = DECISION_META[latestEvent?.decision_state] || null;
+  const whyExplanation = explainDecision(parsed);
 
   const StatusPill = ({ title, desc, type, active }) => {
     let colors = '';
@@ -122,8 +146,18 @@ export default function Dashboard() {
           <div className="bg-panel border rounded p-4 h-48 flex flex-col">
             <div className="flex justify-between items-center border-b border-color pb-2 mb-2">
               <span className="text-sm font-display text-muted uppercase tracking-widest">Event Timeline</span>
-              <span className="text-xs text-ok border border-ok rounded px-2 py-1">WHY THIS ALERT?</span>
+              <button
+                onClick={() => setShowWhy((v) => !v)}
+                className="text-xs text-ok border border-ok rounded px-2 py-1 hover:bg-[rgba(74,222,128,0.1)] transition-colors"
+              >
+                WHY THIS ALERT?
+              </button>
             </div>
+            {showWhy && (
+              <div className="text-xs font-body text-main bg-dark border border-color rounded p-2 mb-2">
+                {whyExplanation || 'No real event yet to explain — this fills in from the same decision_reason data the Reliability Decision panel shows, once one arrives.'}
+              </div>
+            )}
             <div className="overflow-y-auto flex flex-col gap-2 flex-grow pr-2">
               {events.length === 0 ? (
                 <div className="text-muted text-sm text-center mt-4">Waiting for events...</div>
@@ -225,15 +259,21 @@ export default function Dashboard() {
               />
             </div>
 
+            {/* This is a live status readout, not an action — it was
+                markup as a <button> with no onClick and no disabled
+                attribute, so it rendered with a pointer cursor and hover
+                states implying it did something on click when it never
+                did. Changed to a <div role="status"> — same visual
+                treatment, honestly non-interactive. */}
             <div className="mt-auto">
               {decisionMeta ? (
-                <button className={`w-full border py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 ${decisionMeta.colorClass}`}>
+                <div role="status" className={`w-full border py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 ${decisionMeta.colorClass}`}>
                   <decisionMeta.icon size={24} /> [{decisionMeta.label}]
-                </button>
+                </div>
               ) : (
-                <button className="w-full border border-color text-muted py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 opacity-60">
+                <div role="status" className="w-full border border-color text-muted py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 opacity-60">
                   <HelpCircle size={24} /> [AWAITING EVENT]
-                </button>
+                </div>
               )}
             </div>
           </div>

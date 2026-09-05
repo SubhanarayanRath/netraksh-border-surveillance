@@ -1,4 +1,4 @@
-import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck } from 'lucide-react';
+import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Logo from './Logo';
@@ -9,6 +9,7 @@ export default function Header() {
   const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ queued: 0, synced: 0, failed: 0 });
   const [pendingAlerts, setPendingAlerts] = useState(null); // null = not yet known
+  const [chainStatus, setChainStatus] = useState(null); // null = not yet checked
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -57,6 +58,23 @@ export default function Header() {
     const timer = setInterval(fetchAlertCount, 5000);
     return () => clearInterval(timer);
   }, []);
+
+  // The sync panel's "Chain Integrity OK" line was a hardcoded literal,
+  // never actually checked — but GET /system/verify-chain (public, no auth
+  // required — backend/api/system.py) already does a real check across
+  // every EvidencePackage's stored verified_ok flag. Fetched when the panel
+  // opens rather than polled continuously, since this isn't data that
+  // changes on its own between opens.
+  useEffect(() => {
+    if (!showSyncPanel) return;
+    const fetchChainStatus = async () => {
+      try {
+        const res = await authFetch('/system/verify-chain');
+        if (res.ok) setChainStatus(await res.json());
+      } catch (_e) {}
+    };
+    fetchChainStatus();
+  }, [showSyncPanel]);
 
   return (
     <header className="header-top relative">
@@ -113,12 +131,32 @@ export default function Header() {
             <span className="text-ok">{syncStatus.synced}</span>
           </div>
           <div className="flex justify-between text-sm font-body">
+            {/* No backend anywhere tracks a real "last successful sync"
+                timestamp (SyncStatusResponse.last_sync_at exists as a schema
+                field but no endpoint ever populates or returns it) — this
+                used to just say "Just now" unconditionally. Showing the
+                honest absence of that data instead of a fabricated one. */}
             <span className="text-muted">Last Sync:</span>
-            <span>Just now</span>
+            <span className="text-muted">Not tracked</span>
           </div>
           <div className="mt-2 pt-2 border-t border-color flex items-center gap-2 text-xs font-display">
-            <ShieldCheck size={14} className="text-ok" />
-            <span className="text-ok">Chain Integrity OK</span>
+            {/* Was a hardcoded "Chain Integrity OK" regardless of any real
+                state — now calls the real GET /system/verify-chain
+                (backend/api/system.py), which checks every stored
+                EvidencePackage.verified_ok. */}
+            {chainStatus == null ? (
+              <span className="text-muted">Checking chain integrity…</span>
+            ) : chainStatus.is_valid ? (
+              <>
+                <ShieldCheck size={14} className="text-ok" />
+                <span className="text-ok">{chainStatus.message}</span>
+              </>
+            ) : (
+              <>
+                <ShieldAlert size={14} className="text-danger" />
+                <span className="text-danger">{chainStatus.message}</span>
+              </>
+            )}
           </div>
         </div>
       )}

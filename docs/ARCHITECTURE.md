@@ -1286,6 +1286,68 @@ it, and this document doesn't blur the two.
 
 ---
 
+## Full Button Audit: Every Interactive Element Checked Live
+
+Prompted by "check in the ui, if every buttons fully functional or not... check everything
+properly." Every `onClick`/`<button>`/`<Link>`/`<input>` in the frontend was enumerated
+(grepped, not sampled) and exercised live — clicked, watched the real network request,
+or explicitly identified as already-verified in an earlier pass. Three new real findings,
+all fixed:
+
+**1. Header's Sync Status panel had two hardcoded claims never backed by anything.**
+"Last Sync: Just now" — no backend anywhere tracks a real last-sync timestamp
+(`SyncStatusResponse.last_sync_at` exists as a schema field but no endpoint ever populates
+or returns it) — now honestly shows "Not tracked" instead of a fabricated recency claim.
+"Chain Integrity OK" was a static literal regardless of any real state — but
+`GET /system/verify-chain` (public, backend/api/system.py) already exists and does a real
+check across every stored `EvidencePackage.verified_ok`. Wired the panel to call it when
+opened.
+
+**Consequence worth knowing about before a live demo:** this real check now honestly
+reports `"N block(s) failed integrity verification. Chain compromised."` in red — not a
+bug, exactly the intended behavior — for any event whose `EvidencePackage` doesn't carry a
+real, verifiable Ed25519 signature. Checked both databases directly: this local dev
+database reports 1157 (accumulated synthetic test events from this entire engagement,
+including this session's own demo/test injections); the live Render deployment currently
+reports 8 (the demo-seed events from "seed some realistic demo events," which were sent
+with a clearly-labeled `"demo-seed-not-a-real-signature"` stub, not a real signature). This
+was surfaced, not hidden — flagged directly to the user rather than shipped silently, since
+opening this panel during a live demo would show red "Chain Compromised" text. Not
+resolved here: whether to re-seed the demo data with real signatures, accept the honest
+red state and be ready to explain it, or leave the panel as-is until real signed events
+exist. That's a call for the user, not something to decide unilaterally.
+
+**2. Dashboard's [DETECTED]/[UNCERTAIN]/[ABSTAIN] status readout was a `<button>` with no
+`onClick` and no `disabled` attribute** — rendered with a pointer cursor and hover states
+implying an action that never existed; it's a live status display, not a control. Changed
+to `<div role="status">` — identical visual treatment, honestly non-interactive.
+
+**3. "WHY THIS ALERT?" was a `<span>` styled to look like a clickable badge (border,
+padding, accent color) with no `onClick` at all.** Rather than just removing the
+button-like styling, wired it to something real: a new `explainDecision()` derives the
+exact same plain-English breakdown from the already-parsed `decision_reason` data the
+Reliability Decision panel displays right next to it — real D/T/S/H values, the real
+R-vs-threshold verdict, a real note when the camera was degraded — instead of requiring the
+viewer to read four separate numbers out of the Gate 3 grid themselves. Verified live: for
+a real posted DEGRADED-camera event, the button correctly toggled a real explanation
+string matching the exact D=0.90/T=0.85/S=0.63/H=0.50/R=0.812 shown in Gate 3.
+
+**Confirmed already fully real, not re-tested from scratch:** Sidebar's 5 nav links,
+Evidence's search box and Verify button, Alerts' Acknowledge button (all previously
+verified end-to-end in earlier passes — see this document's own earlier entries).
+**Confirmed still honestly non-functional, as designed:** DemoSidebar's 4 buttons — clicked
+one, confirmed via `read_network_requests` a real `405 Method Not Allowed` (the routes
+genuinely don't exist), falling through to the local-only "Simulated" UI state exactly as
+documented in `docs/LIMITATIONS.md`.
+
+**Tests:** 207/207 passing (no backend changes this pass). Frontend: `vite build` (zero
+errors), `oxlint` (one new warning introduced and immediately fixed — an unused parameter
+on `explainDecision`; final state has no new warning class), and every fix verified via a
+real click + real observed effect (network request, DOM text content, or toggled state
+read directly via JS) rather than a screenshot alone.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
