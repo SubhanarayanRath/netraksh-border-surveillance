@@ -176,7 +176,12 @@ button {
 /* Layout Grid */
 .app-container {
   display: grid;
-  grid-template-columns: 60px 1fr 280px;
+  /* Sidebar widened from 60px — at 60px the logo mark and its "NETRAKSH"
+     caption had no real room and the caption clipped off the viewport
+     edge entirely (see docs/ARCHITECTURE.md). 88px is still a compact
+     icon rail (comparable to Linear/Notion's collapsed sidebars), not a
+     labeled nav — just enough room for both to read clearly. */
+  grid-template-columns: 88px 1fr 280px;
   grid-template-rows: 60px 1fr;
   height: 100vh;
   width: 100vw;

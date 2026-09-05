@@ -1235,6 +1235,28 @@ viewport-edge clipping issue.
 
 ---
 
+## Sidebar Widened for Legibility
+
+Follow-up to the clipping fix above — the user reported the logo and "NETRAKSH" label were
+now correct but too small to read comfortably at the 60px sidebar width that fix was
+squeezed into.
+
+**What changed:** `.app-container`'s grid (`index.css`) widened from `60px 1fr 280px` to
+`88px 1fr 280px` — still a compact icon rail, comparable to Linear/Notion's collapsed
+sidebars, not a labeled nav. Inside `Sidebar.jsx`: the logo box grew 40px → 52px (mark
+26px → 36px), the caption grew 6px → 10px font with its width constraint raised to match
+(40px → 68px, still with the same wrap-as-safety-net from the previous fix — not relying on
+an exact fit), and the five nav icons grew 20px → 22px in individually-sized 48px boxes
+(previously an ambiguous shared container with no explicit per-icon size).
+
+**Verified:** confirmed via `find("NETRAKSH")` that the label text is still the complete
+word (not re-broken by the size increase), re-checked at mobile viewport width again since
+widening a fixed grid column can shift how much room remains for the rest of the layout,
+and grepped the whole frontend for any other place that assumed the old 60px width before
+this change — none found.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
