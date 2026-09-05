@@ -146,6 +146,15 @@ limitation — an out-of-date limitations file is worse than none.
   against — see above), or real night footage to check whether this synthetic transform's specific
   darkening intensity is even realistic for the confidence drop it produces in YOLO — neither of which
   this investigation can honestly manufacture. Left open, not force-fixed.
+  **The fog residual was investigated the same way and reaches the identical honest conclusion.** All
+  3 remaining UNCERTAIN fog candidates are genuine, correctly-detected people (each snapshot manually
+  re-checked — small/distant figures visibly softened by the haze/blur transform). `S` is nearly flat
+  across all 52 fog candidates (0.8126-0.8295), so again `D` is what separates them: sorting all 52 by
+  `D` shows the same clean, monotonic boundary — the 3 lowest-`D` candidates (0.52-0.56, vs a 0.76
+  mean across the full set) are *exactly* the 3 that miss threshold, `R` increasing smoothly right
+  through 0.75. Same conclusion as night: this is the Reliability Engine correctly expressing more
+  caution on the objectively weakest evidence, not a defect, and left open for the same reason (no
+  real dataset to fit against, no real fog footage to validate the transform's intensity).
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

@@ -231,6 +231,13 @@ threshold, with `R` increasing smoothly right through 0.75. This is the Reliabil
 expressing more caution on the objectively weakest evidence in the dataset, not a defect — see
 `docs/LIMITATIONS.md` for why this is left open rather than force-fixed.
 
+**Fog's residual, investigated the same way, reaches the identical conclusion:** all 3 remaining
+UNCERTAIN fog candidates are genuine, correctly-detected people (small/distant figures visibly
+softened by the haze/blur transform). `S` is nearly flat across all 52 fog candidates
+(0.8126-0.8295), so `D` again separates them cleanly: the 3 lowest-`D` candidates (0.52-0.56, vs a
+0.76 mean) are *exactly* the 3 that miss threshold, `R` increasing smoothly through 0.75. No formula
+bug found — left open for the same reason as night.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated
