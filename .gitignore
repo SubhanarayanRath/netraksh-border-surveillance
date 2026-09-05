@@ -25,6 +25,8 @@ demo/videos/*.avi
 # manifest.json (the actual real result: D/T/S/H + manual labels) IS
 # committed, since that's the non-regenerable part.
 scripts/calibration_data/snapshots/
+scripts/calibration_data_night/snapshots/
+scripts/calibration_data_fog/snapshots/
 
 # Frontend
 frontend/node_modules/

@@ -40,6 +40,24 @@ limitation — an out-of-date limitations file is worse than none.
   dataset — not because they're proven correct, but because no real labeled data exists yet that
   could prove them wrong. The scene-quality (`S`) and health-quality (`H`) scoring functions remain
   hand-picked heuristics for the same reason.
+  **Follow-up that found a real, more actionable problem than the fit itself:** the same collection
+  script was re-run with `--synthetic-condition night` and `--synthetic-condition fog` — an honest,
+  disclosed OpenCV brightness/contrast/haze transform applied to the same real footage (the people and
+  motion are unchanged and real; only the lighting is synthetic — see the script's docstring). Both
+  transforms genuinely triggered the real `SceneConditionClassifier` into `LOW_LIGHT_NIGHT`/`FOG_RAIN`
+  on every frame (measured, not asserted), and manual review again found zero false positives — so the
+  weight-fitting refusal above holds under degraded conditions too. But checking the CURRENT hand-picked
+  weights against these genuine crossings (`scripts/analyze_reliability_under_conditions.py`) surfaced
+  a real, severe, previously-unmeasured failure mode: **under the synthetic fog condition, 0 of 52
+  genuine crossings clear `RELIABILITY_R_THRESHOLD` — every single one is marked UNCERTAIN, not
+  DETECTED.** Under synthetic night, 59% are missed. See `docs/PERFORMANCE_REPORT.md`'s "Reliability
+  Engine behavior under real night/fog conditions" section for the full numbers and the real, compounding
+  reason (scene quality AND health quality both degrade under the fog transform — the same blur that
+  simulates haze genuinely trips the real blur-based health check too). This is real, open, unresolved:
+  no weight change has been applied yet, pending a decision on how to fix it (raise `S`'s floor,
+  decouple blur-based health degradation from fog specifically, or lower the threshold for `FOG_RAIN`
+  only) — do not claim this is fixed anywhere until one of those changes actually lands and is
+  re-measured.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

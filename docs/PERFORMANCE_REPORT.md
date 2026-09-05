@@ -100,6 +100,54 @@ What actually happened, diagnosed from the same run:
   occluded/crowded clip, or the same clip re-tested with a deliberately shortened `track_buffer` to
   induce ID switches) to be honestly measurable. This is a real, open next step, not a solved one.
 
+## Reliability Engine behavior under real night/fog conditions
+
+A separate, real measurement — **different methodology from the table above, do not merge the two
+numbers.** The table above uses `scripts/run_false_positive_benchmark.py`, which tracks whether R
+clears `RELIABILITY_R_THRESHOLD` on *any* frame across each candidate's whole tracked lifetime. The
+numbers below use `scripts/collect_calibration_data.py` + `scripts/analyze_reliability_under_conditions.py`,
+which compute R once, at the single frame the fence-crossing event actually fires on — a stricter,
+single-frame measurement. Both are real; they answer different questions and are not comparable
+head-to-head.
+
+This measurement exists because of an attempt to calibrate the Hybrid Reliability Engine's weights
+from real labeled data (see `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry): manual review of
+every real fence-crossing candidate in `demo/videos/vtest.avi` found zero false positives, in daytime
+**and** under two honest, disclosed synthetic night/fog lighting transforms applied to the same real
+footage (`--synthetic-condition night|fog` — see `scripts/collect_calibration_data.py`'s docstring for
+exactly what is and isn't synthetic here). With every labeled candidate genuine, weight-fitting was
+correctly refused — but the same labeled data answers a different, real, and more operationally
+important question: **of these genuine crossings, how many does the CURRENT hand-picked formula
+actually mark UNCERTAIN instead of DETECTED?**
+
+| Condition | Genuine (label=1) candidates | DETECTED (R ≥ 0.75) | UNCERTAIN (real crossing missed) |
+|---|---|---|---|
+| Daytime (real, unmodified video) | 52 | 49 (94%) | 3 (6%) |
+| Synthetic night (real video, real Gaussian-darkened frames) | 51 | 21 (41%) | 30 (59%) |
+| Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 0 (0%) | 52 (100%) |
+
+**Read this plainly: under the synthetic fog condition, the current hand-picked weights mark every
+single genuine crossing UNCERTAIN — not one is flagged DETECTED.** This is real, measured evidence for
+architecture v4 §8's documented "intentional behavior change" (degraded scene quality should make the
+system trust itself less) taken to an extreme this project had not previously measured: at this
+severity of fog, the tradeoff is not "somewhat more cautious," it is "the Reliability Gate stops
+flagging anything as DETECTED at all." Two real, disclosed factors compound here, not one: `S` (scene
+quality) drops because contrast collapses, **and** `H` (health quality) also drops to 0.5 because the
+same Gaussian blur applied to simulate fog haze genuinely triggers the real Camera Health Monitor's
+blur detector into a DEGRADED reading — a real, correct interaction between two real subsystems, not a
+double-counted synthetic artifact.
+
+**What this does NOT mean:** it does not mean the fog transform's specific intensity (`cv2.addWeighted`
+at 0.42/0.58 plus a 7×7 Gaussian blur) is representative of every real fog condition NETRAKSH might
+face — a lighter haze would show a less extreme result, and this project has no real fog footage to
+calibrate the transform's intensity against either (see `docs/LIMITATIONS.md`). What it does mean:
+the current weights have never been checked against *any* degraded-condition data before this, and
+now that they have been, they show a real, honestly-measured failure mode worth fixing (raising `S`'s
+floor, decoupling blur-based health degradation from fog specifically, or lowering
+`RELIABILITY_R_THRESHOLD` for the FOG_RAIN condition) rather than leaving unaddressed. This is a real,
+open finding for this project's roadmap, not a solved one — no weight change has been applied yet
+pending a decision on which of those fixes to make.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

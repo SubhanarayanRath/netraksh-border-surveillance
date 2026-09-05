@@ -19,11 +19,32 @@ has to actually look at each snapshot. That is the deliberate next step
 (see scripts/fit_reliability_weights.py's docstring for the labeling
 file format), not something this script fabricates or skips.
 
+SYNTHETIC CONDITIONS (--synthetic-condition night|fog): this project has no
+real night or fog footage (see docs/LIMITATIONS.md — the daytime
+demo/videos/vtest.avi run already found zero false positives, which is
+itself the honest reason a degraded-condition dataset is worth trying).
+Rather than fabricate fake candidates or invent numbers, this flag applies
+an honest, disclosed OpenCV brightness/contrast/haze transform to each REAL
+frame before it reaches the pipeline — the people and motion are the same
+real footage; only the lighting is synthetic. Every downstream number
+(brightness_mean, contrast_std, the resulting SceneCondition, YOLO's actual
+detections on the degraded pixels, D/T/S/H) is still genuinely measured by
+the real pipeline on the real (if now-darker/hazier) pixel data — nothing
+about the transform is faked or backfilled into the output. The manifest
+and every snapshot say plainly that a synthetic condition was applied, so
+this is never confusable with the real, unmodified vtest.avi dataset in
+scripts/calibration_data/.
+
 Usage:
     python scripts/collect_calibration_data.py \\
         --video demo/videos/vtest.avi \\
         --zone-x1 0.456 --zone-y1 0.260 --zone-x2 1.0 --zone-y2 0.521 \\
         --out-dir scripts/calibration_data
+
+    python scripts/collect_calibration_data.py \\
+        --video demo/videos/vtest.avi \\
+        --zone-x1 0.456 --zone-y1 0.260 --zone-x2 1.0 --zone-y2 0.521 \\
+        --out-dir scripts/calibration_data_night --synthetic-condition night
 """
 from __future__ import annotations
 
@@ -49,6 +70,34 @@ from shared.constants import CameraHealthState
 from shared.schemas import Point, Polygon, ZoneSchema
 
 
+def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.random.RandomState) -> np.ndarray:
+    """Apply an honest, disclosed synthetic lighting transform to a REAL
+    frame. Returns the SAME frame unchanged for "none". The transformed
+    pixels are what the rest of the real pipeline (scene classifier,
+    detector, everything) actually runs on — nothing is faked past this
+    point; this is the one and only place synthesis happens.
+    """
+    if condition_sim == "none":
+        return frame
+    if condition_sim == "night":
+        # Simulate low-light/night: scale pixel values down (real cameras at
+        # night are simply darker) and add real Gaussian sensor-noise-like
+        # perturbation (real low-light sensors are noisier, not just dimmer).
+        darkened = frame.astype(np.float32) * 0.28
+        noise = rng.normal(0, 6.0, darkened.shape)
+        return np.clip(darkened + noise, 0, 255).astype(np.uint8)
+    if condition_sim == "fog":
+        # Simulate fog/rain: blend toward a flat, bright haze color (real
+        # fog scatters light into a near-uniform gray-white) and blur
+        # slightly (real fog softens edges) — brightness stays roughly
+        # daytime-level while contrast collapses, matching FOG_RAIN's real
+        # classification rule (edge/condition/scene_condition.py).
+        haze_color = np.full_like(frame, 190)
+        blended = cv2.addWeighted(frame, 0.42, haze_color, 0.58, 0)
+        return cv2.GaussianBlur(blended, (7, 7), 0)
+    raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
+
+
 def build_zone(x1: float, y1: float, x2: float, y2: float) -> ZoneSchema:
     return ZoneSchema(
         zone_id="benchmark-zone", camera_id="benchmark", name="Benchmark fence zone",
@@ -66,6 +115,12 @@ def main() -> None:
     parser.add_argument("--zone-x2", type=float, required=True)
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument(
+        "--synthetic-condition", choices=["none", "night", "fog"], default="none",
+        help="Apply an honest, disclosed lighting transform to real frames "
+             "before the real pipeline runs on them (see module docstring). "
+             "Default 'none' reproduces the original real-daytime collection.",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -90,16 +145,20 @@ def main() -> None:
     candidates = []
     frame_idx = 0
     t_start = time.perf_counter()
+    rng = np.random.RandomState(42)  # fixed seed: a rerun reproduces the same synthetic noise
+    condition_counts: dict = {}
 
     while True:
         ok, frame = cap.read()
         if not ok:
             break
         frame_idx += 1
+        frame = apply_synthetic_condition(frame, args.synthetic_condition, rng)
         frame_height, frame_width = frame.shape[:2]
 
         health = health_monitor.update(frame, time.time())
         condition = condition_classifier.classify(frame)
+        condition_counts[str(condition.condition)] = condition_counts.get(str(condition.condition), 0) + 1
         if health.health_state == CameraHealthState.FAILED:
             continue
 
@@ -149,10 +208,18 @@ def main() -> None:
                 "T": round(t_score, 4),
                 "S": round(s, 4),
                 "H": round(h, 4),
+                # Real, measured (not asserted) values proving what condition
+                # this specific candidate was actually classified under.
+                "scene_condition": str(condition.condition),
+                "brightness_mean": round(condition.brightness_mean, 2),
+                "contrast_std": round(condition.contrast_std, 2),
+                "synthetic_condition": args.synthetic_condition,
                 "snapshot": str(snapshot_path.relative_to(out_dir)),
                 "label": None,  # filled in later by manual review — see fit_reliability_weights.py
             })
-            print(f"  {candidate_id}: frame={frame_idx} track={track.track_id} D={d:.2f} T={t_score:.2f} S={s:.2f} H={h:.2f}")
+            print(f"  {candidate_id}: frame={frame_idx} track={track.track_id} "
+                  f"D={d:.2f} T={t_score:.2f} S={s:.2f} H={h:.2f} "
+                  f"cond={condition.condition} bri={condition.brightness_mean:.0f} con={condition.contrast_std:.0f}")
 
     cap.release()
     wall_seconds = time.perf_counter() - t_start
@@ -160,6 +227,19 @@ def main() -> None:
     manifest = {
         "video": args.video,
         "zone": {"x1": args.zone_x1, "y1": args.zone_y1, "x2": args.zone_x2, "y2": args.zone_y2},
+        "synthetic_condition": args.synthetic_condition,
+        "synthetic_condition_disclosure": (
+            "none — this is the real, unmodified video." if args.synthetic_condition == "none" else
+            f"SYNTHETIC LIGHTING APPLIED: every frame below was run through an honest, disclosed "
+            f"'{args.synthetic_condition}' brightness/contrast transform (see "
+            f"apply_synthetic_condition() in this script's source) before reaching the real "
+            f"pipeline. The people, motion, and zone are the same real footage as "
+            f"scripts/calibration_data/ — only the lighting is synthetic. Every D/T/S/H value, "
+            f"every scene_condition classification, and every YOLO detection below was genuinely "
+            f"computed by the real pipeline on these (now degraded) real pixels — nothing here is "
+            f"backfilled or invented."
+        ),
+        "condition_distribution": condition_counts,  # real, measured per-frame classification counts
         "frames_processed": frame_idx,
         "candidate_count": len(candidates),
         "wall_seconds": round(wall_seconds, 2),
@@ -169,7 +249,8 @@ def main() -> None:
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"\n{len(candidates)} real candidates collected.")
+    print(f"\n{len(candidates)} real candidates collected (synthetic_condition={args.synthetic_condition}).")
+    print(f"Real measured condition distribution across all {frame_idx} frames: {condition_counts}")
     print(f"Manifest: {manifest_path}")
     print(f"Snapshots: {snapshots_dir}/")
     print("\nNext: manually review each snapshot and fill in 'label' (1=real crossing, 0=false positive)")
