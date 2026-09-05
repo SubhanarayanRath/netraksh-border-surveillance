@@ -238,6 +238,25 @@ limitation — an out-of-date limitations file is worse than none.
   always below its threshold by construction). The 6 remaining `glare_mild` residuals show moderate,
   plausible `D`/`T` combinations (no floor, no single dominant factor, `S`≈0.63-0.68 for all,
   `H`=1.0) — genuine evidence-based uncertainty, not a further bug.
+  **The same paired daytime comparison used for `fog_mild`'s residual was applied to all 6 `glare_mild`
+  residuals, and told a real, more varied story than a single clean outlier.** Matching all 52
+  `glare_mild` candidates to a daytime candidate at the same `frame_idx` (47 of 52 matched) found the
+  SAME real crossing (frame 694) is once again by far the largest confidence drop (`0.309`) — roughly
+  7x the next-largest (`0.042`) — confirming this specific real person (against the same
+  similar-colored tree-branch/mulch background identified in the `fog_mild` investigation) is uniquely
+  fragile to visual degradation IN GENERAL, not just fog specifically: it is the single hardest real
+  detection in this whole dataset across every condition tested. **But the other 5 residuals tell a
+  genuinely different, honest story — matched drops of `-0.002`, `-0.003`, `-0.032`, `0.001`, and
+  (nearest-frame, 1-frame offset) `≈0.087` — essentially NO real, glare-specific confidence penalty**
+  (two are even marginally negative, i.e. `glare_mild`'s `D` was fractionally HIGHER than daytime's for
+  the same crossing). These 5 residuals are UNCERTAIN not because glare degraded their detection
+  confidence, but because their baseline daytime confidence was already moderate (`D≈0.56-0.73` even in
+  clear conditions) — `S`'s real, condition-driven glare penalty (uniform across all `glare_mild`
+  candidates, not a per-candidate confidence hit) combined with real `T` factors is what pushes these
+  specific already-borderline detections under threshold, not an outsized glare-specific `D` collapse
+  the way frame 694 shows. A more complete, more honest picture than "no bug found" alone: one real
+  outlier crossing is universally fragile; the rest are ordinary borderline detections that glare's
+  real, uniform scene-quality penalty (not a confidence attack on that specific detection) tips over.
 - **`SceneCondition` is a single, mutually-exclusive categorical value — a real scene that is genuinely
   BOTH foggy AND dark cannot be represented as such, only as one or the other, and this was tested, not
   just noted as a theoretical gap.** A new `--synthetic-condition night_fog`

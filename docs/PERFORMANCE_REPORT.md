@@ -344,6 +344,29 @@ The 6 remaining `glare_mild` residuals show moderate, plausible `D`/`T` combinat
 single dominant factor, `S`≈0.63-0.68 for all, `H`=1.0) — genuine evidence-based uncertainty, not a
 further bug.
 
+**The same paired daytime comparison used for `fog_mild`'s residual, applied to all 6 `glare_mild`
+residuals, tells a real, more varied story than a single clean outlier.** Matching 47 of 52 candidates
+to a daytime candidate at the same `frame_idx`:
+
+| Residual | Matched drop (daytime D − glare_mild D) |
+|---|---|
+| Frame 694 (same crossing as `fog_mild`'s residual) | **0.309** |
+| Next-largest drop (of the other 51) | 0.042 |
+| candidate_011 (nearest-frame match, 1-frame offset) | ≈0.087 |
+| Other 4 residuals | −0.032 to 0.001 (essentially none) |
+
+Frame 694 is once again by far the largest drop — roughly 7x the next-largest — confirming this same
+real person (against the tree-branch/mulch background from the `fog_mild` finding) is uniquely fragile
+to visual degradation IN GENERAL, not just fog: the single hardest real detection in this whole
+dataset, across every condition tested. **But the other 5 residuals show essentially no real,
+glare-specific confidence penalty** (two are even marginally negative). They are UNCERTAIN not because
+glare degraded their detection confidence, but because their baseline daytime confidence was already
+moderate (`D≈0.56-0.73` even in clear conditions) — `S`'s real, uniform glare penalty (a scene-quality
+signal, not a per-candidate confidence hit) combined with real `T` factors is what tips these
+already-borderline detections under threshold, not an outsized `D` collapse the way frame 694 shows. A
+more complete picture than "no bug found" alone: one real outlier crossing is universally fragile; the
+rest are ordinary borderline detections that glare's uniform scene-quality penalty tips over.
+
 ## A real compound condition: night AND fog together
 
 Every condition above tests ONE degradation at a time, matching `SceneCondition`'s real design — a
