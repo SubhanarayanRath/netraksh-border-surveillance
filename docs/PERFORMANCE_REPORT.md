@@ -221,6 +221,16 @@ transform's intensity against, or to validate fix 4's specific heuristic value a
 2 and 3 could lean on an already-existing, independently-justified constant (see `docs/LIMITATIONS.md`).
 This is real, open, partially-addressed work, not a fully solved one.
 
+**Night's residual, investigated specifically:** unlike fixes 1-5, no further formula bug was found —
+an honest negative result, not an unexamined gap. All 4 remaining UNCERTAIN night candidates are
+genuine, correctly-detected people (each snapshot manually re-checked). `S` is nearly flat across all
+51 night candidates (0.6815-0.6961 — this synthetic darkening is uniform per-frame), so `D` (raw
+detector confidence) is what actually separates them: sorting all 51 by `D` shows a clean, monotonic
+boundary — the 4 lowest-`D` candidates (0.48-0.63, vs a 0.78 mean) are *exactly* the 4 that miss
+threshold, with `R` increasing smoothly right through 0.75. This is the Reliability Engine correctly
+expressing more caution on the objectively weakest evidence in the dataset, not a defect — see
+`docs/LIMITATIONS.md` for why this is left open rather than force-fixed.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

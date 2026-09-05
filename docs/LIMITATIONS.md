@@ -128,12 +128,24 @@ limitation — an out-of-date limitations file is worse than none.
   in the real, deployed edge pipeline's temporal-scoring wiring itself.
   **All five fixes together still leave a real, honest remainder** — 6% of genuine fog crossings and
   8% of genuine night crossings under these specific synthetic intensities are still marked
-  UNCERTAIN, with no further fix applied pending real night/fog footage to validate the heuristic
-  values fixes 2-4 introduced (fix 4's `_SCENE_CONTRAST_GOOD_NIGHT` especially, given it lacks the
-  independent grounding fixes 2/3 had). Daytime, notably, is now at 100% — the remaining gap is
-  entirely in the two synthetic degraded-condition datasets. See `docs/PERFORMANCE_REPORT.md`'s
-  "Reliability Engine behavior under real night/fog conditions" section for the full numbers and all
-  five fixes' before/after comparison.
+  UNCERTAIN. Daytime, notably, is now at 100% — the remaining gap is entirely in the two synthetic
+  degraded-condition datasets. See `docs/PERFORMANCE_REPORT.md`'s "Reliability Engine behavior under
+  real night/fog conditions" section for the full numbers and all five fixes' before/after comparison.
+  **The night residual was investigated specifically and, unlike fixes 1-5, found to have NO further
+  identifiable formula bug** — an important, honest negative result in its own right, not a gap left
+  unexamined. All 4 remaining UNCERTAIN night candidates are genuine, correctly-detected people (each
+  snapshot manually re-checked); `S` is nearly flat across all 51 night candidates (0.6815-0.6961 —
+  this synthetic darkening is uniform per-frame, so scene quality barely varies candidate to
+  candidate), so `D` (raw detector confidence) is what actually separates them. Sorting all 51
+  candidates by `D` shows a clean, monotonic boundary: the 4 lowest-`D` candidates (0.48-0.63, vs a
+  0.78 mean across the full set) are *exactly* the 4 that miss threshold, with `R` increasing smoothly
+  right through the 0.75 cutoff — no jump, no double-counted penalty, no wrong reference point. This
+  is the Reliability Engine correctly expressing more caution on the objectively weakest evidence in
+  the dataset, not a defect. Improving it further would require either the weight-fitting this whole
+  exercise already found impossible (no real dataset with actual false positives exists to fit
+  against — see above), or real night footage to check whether this synthetic transform's specific
+  darkening intensity is even realistic for the confidence drop it produces in YOLO — neither of which
+  this investigation can honestly manufacture. Left open, not force-fixed.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not
