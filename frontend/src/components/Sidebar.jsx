@@ -28,8 +28,19 @@ export default function Sidebar() {
             change wraps to a second line instead of silently overflowing
             off-screen again. */}
         <span
-          className="font-display font-bold text-ok text-center"
-          style={{ fontSize: '10px', letterSpacing: '0.03em', lineHeight: 1.2, width: '68px', whiteSpace: 'normal', wordBreak: 'break-word' }}
+          className="font-display font-bold text-ok"
+          style={{
+            fontSize: '11px', letterSpacing: '0.03em', lineHeight: 1.2,
+            width: '72px', whiteSpace: 'normal', wordBreak: 'break-word',
+            // `text-center` (Tailwind utility class) computed as
+            // text-align: start here, not center — confirmed via
+            // getComputedStyle, not assumed — so the word rendered
+            // left-aligned inside its own centered box (the box was
+            // centered in the sidebar; the glyphs inside it weren't
+            // centered within the box). Set inline instead, which always
+            // wins regardless of whatever is overriding the utility class.
+            textAlign: 'center',
+          }}
         >
           NETRAKSH
         </span>

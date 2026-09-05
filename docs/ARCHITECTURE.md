@@ -1257,6 +1257,35 @@ this change — none found.
 
 ---
 
+## Sidebar Label: Actually Centered, Not Just Boxed Center
+
+Follow-up to the widening above — the user reported "NETRAKSH" still didn't look centered
+under the logo, and asked for it a little bigger.
+
+**Root cause, found by measuring rather than assuming:** the label's Tailwind `text-center`
+utility class computed to `text-align: start`, not `center` — confirmed with
+`getComputedStyle()`, not guessed from the screenshot. The label's own *box* was correctly
+centered within the sidebar (both had the same center-X, measured via
+`getBoundingClientRect()`), but the *text glyphs inside that box* were left-aligned within
+it, since `text-align` wasn't actually applying — the rendered word (~52px) sat flush left
+inside its wider (68px) box, leaving empty space on the right, which reads as the whole
+thing being shifted left even though the box itself wasn't.
+
+**Fixed:** `textAlign: 'center'` set as an inline style rather than via the `text-center`
+class, which always wins regardless of whatever was overriding the utility class (not
+investigated further, since the inline fix is correct either way and this project doesn't
+otherwise depend on that specific utility working). Font size bumped 10px → 11px per the
+"lil enlarge" request, box width 68px → 72px to keep margin either side.
+
+**Verified with real coordinates, not a screenshot:** measured the text's own true rendered
+bounding box (via a `Range` over the span's contents, not the span element's own box) before
+and after — center-X went from measurably off-center to within 0.4px of the sidebar's exact
+center-X. This is the same class of mistake as the original clipping bug: a box being the
+right size or position is not the same claim as its visible content being centered inside
+it, and this document doesn't blur the two.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
