@@ -260,6 +260,33 @@ limitation — an out-of-date limitations file is worse than none.
   real crossing became the residual, not an unexplained coincidence — and a useful, real confirmation
   that
   the Reliability Engine's caution here tracks a genuine, measured, real-world confidence collapse.
+  **Investigated further: what SPECIFICALLY about the overlap confuses YOLO, at the level of the raw
+  model output, not just "there is an occlusion."** Re-running the real YOLOv8n model directly (not
+  through the tracker) on the raw frame sequence 691-696, at a low confidence threshold to see every
+  candidate box in the region, gives a precise, quantified mechanism:
+
+  | Frame | Tracked person (blue jacket) box | Occluding person (dark jacket) box |
+  |---|---|---|
+  | 691 | height 94px, conf 0.835 | height 84px, conf 0.729 |
+  | 692 | height 93px, conf 0.871 | height 80px, conf 0.783 |
+  | 693 | height 86px, conf 0.833 | height 77px, conf 0.611 (+ a duplicate, partial 52px box at 0.291) |
+  | **694** | height 99px, conf **0.756** | height **53px**, conf **0.436** |
+  | 695 | height 89px, conf 0.766 | height 83px, conf 0.770 (fully recovered) |
+
+  At the peak-overlap instant, the occluding person's OWN raw YOLO box truncates to roughly HALF its
+  normal height (`53px` vs `77-84px` in adjacent frames) — his raised leg, mid-swing and overlapping the
+  tracked person's head, is excluded from his own bounding box rather than included in it, producing an
+  incompletely-proportioned "person" shape that the model itself scores far less confidently (`0.436`,
+  down from `0.611-0.783`). The tracked person's own box, at the exact same frame, GROWS slightly larger
+  than usual (`99px` vs his own typical `86-94px`) — consistent with the intruding leg's pixels being
+  absorbed into the top of HIS box instead, distorting his silhouette's proportions away from a clean,
+  canonical person shape, which plausibly explains his own more modest confidence dip (`0.833→0.756`).
+  Both boxes return to their normal height and confidence the very next frame, once the two people's
+  silhouettes separate. This is the precise, measured answer: it is not occlusion in the abstract, but
+  a specific, real bounding-box geometry disruption — one person's limb visually intruding into the
+  other's silhouette region distorts BOTH people's box proportions simultaneously, and YOLO's
+  objectness/confidence scoring genuinely responds to that distorted geometry, not just to "is a person
+  present."
   **Sixth fix — GLARE, the fourth and last real `SceneCondition`, tested the same way.** A synthetic
   glare transform was added to `scripts/collect_calibration_data.py`
   (`--synthetic-condition glare`: scale pixel values ×1.8+20 and clip at 255, empirically measured

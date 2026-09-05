@@ -379,6 +379,34 @@ mild haze. A complete, honest, rigorously-verified explanation for why this spec
 the residual — not an unexplained coincidence — and a real confirmation that the Reliability Engine's
 caution here tracks a genuine, measured confidence collapse.
 
+## What specifically about the overlap confuses YOLO
+
+Investigated one level deeper: not just "there is an occlusion," but the precise mechanism at the raw
+model output. Re-running the real YOLOv8n model directly (not through the tracker) on frames 691-696 at
+a low confidence threshold, to see every candidate box in the region:
+
+| Frame | Tracked person (blue jacket) | Occluding person (dark jacket) |
+|---|---|---|
+| 691 | height 94px, conf 0.835 | height 84px, conf 0.729 |
+| 692 | height 93px, conf 0.871 | height 80px, conf 0.783 |
+| 693 | height 86px, conf 0.833 | height 77px, conf 0.611 (+ duplicate partial 52px box, 0.291) |
+| **694** | height 99px, conf **0.756** | height **53px**, conf **0.436** |
+| 695 | height 89px, conf 0.766 | height 83px, conf 0.770 (fully recovered) |
+
+At the peak-overlap instant, the occluding person's own raw box truncates to roughly HALF its normal
+height — his raised leg, mid-swing and overlapping the tracked person's head, is excluded from his own
+box rather than included in it, producing an incompletely-proportioned shape the model scores far less
+confidently (0.436, down from 0.611-0.783). The tracked person's own box, at the exact same frame,
+grows slightly larger than usual (99px vs his typical 86-94px) — consistent with the intruding leg's
+pixels being absorbed into the top of HIS box, distorting his silhouette away from a clean, canonical
+person shape, plausibly explaining his own more modest confidence dip. Both boxes return to normal the
+very next frame, once the silhouettes separate.
+
+**The precise, measured answer:** it is not occlusion in the abstract, but a specific bounding-box
+geometry disruption — one person's limb visually intruding into the other's silhouette region distorts
+BOTH people's box proportions simultaneously, and YOLO's confidence scoring genuinely responds to that
+distorted geometry, not just to "is a person present."
+
 **Glare's residual was investigated too, and turned out to be a genuinely DIFFERENT situation from
 fog/night — checked, not assumed.** Fog and night's classification rules structurally GUARANTEE every
 classified frame fails the old reference (fog *requires* `contrast<30`, always below the old 60
