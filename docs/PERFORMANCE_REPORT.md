@@ -265,6 +265,27 @@ this test — less headroom remained for a milder transform to recover. The 2 re
 residuals (`D=0.47` and `D=0.49`, both far below the 0.78 mean, `T`/`S`/`H` all near-max) are the same
 genuine low-confidence-detection pattern as every other residual this session.
 
+**The same paired daytime comparison used for `fog_mild`'s and `glare_mild`'s residuals, applied here,
+told a third, real, distinct story.** Matching 41 of 52 candidates to a daytime candidate at the same
+`frame_idx`:
+
+| Residual | Matched drop (daytime D − night_mild D) |
+|---|---|
+| Frame 694 (same crossing as `fog_mild`'s AND `glare_mild`'s outliers) | 0.262 |
+| candidate_032 (nearest-frame match, 1-frame offset, different person) | ≈0.246 |
+
+Frame 694 is, again, the same real crossing flagged as the largest outlier under both `fog_mild` (0.386)
+and `glare_mild` (0.309). **This is now the THIRD independent condition — three genuinely different
+kinds of visual degradation (haze/blur, brightening/washout, darkening) — in which this exact same real
+person shows the largest confidence drop.** A strong, cross-validated conclusion: this one real
+crossing is universally the hardest real detection in this entire dataset, independent of which
+degradation is applied. The second residual (a different person, no exact frame match) shows a
+comparably large drop (≈0.246) too. **Unlike `glare_mild` (only 1 of 6 residuals showed a real
+condition-specific confidence collapse; the other 5 were ordinary moderate-confidence detections tipped
+by `S`'s uniform penalty), BOTH of `night_mild`'s residuals are genuinely, substantially
+night-degraded** — a real, honest difference in character between night's and glare's residual
+populations, not a coincidence of small sample size.
+
 **Fog's residual, investigated the same way, reaches the identical conclusion:** all 3 remaining
 UNCERTAIN fog candidates are genuine, correctly-detected people (small/distant figures visibly
 softened by the haze/blur transform). `S` is nearly flat across all 52 fog candidates

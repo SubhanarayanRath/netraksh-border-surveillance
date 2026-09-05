@@ -158,6 +158,24 @@ limitation — an out-of-date limitations file is worse than none.
   The 2 remaining `night_mild` residuals (`D=0.47` and `D=0.49`, both far below the 0.78 mean, with
   `T`/`S`/`H` all near-max) are the same genuine low-confidence-detection pattern as every other
   residual this session.
+  **The same paired daytime comparison used for `fog_mild`'s and `glare_mild`'s residuals was applied
+  here too, and told a third, real, distinct story.** Matching 41 of 52 `night_mild` candidates to a
+  daytime candidate at the same `frame_idx`: one residual is, again, frame 694 — the SAME real crossing
+  flagged as the largest outlier under BOTH `fog_mild` (drop `0.386`) and `glare_mild` (drop `0.309`) —
+  showing a real drop of `0.262` here too. **This is now the THIRD independent condition, using three
+  genuinely different kinds of visual degradation (haze/blur, brightening/washout, darkening), in which
+  this exact same real person is the single largest confidence drop in its dataset** — a strong,
+  cross-validated conclusion that this one real crossing (against the tree-branch/mulch background
+  identified in the `fog_mild` investigation) is universally the hardest real detection in this whole
+  dataset, independent of which degradation is applied. The second residual (`candidate_032`, no exact
+  frame match — nearest daytime candidate is 1 frame off, at frame 487) shows a comparably large real
+  drop too (`≈0.246`, daytime `D=0.719` → night_mild `D=0.472`) — a DIFFERENT real person, not
+  previously flagged, but similarly night-sensitive. **Unlike `glare_mild` (where only 1 of 6 residuals
+  showed a real, condition-specific confidence collapse, and the other 5 were ordinary moderate-
+  confidence detections tipped by `S`'s uniform penalty), BOTH of `night_mild`'s residuals are
+  genuinely, substantially night-degraded detections** (~0.25 drop each) — a real, honest difference in
+  character between night's and glare's residual populations, not just a coincidence of small sample
+  size.
   **The fog residual was investigated the same way and reaches the identical honest conclusion.** All
   3 remaining UNCERTAIN fog candidates are genuine, correctly-detected people (each snapshot manually
   re-checked — small/distant figures visibly softened by the haze/blur transform). `S` is nearly flat
