@@ -290,6 +290,12 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   `edge/detection/calibration.py`) is still passed in and still gates what confidence YOLO itself
   reports as a candidate detection, and is still echoed into `applied_threshold` for context — it no
   longer drives the DETECTED/UNCERTAIN split itself.
+  A real attempt was made to fit these weights from labeled data
+  (`scripts/collect_calibration_data.py` + `scripts/fit_reliability_weights.py`, against the same
+  real video/zone as `docs/PERFORMANCE_REPORT.md`): manual review of all 52 real candidates found
+  zero false positives to learn from, so the fit was correctly refused rather than faked — see
+  `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry for the full, honest writeup. The defaults
+  above remain unchanged as a result.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating

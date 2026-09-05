@@ -20,6 +20,12 @@ edge/data/
 edge/data/clips/
 demo/videos/*.avi
 
+# Calibration snapshot images (large, regenerable by re-running
+# scripts/collect_calibration_data.py against the video) — the labeled
+# manifest.json (the actual real result: D/T/S/H + manual labels) IS
+# committed, since that's the non-regenerable part.
+scripts/calibration_data/snapshots/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

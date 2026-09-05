@@ -13,13 +13,33 @@ limitation — an out-of-date limitations file is worse than none.
   problem — no amount of pipeline engineering around it changes what the underlying detector was
   trained to recognize. `edge/condition/scene_condition.py`'s CLAHE preprocessing (once wired, see
   §3 below) and the calibration module's per-condition thresholds are mitigations, not fixes.
-- **Hybrid Reliability Engine weights and threshold are hand-picked, not calibrated.**
-  `RELIABILITY_WEIGHT_D/T/S/H` and `RELIABILITY_R_THRESHOLD` (`edge/reliability/decision.py`) are
-  shipped defaults chosen to preserve the qualitative behavior of the original 3-gate cascade on its
-  own test cases — they have not been fit against labeled outcomes. The scene-quality (`S`) and
-  health-quality (`H`) scoring functions are similarly hand-picked heuristics. Architecture v4 §8's
-  suggested upgrade path — fitting the weights via `LogisticRegression` over the same labeled clips
-  used for the Temporal Evidence Intelligence classifier (Mode B, below) — has not been done.
+- **Hybrid Reliability Engine weights and threshold are hand-picked, not calibrated — and a real
+  attempt to calibrate them found this project's available real footage cannot supply what
+  calibration needs.** `RELIABILITY_WEIGHT_D/T/S/H` and `RELIABILITY_R_THRESHOLD`
+  (`edge/reliability/decision.py`) are shipped defaults chosen to preserve the qualitative behavior
+  of the original 3-gate cascade on its own test cases. Architecture v4 §8's suggested upgrade path
+  — fitting the weights via `LogisticRegression` over real labeled data — was actually attempted:
+  `scripts/collect_calibration_data.py` ran the real production pipeline (real YOLOv8n detection,
+  real `TrackFeatureTracker`, and the real `_scene_quality_score`/`_health_quality_score` functions
+  imported directly from `edge/reliability/decision.py`, not reimplemented) against the same real
+  video and zone already used for `docs/PERFORMANCE_REPORT.md`
+  (`demo/videos/vtest.avi`, `(0.456,0.260)`–`(1.0,0.521)`), producing the same 52 real raw
+  fence-crossing candidates that report already documents — each with its real `D`/`T`/`S`/`H`
+  feature values and a labelable snapshot image (`scripts/calibration_data/`). A single reviewer then
+  manually looked at every one of the 52 snapshots and labeled it by hand
+  (`scripts/calibration_data/manifest.json`). The real, honest result: **all 52 are genuine detections
+  of real people genuinely at or crossing the marked zone (label=1) — zero false positives.**
+  `scripts/fit_reliability_weights.py` detects this single-class case explicitly and refuses to
+  produce a fit, rather than printing meaningless coefficients from a dataset with no negative
+  examples. This is a real, useful negative result, not a shortcut: it shows this project's one
+  available real video (a generic public daytime pedestrian clip) is the wrong kind of dataset for
+  this specific calibration — an actual false-positive-producing dataset (night/fog/glare footage,
+  animals, wind-blown foliage, sensor noise) would be needed, and none of that currently exists as
+  real footage anywhere in this project (see the "No custom border-surveillance dataset exists" item
+  below). The current hand-picked defaults are therefore left in place, unchanged, pending such a
+  dataset — not because they're proven correct, but because no real labeled data exists yet that
+  could prove them wrong. The scene-quality (`S`) and health-quality (`H`) scoring functions remain
+  hand-picked heuristics for the same reason.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not
