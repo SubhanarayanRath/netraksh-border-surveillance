@@ -87,14 +87,30 @@ limitation — an out-of-date limitations file is worse than none.
   `tests/unit/test_reliability.py::TestSceneQualityNightBrightnessReference`, 4 more new tests; full
   suite 219/219). `FOG_RAIN`/`CLEAR_DAY`/`GLARE` are untouched (confirmed: fog's rate is identical
   before and after, 45/52 both times). Re-measured result: night rose from 41% to 61% DETECTED (31/51).
-  **All three fixes together remain a partial fix, not a solved problem** — 13% of genuine fog crossings
-  and 39% of genuine night crossings under these specific synthetic intensities are still marked
-  UNCERTAIN. Night's remaining gap has no further fix applied: it comes from `contrast_score`'s global
-  60.0 reference, a real, uncorrected penalty for night with no existing analogous constant to honestly
-  reuse the way the fog and night brightness fixes did (inventing one would repeat exactly the kind of
-  unjustified-heuristic problem these fixes exist to avoid). See `docs/PERFORMANCE_REPORT.md`'s
-  "Reliability Engine behavior under real night/fog conditions" section for the full numbers and all
-  three fixes' before/after comparison.
+  **Fourth follow-up fix, same remaining gap as flagged above, addressed anyway with honest
+  disclosure of what kind of fix this is:** `contrast_score` was still judging night frames against the
+  clear-day contrast ideal (60.0). Unlike the fog fix and the night brightness fix above — both of
+  which reuse a real constant that's already part of `SceneConditionClassifier`'s actual classification
+  rule — `LOW_LIGHT_NIGHT`'s classification rule checks brightness only, so there is no existing
+  "this is the real rule that made it night" constant for contrast to reuse. `_SCENE_CONTRAST_GOOD_NIGHT`
+  is therefore a genuinely NEW, hand-picked heuristic (half of `BRIGHTNESS_NIGHT_THRESHOLD` = 30.0) —
+  not calibrated, not a reused classification boundary, and explicitly disclosed as such rather than
+  oversold as equivalent to fixes 2/3. Its justification is a real, statable physical property, not a
+  guess: `contrast_std` measures the spread of a non-negative pixel-value distribution, and one whose
+  mean is capped below `BRIGHTNESS_NIGHT_THRESHOLD` cannot have much spread without clipping at zero —
+  so a legitimately-dark-but-not-defective night frame's achievable contrast is bounded by its own
+  brightness headroom, not the clear-day sensor's full range. This is exactly the same category of
+  hand-picked default as the *original* `_SCENE_CONTRAST_GOOD`/`_SCENE_BRIGHTNESS_IDEAL`/
+  `_SCENE_GLARE_BAD` constants (locked in by
+  `tests/unit/test_reliability.py::TestSceneQualityNightContrastReference`, 4 more new tests, including
+  a regression lock confirming `FOG_RAIN`'s own contrast reference is unaffected; full suite 223/223).
+  Re-measured result: night rose further, from 61% to 76% DETECTED (39/51).
+  **All four fixes together remain a partial fix, not a solved problem** — 13% of genuine fog crossings
+  and 24% of genuine night crossings under these specific synthetic intensities are still marked
+  UNCERTAIN, with no further fix applied pending real night/fog footage to validate any of these
+  heuristic values against (fix 4's especially, given it lacks the independent grounding fixes 2/3 had).
+  See `docs/PERFORMANCE_REPORT.md`'s "Reliability Engine behavior under real night/fog conditions"
+  section for the full numbers and all four fixes' before/after comparison.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

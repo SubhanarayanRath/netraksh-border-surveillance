@@ -98,15 +98,31 @@ _SCENE_GLARE_BAD = 0.30
 # the actual boundary of "is this foggy" scores a full contrast_score, and a
 # frame foggier than that (which does mean something concretely worse: low
 # contrast well beyond the classification threshold itself) still scores
-# proportionally lower. CLEAR_DAY/GLARE/LOW_LIGHT_NIGHT keep the clear-day
-# contrast reference — this project has no existing, already-defined
-# constant analogous to FOG_CONTRAST_THRESHOLD for what "good" contrast
-# means specifically at night, and inventing a fresh number here (rather
-# than reusing a real one, as this fix does for fog) would repeat exactly
-# the kind of unjustified-heuristic problem this whole exercise exists to
-# avoid — see docs/LIMITATIONS.md for this as an open, honestly-flagged gap.
+# proportionally lower.
+#
+# LOW_LIGHT_NIGHT is DIFFERENT IN KIND, not just degree, from the FOG_RAIN
+# case above — disclose this plainly rather than implying the same rigor.
+# SceneConditionClassifier's LOW_LIGHT_NIGHT rule checks brightness only
+# (edge/condition/scene_condition.py); contrast plays no part in classifying
+# a scene as night, so unlike FOG_RAIN there is no existing, already-defined
+# "this is the real rule that made it night" constant for contrast to reuse.
+# _SCENE_CONTRAST_GOOD_NIGHT below is therefore a genuinely NEW, hand-picked
+# heuristic — NOT calibrated, NOT a reused classification-boundary constant
+# — chosen as half of BRIGHTNESS_NIGHT_THRESHOLD on a real, statable (but
+# still heuristic) physical basis: contrast_std measures the spread of a
+# non-negative pixel-value distribution, and a distribution whose mean is
+# capped below BRIGHTNESS_NIGHT_THRESHOLD cannot have much spread without
+# clipping at zero — so a legitimately-dark-but-not-defective night frame's
+# achievable contrast is bounded by its own available brightness headroom,
+# not by the clear-day sensor's full 0-255 range. This is exactly the same
+# category of hand-picked default as _SCENE_CONTRAST_GOOD/_SCENE_BRIGHTNESS_
+# IDEAL/_SCENE_GLARE_BAD themselves (see docs/LIMITATIONS.md) — it is
+# disclosed as such, not oversold as a "reused real constant" the way the
+# FOG_RAIN entry above legitimately is.
+_SCENE_CONTRAST_GOOD_NIGHT = BRIGHTNESS_NIGHT_THRESHOLD / 2.0  # = 30.0
 _SCENE_CONTRAST_GOOD_BY_CONDITION = {
     SceneCondition.FOG_RAIN: FOG_CONTRAST_THRESHOLD,
+    SceneCondition.LOW_LIGHT_NIGHT: _SCENE_CONTRAST_GOOD_NIGHT,
 }
 
 # Real finding this fixes (same section of docs/PERFORMANCE_REPORT.md):
@@ -154,11 +170,15 @@ def _scene_quality_score(condition_report: SceneConditionReport) -> float:
     raw brightness/contrast/glare signals SceneConditionClassifier already
     computes. NOT calibrated — see docs/LIMITATIONS.md.
 
-    Two reference points are per-condition rather than global (see the
-    comments above each lookup table): contrast_score for FOG_RAIN, and
-    brightness_score for LOW_LIGHT_NIGHT — both to avoid judging an
+    Both contrast_score and brightness_score use per-condition reference
+    points rather than a single global one for FOG_RAIN and LOW_LIGHT_NIGHT
+    (see the comments above each lookup table) — to avoid judging an
     inherently-degraded-by-definition condition against a clear-day ideal it
-    was never going to meet.
+    was never going to meet. FOG_RAIN's contrast reference and
+    LOW_LIGHT_NIGHT's brightness reference reuse a real, already-existing
+    classification-boundary constant; LOW_LIGHT_NIGHT's contrast reference
+    does not have one of those to reuse and is a disclosed, hand-picked
+    heuristic instead — see the comment above _SCENE_CONTRAST_GOOD_NIGHT.
     """
     if condition_report.condition in _NIGHT_BRIGHTNESS_SCORED_CONDITIONS:
         brightness_score = min(condition_report.brightness_mean / BRIGHTNESS_NIGHT_THRESHOLD, 1.0)

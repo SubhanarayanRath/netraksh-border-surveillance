@@ -123,10 +123,10 @@ actually mark UNCERTAIN instead of DETECTED?**
 | Condition | Genuine (label=1) candidates | DETECTED (R ≥ 0.75) | UNCERTAIN (real crossing missed) |
 |---|---|---|---|
 | Daytime (real, unmodified video) | 52 | 49 (94%) | 3 (6%) |
-| Synthetic night (real video, real Gaussian-darkened frames) | 51 | 31 (61%) | 20 (39%) |
+| Synthetic night (real video, real Gaussian-darkened frames) | 51 | 39 (76%) | 12 (24%) |
 | Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 45 (87%) | 7 (13%) |
 
-**These numbers are after THREE real, separate fixes, applied in sequence** — each honestly
+**These numbers are after FOUR real, separate fixes, applied in sequence** — each honestly
 re-measured, none a full solution on its own:
 
 1. **Fix 1 — H double-penalty** (`edge/reliability/decision.py::_health_quality_score`). The
@@ -170,18 +170,34 @@ re-measured, none a full solution on its own:
    `tests/unit/test_reliability.py::TestSceneQualityNightBrightnessReference`, 4 tests).
    `FOG_RAIN`/`CLEAR_DAY`/`GLARE` are untouched (confirmed: fog's DETECTED rate is identical before and
    after fix 3, 45/52 both times). This raised night from 41% to 61% DETECTED.
+4. **Fix 4 — S's contrast reference for LOW_LIGHT_NIGHT** (same function). Fix 3 left 39% of genuine
+   night crossings still missing, driven by `contrast_score` still judging night frames against the
+   clear-day contrast ideal (60.0). **This case is different in kind from fixes 2 and 3**, disclosed as
+   such: `SceneConditionClassifier`'s `LOW_LIGHT_NIGHT` rule checks brightness only — there is no
+   existing "this is the real rule that made it night" constant for contrast to reuse the way `FOG_RAIN`
+   and night's own brightness fix could. `_SCENE_CONTRAST_GOOD_NIGHT` is therefore a genuinely NEW,
+   hand-picked heuristic (half of `BRIGHTNESS_NIGHT_THRESHOLD` = 30.0) — not calibrated, not a reused
+   classification boundary — justified on a real, statable physical basis: `contrast_std` measures the
+   spread of a non-negative pixel-value distribution, and one whose mean is capped below
+   `BRIGHTNESS_NIGHT_THRESHOLD` cannot have much spread without clipping at zero, so a legitimately-
+   dark-but-not-defective night frame's achievable contrast is bounded by its own brightness headroom,
+   not the clear-day sensor's full range. This is exactly the same category of hand-picked default as
+   the *original* `_SCENE_CONTRAST_GOOD`/`_SCENE_BRIGHTNESS_IDEAL`/`_SCENE_GLARE_BAD` constants
+   themselves — disclosed as such, not oversold as a "reused real constant" the way fixes 2 and 3
+   legitimately are (see
+   `tests/unit/test_reliability.py::TestSceneQualityNightContrastReference`, 4 tests, including a
+   regression lock confirming `FOG_RAIN`'s own contrast reference is unaffected). This raised night
+   further, from 61% to 76% DETECTED.
 
 **What this does NOT mean:** it does not mean fog or night detection is now "solved" — 13% of genuine
-fog crossings and 39% of genuine night crossings under these specific synthetic intensities still miss,
-a real, honest, remaining gap (all three fixes removed double-counted or misapplied penalties; none
-invented leniency that wasn't already justified by a real, existing rule elsewhere in this codebase —
-notably, night's remaining 39% has no further fix applied, since contrast_score's global 60.0 reference
-is a real, uncorrected penalty for night with no existing analogous constant to honestly reuse the way
-fixes 2 and 3 did). It also does not mean either synthetic transform's specific intensity (night:
-scaling pixel values by 0.28 plus Gaussian noise; fog: `cv2.addWeighted` at 0.42/0.58 plus a 7×7
-Gaussian blur) is representative of every real night/fog condition NETRAKSH might face — this project
-has no real night or fog footage to calibrate either transform's intensity against (see
-`docs/LIMITATIONS.md`). This is real, open, partially-addressed work, not a fully solved one.
+fog crossings and 24% of genuine night crossings under these specific synthetic intensities still miss,
+a real, honest, remaining gap. It also does not mean either synthetic transform's specific intensity
+(night: scaling pixel values by 0.28 plus Gaussian noise; fog: `cv2.addWeighted` at 0.42/0.58 plus a
+7×7 Gaussian blur) is representative of every real night/fog condition NETRAKSH might face — this
+project has no real night or fog footage to calibrate either transform's intensity against, or to
+validate fix 4's specific heuristic value against, the way fixes 2 and 3 could lean on an
+already-existing, independently-justified constant (see `docs/LIMITATIONS.md`). This is real, open,
+partially-addressed work, not a fully solved one.
 
 ## Honesty checklist before this goes in the PPT
 

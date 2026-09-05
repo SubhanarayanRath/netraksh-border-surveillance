@@ -307,11 +307,18 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   did the same for night's own bottleneck: `brightness_score` judged `LOW_LIGHT_NIGHT` frames against
   the same clear-day ideal (128.0), when the real, already-existing `BRIGHTNESS_NIGHT_THRESHOLD` (60.0)
   — literally the rule that classifies a scene as night in the first place — is the honest reference
-  to use instead. That raised night from 21/51 (41%) to 31/51 (61%). See `docs/LIMITATIONS.md`'s Hybrid
-  Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest
-  before/after of all three fixes. `D/T/S/H`'s hand-picked *weight values* themselves remain
-  unchanged — these fixed how `H` and `S` are computed, not the weights applied to them — pending real
-  labeled data with actual false positives to fit against.
+  to use instead. That raised night from 21/51 (41%) to 31/51 (61%). A fourth fix addressed night's
+  remaining contrast-side gap too, but is disclosed as a different kind of fix from the three above:
+  `LOW_LIGHT_NIGHT`'s classification rule has no contrast component to reuse the way `FOG_RAIN` and
+  night's own brightness fix could, so `_SCENE_CONTRAST_GOOD_NIGHT` (half of
+  `BRIGHTNESS_NIGHT_THRESHOLD`) is a genuinely new, hand-picked heuristic — justified by a real
+  physical property (a non-negative pixel distribution capped near a low mean can't have much spread
+  without clipping), not a reused classification-boundary constant. That raised night further, to
+  39/51 (76%). See `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and
+  `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after of all four fixes.
+  `D/T/S/H`'s hand-picked *weight values* themselves remain unchanged — these fixed how `H` and `S` are
+  computed, not the weights applied to them — pending real labeled data with actual false positives to
+  fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating
