@@ -99,15 +99,22 @@ export default function Performance() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile icon={Zap} label="Measured FPS" value={m.fps.toFixed(1)} sub="rolling window, not declared rate" />
+        {/* CPU and RSS gate independently on their own field being non-null,
+            not jointly on `psutil_available` — a single end-of-run CPU%
+            sample can be uncredible (see docs/PERFORMANCE_REPORT.md: "this
+            reading is not credible... do not put 0% CPU in the PPT") while
+            the RSS reading from that exact same run is fine to quote. A
+            shared gate would have hidden a real, credible RSS number just
+            because CPU wasn't trustworthy that run. */}
         <StatTile
           icon={Cpu} label="CPU"
-          value={m.psutil_available && m.cpu_percent != null ? `${m.cpu_percent.toFixed(1)}%` : '—'}
-          sub={m.psutil_available ? undefined : 'psutil not installed on edge'}
+          value={m.cpu_percent != null ? `${m.cpu_percent.toFixed(1)}%` : '—'}
+          sub={m.cpu_percent != null ? undefined : (m.psutil_available ? 'not sampled this run' : 'psutil not installed on edge')}
         />
         <StatTile
           icon={HardDrive} label="Memory (RSS)"
-          value={m.psutil_available && m.rss_mb != null ? `${m.rss_mb.toFixed(0)} MB` : '—'}
-          sub={m.psutil_available ? undefined : 'psutil not installed on edge'}
+          value={m.rss_mb != null ? `${m.rss_mb.toFixed(0)} MB` : '—'}
+          sub={m.rss_mb != null ? undefined : (m.psutil_available ? 'not sampled this run' : 'psutil not installed on edge')}
         />
         <StatTile icon={AlertTriangle} label="Alerts Generated" value={m.alerts_generated} sub="this process's lifetime" />
       </div>

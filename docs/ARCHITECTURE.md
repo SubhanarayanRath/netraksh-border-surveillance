@@ -1453,6 +1453,40 @@ only, no new class introduced).
 
 ---
 
+## Performance Dashboard Seed Data + a Real Design Flaw Found While Seeding It
+
+Prompted by "seed some realistic synthetic performance data." `scripts/seed_demo_metrics.py`
+(new) uses the *real* measured frame-level latency and FPS from
+`docs/PERFORMANCE_REPORT.md` (health/detection/event/total stage mean/p95/max,
+FPS=21.76) rather than inventing new numbers — the same actual benchmark run this project
+already has on record. Per-event stage timings and adaptive-gate skip-ratio are disclosed
+as plausible illustrative values, not measurements — that report's own event-level table
+says "Not measured in this run," and no adaptive-gate numbers exist anywhere in this
+repo's docs either.
+
+**A real bug in `Performance.jsx` itself, found while seeding, not before:** the page
+gated *both* the CPU and RSS tiles behind a single shared `psutil_available` flag. But
+`docs/PERFORMANCE_REPORT.md`'s own real finding is that the CPU reading from that run
+(0.0%) is explicitly "not credible... do not put 0% CPU in the PPT," while the RSS reading
+from that *same* run is explicitly credible and quotable. A single shared gate meant that
+correctly hiding the uncredible CPU number would have also hidden the real, credible RSS
+number for no reason. Fixed: each tile now gates independently on its own field being
+non-null, with a sub-label distinguishing "not sampled this run" (a field genuinely absent
+from a given report) from "psutil not installed on edge" (the tool itself unavailable) —
+two different real reasons a number can be missing, now told apart instead of collapsed
+into one message.
+
+**Verified:** re-seeded after the fix and confirmed live — CPU tile correctly shows
+"— not sampled this run," RSS tile correctly shows the real "420 MB," alongside the real
+FPS and stage-latency numbers, all matching `docs/PERFORMANCE_REPORT.md` exactly. Local
+test rows cleaned up from the database both before and after the fix.
+
+**Tests:** 207/207 passing (backend unchanged this pass). `vite build` clean, `oxlint`
+clean (same two pre-existing warning patterns as the feature's own introduction, no new
+class).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
