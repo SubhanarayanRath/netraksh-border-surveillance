@@ -13,7 +13,7 @@
   },
   "frames_processed": 795,
   "candidate_count": 3,
-  "wall_seconds": 39.03,
+  "wall_seconds": 87.35,
   "candidates": [
     {
       "candidate_id": "candidate_000",
@@ -27,10 +27,11 @@
       "T_speed_consistency": 1.0,
       "trajectory_point_count": 2,
       "S": 0.6803,
-      "H": 0.5,
+      "H": 1.0,
       "scene_condition": "GLARE",
       "brightness_mean": 75.15,
       "contrast_std": 80.66,
+      "contrast_std_excluding_glare": 14.76,
       "synthetic_condition": "night_fog_glare",
       "snapshot": "snapshots\\candidate_000.jpg",
       "label": 1
@@ -47,10 +48,11 @@
       "T_speed_consistency": 1.0,
       "trajectory_point_count": 2,
       "S": 0.6803,
-      "H": 0.5,
+      "H": 1.0,
       "scene_condition": "GLARE",
       "brightness_mean": 75.15,
       "contrast_std": 80.65,
+      "contrast_std_excluding_glare": 14.72,
       "synthetic_condition": "night_fog_glare",
       "snapshot": "snapshots\\candidate_001.jpg",
       "label": 1
@@ -67,10 +69,11 @@
       "T_speed_consistency": 0.7921,
       "trajectory_point_count": 3,
       "S": 0.6801,
-      "H": 0.5,
+      "H": 1.0,
       "scene_condition": "GLARE",
       "brightness_mean": 75.04,
       "contrast_std": 80.7,
+      "contrast_std_excluding_glare": 14.72,
       "synthetic_condition": "night_fog_glare",
       "snapshot": "snapshots\\candidate_002.jpg",
       "label": 1

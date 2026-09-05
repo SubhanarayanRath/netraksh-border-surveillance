@@ -332,25 +332,39 @@ limitation — an out-of-date limitations file is worse than none.
   (`tests/unit/test_reliability.py::TestWeatherExplainedBlurByRealContrastNotJustLabel`); full suite
   242/242; all five earlier real datasets (daytime/night/fog/glare/`night_glare`) re-verified byte-for-
   byte unchanged by this generalization.
-  **Honestly, though, re-measuring `fog_glare` with the fix in place found it does NOT solve the real
-  case it was built for: DETECTED stayed at 0/52 (0%), unchanged.** The real reason: this scene's
-  measured `contrast_std` is `≈41` — ABOVE `FOG_CONTRAST_THRESHOLD` (30), because the localized bright
-  glow inflates the FRAME'S GLOBAL contrast statistic well past what the hazy majority of the frame
-  would show on its own (compare `night_fog_glare`, where the glow against a genuinely DARK background
-  inflated global contrast even more, to ≈81). A single global scalar cannot distinguish "uniformly
-  hazy" from "hazy background plus one small very-high-contrast bright spot." Recomputing what
-  DETECTED would have been *if* the exemption had correctly fired (`H=1.0` for all 52) confirms the
-  diagnosis was still right: **37/52 (71%)** — the same order of magnitude as the original fog fix —
-  showing this is a real, substantial, still-open problem, not a false alarm; the fix implemented here
-  is simply not sufficient to catch it. A real, more complete fix would need `SceneConditionClassifier`
-  to measure a REGION-AWARE contrast/sharpness signal (e.g. excluding blown-out pixels from the
-  statistic, or a local-patch metric) rather than one global scalar over the whole frame — a real,
-  more invasive architectural change to the scene-condition measurement itself, out of scope for a
-  same-session H-scoring adjustment, and left as real, honestly-flagged future work rather than rushed.
-  The contrast-based exemption added this session is kept — it is real, tested, and strictly additive
-  (never regresses an existing case) — but it should NOT be presented as having solved the
-  fog+glare-compound blur problem; it solves the narrower case where global contrast genuinely is
-  fog-like, which this specific real compound scenario does not hit.
+  **Honestly, at first, re-measuring `fog_glare` with the whole-frame-scalar fix in place found it did
+  NOT solve the real case it was built for: DETECTED stayed at 0/52 (0%), unchanged.** The real reason:
+  this scene's measured `contrast_std` is `≈41` — ABOVE `FOG_CONTRAST_THRESHOLD` (30), because the
+  localized bright glow inflates the FRAME'S GLOBAL contrast statistic well past what the hazy
+  majority of the frame would show on its own (compare `night_fog_glare`, where the glow against a
+  genuinely DARK background inflated global contrast even more, to ≈81). A single global scalar cannot
+  distinguish "uniformly hazy" from "hazy background plus one small very-high-contrast bright spot."
+  Recomputing what DETECTED would have been *if* the exemption had correctly fired (`H=1.0` for all 52)
+  confirmed the diagnosis was still right: **37/52 (71%)** — the same order of magnitude as the
+  original fog fix — showing this was a real, substantial problem, not a false alarm; the fix as first
+  built simply wasn't sufficient to catch it.
+  **The region-aware fix this pointed to was then actually implemented, not left as a future-work
+  note.** `edge/condition/scene_condition.py::SceneConditionClassifier` now also computes
+  `contrast_std_excluding_glare` — spread among non-blown-out pixels only (the same near-white band
+  `glare_fraction` already flags, reused rather than a new cutoff), added to `SceneConditionReport` as
+  an optional field (defaults to `None`, so every existing caller/test that constructs a report
+  directly is unaffected). `_health_quality_score`'s contrast-based exemption now uses this
+  region-aware value (falling back to whole-frame `contrast_std` when the field is absent), so a small
+  bright region no longer masks genuine haze in the rest of the frame. Deliberately scoped: `_decide()`
+  — what actually gates `FOG_RAIN`/`GLARE` classification — still uses the original whole-frame
+  `contrast_std` exactly as before; only the exemption's OWN internal check changed. 9 new tests for
+  the classifier (`tests/unit/test_scene_condition.py`, this module's first-ever test file — baseline
+  regression coverage for `_decide()` plus the new region-aware measurement) and 3 new tests for the
+  exemption using it (`tests/unit/test_reliability.py::TestWeatherExplainedBlurUsesRegionAwareContrast`);
+  full suite 254/254. Every earlier real dataset re-verified unaffected.
+  **Re-measured, real result: `fog_glare` rose from 0/52 (0%) to 37/52 (71%) DETECTED — matching the
+  hypothetical prediction from the whole-frame-scalar attempt exactly**, confirmed via
+  `contrast_std_excluding_glare≈22` (genuinely below 30, correctly reflecting the hazy non-glow
+  majority) and `H=1.0` across all 52 candidates. The small-sample `night_fog_glare` case (`n=3`) also
+  moved from 1/3 to 3/3 — consistent, though still too small to be quantitatively meaningful; Gate 1's
+  `frozen_stream` override (a real, separate, previously-documented finding) still dominates that
+  dataset's low candidate yield, unaffected by this fix. This is now a real, complete, verified fix —
+  not "future work" — for the specific fog+glare compound blur problem it targets.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

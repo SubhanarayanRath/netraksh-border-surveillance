@@ -348,9 +348,20 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   situation, not a further reference-point bug: GLARE's classification (`glare_fraction > 0.15`) has
   no structural ceiling the way fog/night's rules do (which guarantee every classified instance fails
   the old reference) — this specific transform's severity (~0.43, well past the 0.30 point where
-  `glare_score` fully floors) is a transform-intensity limitation, not a formula defect. See
+  `glare_score` fully floors) is a transform-intensity limitation, not a formula defect.
+  **A seventh fix reached into `edge/condition/scene_condition.py` itself** — the first fix this
+  session to touch the classifier rather than only the Reliability Engine. A real fog+glare compound
+  scene (a light source cutting through daytime fog) is classified `GLARE` (its check runs first), so
+  fix 6's exemption cannot see it; a same-condition contrast check (`contrast_std < FOG_CONTRAST_THRESHOLD`)
+  was tried first but, at real scale, found NOT to catch this case — a small bright glare region
+  inflates the frame's whole-frame `contrast_std` (≈41) well past the threshold even though the hazy
+  non-glare majority of the frame is genuinely foggy. `SceneConditionClassifier` now also computes
+  `contrast_std_excluding_glare` (spread among non-blown-out pixels only), and the exemption uses that
+  instead — `_decide()`'s own classification is deliberately untouched, so this affects only the
+  exemption's internal check, not what condition a frame is classified as. Re-measured: `fog_glare`
+  rose from 0/52 (0%) to 37/52 (71%), matching the hypothetical prediction exactly. See
   `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s
-  night/fog/glare section for the full, honest before/after of all six fixes. `D/T/S/H`'s hand-picked
+  night/fog/glare section for the full, honest before/after of all seven fixes. `D/T/S/H`'s hand-picked
   *weight values* themselves remain unchanged — these fixed how `H`, `S`, and `T` are computed, not
   the weights applied to them — pending real labeled data with actual false positives to fit against.
 

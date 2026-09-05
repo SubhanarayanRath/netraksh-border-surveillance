@@ -465,6 +465,8 @@ def main() -> None:
                 "scene_condition": str(condition.condition),
                 "brightness_mean": round(condition.brightness_mean, 2),
                 "contrast_std": round(condition.contrast_std, 2),
+                "contrast_std_excluding_glare": round(condition.contrast_std_excluding_glare, 2)
+                if condition.contrast_std_excluding_glare is not None else None,
                 "synthetic_condition": args.synthetic_condition,
                 "snapshot": str(snapshot_path.relative_to(out_dir)),
                 "label": None,  # filled in later by manual review — see fit_reliability_weights.py
@@ -473,7 +475,8 @@ def main() -> None:
                   f"D={d:.2f} T={t_score:.2f} (age={t_age_score if t_age_score is None else round(t_age_score,2)} "
                   f"smooth={t_smoothness:.2f} speed={t_speed_consistency:.2f} pts={len(track.trajectory)}) "
                   f"S={s:.2f} H={h:.2f} "
-                  f"cond={condition.condition} bri={condition.brightness_mean:.0f} con={condition.contrast_std:.0f}")
+                  f"cond={condition.condition} bri={condition.brightness_mean:.0f} con={condition.contrast_std:.0f} "
+                  f"con_ng={condition.contrast_std_excluding_glare:.0f}")
 
     cap.release()
     wall_seconds = time.perf_counter() - t_start

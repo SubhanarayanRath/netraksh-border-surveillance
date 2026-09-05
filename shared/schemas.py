@@ -112,6 +112,21 @@ class SceneConditionReport(BaseModel):
     condition: SceneCondition
     brightness_mean: float
     contrast_std: float
+    # Real fix (docs/LIMITATIONS.md's fog+glare compound finding): contrast_std
+    # is a single scalar over the WHOLE frame, so one small very-bright region
+    # (real glare, a light source, a reflection) inflates it and masks a
+    # genuinely hazy majority of the frame — exactly what happened in the real
+    # fog_glare test (contrast_std≈41, above FOG_CONTRAST_THRESHOLD, while the
+    # non-glare majority of the frame was genuinely foggy). This measures
+    # spread among NON-blown-out pixels only (edge/condition/scene_condition.py
+    # excludes the same near-white band glare_fraction already flags), so a
+    # region-aware consumer (e.g. edge/reliability/decision.py's blur
+    # exemption) can see the real haze the whole-frame scalar hides.
+    # Optional/defaults to None so existing callers that construct this report
+    # directly (tests, fixtures) are unaffected — consumers fall back to
+    # contrast_std when this is None. Real production frames
+    # (SceneConditionClassifier.classify()) always populate it.
+    contrast_std_excluding_glare: Optional[float] = None
     glare_fraction: float
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

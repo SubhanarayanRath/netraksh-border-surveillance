@@ -42,15 +42,23 @@ def _condition(cond: SceneCondition = SceneCondition.CLEAR_DAY) -> SceneConditio
 
 
 def _condition_with(
-    cond: SceneCondition, contrast_std: float, brightness_mean: float = 128.0, glare_fraction: float = 0.0
+    cond: SceneCondition,
+    contrast_std: float,
+    brightness_mean: float = 128.0,
+    glare_fraction: float = 0.0,
+    contrast_std_excluding_glare: "float | None" = None,
 ) -> SceneConditionReport:
     """Like _condition(), but with explicit control over contrast_std —
-    used to isolate _scene_quality_score's per-condition contrast reference."""
+    used to isolate _scene_quality_score's per-condition contrast reference.
+    contrast_std_excluding_glare defaults to None (matching the schema
+    default), so existing calls that don't care about the region-aware
+    contrast fix are unaffected — decision.py falls back to contrast_std."""
     return SceneConditionReport(
         camera_id="test-cam",
         condition=cond,
         brightness_mean=brightness_mean,
         contrast_std=contrast_std,
+        contrast_std_excluding_glare=contrast_std_excluding_glare,
         glare_fraction=glare_fraction,
     )
 
@@ -398,6 +406,73 @@ class TestWeatherExplainedBlurByRealContrastNotJustLabel:
             calibration_threshold=THRESHOLD,
         )
         assert result.decision_state == DecisionState.UNCERTAIN
+
+
+class TestWeatherExplainedBlurUsesRegionAwareContrast:
+    """
+    Real fix for a real, honest gap in the fix above (docs/LIMITATIONS.md,
+    docs/PERFORMANCE_REPORT.md's fog+glare compound finding): the WHOLE-
+    FRAME contrast_std check above was found NOT to catch the real
+    fog_glare scenario it was built for, because a small bright glare
+    region inflates the aggregate contrast_std past FOG_CONTRAST_THRESHOLD
+    even though the non-glare majority of the frame is genuinely hazy.
+    edge/condition/scene_condition.py now computes
+    contrast_std_excluding_glare (spread among non-blown-out pixels only),
+    and _health_quality_score uses THAT for this exemption when available.
+    """
+
+    def test_exemption_fires_on_region_aware_contrast_even_when_whole_frame_contrast_is_high(self):
+        """The exact real fog_glare shape: contrast_std is high (a bright
+        glare region inflated it — NOT exempted under the old, whole-frame-
+        only check), but contrast_std_excluding_glare is genuinely low
+        (fog-like) — the region-aware field must be what decides this."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition_with(
+                SceneCondition.GLARE,
+                contrast_std=FOG_CONTRAST_THRESHOLD + 25.0,  # high — would NOT exempt under the old check
+                contrast_std_excluding_glare=FOG_CONTRAST_THRESHOLD - 5.0,  # genuinely fog-like
+                brightness_mean=128.0,
+            ),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
+
+    def test_exemption_does_not_fire_when_region_aware_contrast_is_also_normal(self):
+        """The inverse: even if whole-frame contrast_std happens to look
+        fog-like, a genuinely normal region-aware contrast (no real haze in
+        the non-glare majority) must NOT be exempted — this is the real
+        "dirty lens during glare, no fog" case the fix is scoped to exclude."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition_with(
+                SceneCondition.GLARE,
+                contrast_std=FOG_CONTRAST_THRESHOLD - 5.0,  # low, but...
+                contrast_std_excluding_glare=FOG_CONTRAST_THRESHOLD + 25.0,  # ...genuinely normal region-aware
+                brightness_mean=128.0,
+            ),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+    def test_falls_back_to_whole_frame_contrast_when_region_aware_field_is_absent(self):
+        """A caller that constructs SceneConditionReport directly without the
+        new field (contrast_std_excluding_glare=None, the schema default)
+        must still get the original, whole-frame-based behavior — this is
+        what every pre-existing test in
+        TestWeatherExplainedBlurByRealContrastNotJustLabel above already
+        relies on, confirmed explicitly here too."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition_with(
+                SceneCondition.GLARE, contrast_std=FOG_CONTRAST_THRESHOLD - 5.0, brightness_mean=128.0
+            ),  # contrast_std_excluding_glare left at its None default
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
 
 
 class TestSceneQualityFogContrastReference:

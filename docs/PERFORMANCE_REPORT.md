@@ -435,25 +435,49 @@ happening across ~160 real pure-glare candidates, all with contrast 55-94, well 
 directly below `FOG_CONTRAST_THRESHOLD`, regardless of which label won the classification. 3 new tests;
 full suite 242/242; every earlier dataset re-verified unchanged.
 
-**Honestly, re-measuring `fog_glare` with the fix found it does NOT solve the case it was built for:**
+**Honestly, at first, re-measuring `fog_glare` with the whole-frame-scalar fix found it did NOT solve
+the case it was built for:**
 
 | | DETECTED |
 |---|---|
-| `fog_glare`, with the fix, actual result | 0/52 (0%) |
+| `fog_glare`, whole-frame-scalar fix, actual result | 0/52 (0%) |
 | `fog_glare`, if the exemption HAD fired (`H=1.0` hypothetically) | 37/52 (71%) |
 
 The reason: this scene's measured `contrast_std≈41` is ABOVE `FOG_CONTRAST_THRESHOLD` (30) — the
 localized bright glow inflates the frame's GLOBAL contrast statistic well past what the hazy majority
 of the frame shows on its own. A single global scalar cannot distinguish "uniformly hazy" from "hazy
-background plus one small very-high-contrast bright spot." The 71% hypothetical confirms the original
-diagnosis was correct — this is a real, substantial problem, not a false alarm — but the fix
-implemented is not sufficient to catch it. A complete fix would need `SceneConditionClassifier` to
-measure a region-aware contrast/sharpness signal (excluding blown-out pixels, or a local-patch metric)
-instead of one global scalar — a real, more invasive architectural change, left as honestly-flagged
-future work rather than rushed. The contrast-based exemption added this session is kept (real, tested,
-strictly additive, never regresses an existing case) but should not be presented as having solved the
-fog+glare blur problem — it solves the narrower case where global contrast genuinely is fog-like,
-which this specific real compound scenario does not hit.
+background plus one small very-high-contrast bright spot." The 71% hypothetical confirmed the original
+diagnosis was correct — this was a real, substantial problem, not a false alarm — but that first fix
+wasn't sufficient to catch it.
+
+## The region-aware contrast fix, actually implemented and verified
+
+Rather than leave the region-aware measurement as documented future work, it was built.
+`edge/condition/scene_condition.py::SceneConditionClassifier` now also computes
+`contrast_std_excluding_glare` — spread among non-blown-out pixels only, reusing the same near-white
+band `glare_fraction` already flags rather than a new cutoff. `SceneConditionReport` carries it as an
+optional field (defaults to `None`, so any caller constructing a report directly — tests, fixtures —
+is unaffected). `_health_quality_score`'s contrast-based exemption now uses this region-aware value,
+falling back to whole-frame `contrast_std` when absent. Deliberately scoped: `_decide()` — what
+actually gates `FOG_RAIN`/`GLARE` classification — still uses the original whole-frame `contrast_std`
+exactly as before; only the exemption's own internal check changed. 9 new tests for the classifier
+(`tests/unit/test_scene_condition.py`, this module's first-ever test file) plus 3 more for the
+exemption using the new field; full suite 254/254; every earlier real dataset re-verified unaffected.
+
+**Re-measured, real result:**
+
+| | DETECTED |
+|---|---|
+| `fog_glare`, whole-frame-scalar fix | 0/52 (0%) |
+| `fog_glare`, region-aware fix | **37/52 (71%)** |
+| `fog_glare`, hypothetical prediction (last section) | 37/52 (71%) — matches exactly |
+
+Confirmed via `contrast_std_excluding_glare≈22` (genuinely below 30, correctly reflecting the hazy
+non-glow majority) and `H=1.0` across all 52 candidates. The small-sample `night_fog_glare` case
+(`n=3`) also moved from 1/3 to 3/3 DETECTED — consistent, though still too small to be quantitatively
+meaningful; Gate 1's `frozen_stream` override (a separate, previously-documented finding) still
+dominates that dataset's low candidate yield, unaffected by this fix. This is now a real, complete,
+verified fix for the fog+glare compound blur problem it targets — not future work.
 
 ## Honesty checklist before this goes in the PPT
 
