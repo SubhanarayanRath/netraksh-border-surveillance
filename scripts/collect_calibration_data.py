@@ -116,6 +116,23 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         haze_color = np.full_like(frame, 190)
         blended = cv2.addWeighted(frame, 0.42, haze_color, 0.58, 0)
         return cv2.GaussianBlur(blended, (7, 7), 0)
+    if condition_sim == "fog_mild":
+        # A DELIBERATELY MILDER fog, added specifically to test a real
+        # hypothesis raised by the glare-residual investigation
+        # (docs/LIMITATIONS.md): is fog's own 6% residual (after all prior
+        # fixes) driven by a genuine reference-point bug, or — like glare's
+        # residual turned out to be — simply this specific transform's
+        # chosen severity? "fog" above measures contrast_std≈21, well
+        # inside FOG_RAIN's <30 boundary; this variant (blend 0.55/0.45,
+        # smaller 5x5 blur) was empirically tuned against this real video
+        # (checked across 5 frames spanning the whole clip, not just one)
+        # to measure contrast_std≈28 — still reliably classified FOG_RAIN
+        # (a consistent ~2-point safety margin under 30 throughout), but
+        # right at the boundary rather than deep inside it, mirroring
+        # "barely still foggy" rather than "quite foggy."
+        haze_color = np.full_like(frame, 190)
+        blended = cv2.addWeighted(frame, 0.55, haze_color, 0.45, 0)
+        return cv2.GaussianBlur(blended, (5, 5), 0)
     if condition_sim == "glare":
         # Simulate sun glare/lens flare: scale pixel values up and clip at
         # 255 (real glare washes out highlights into flat white). Intensity
@@ -150,7 +167,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "fog", "glare"], default="none",
+        "--synthetic-condition", choices=["none", "night", "fog", "fog_mild", "glare"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",

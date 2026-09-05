@@ -255,6 +255,25 @@ softened by the haze/blur transform). `S` is nearly flat across all 52 fog candi
 0.76 mean) are *exactly* the 3 that miss threshold, `R` increasing smoothly through 0.75. No formula
 bug found — left open for the same reason as night.
 
+**That "no bug, just transform severity" conclusion was then actually tested with a milder fog
+transform, not left as an assumption.** `--synthetic-condition fog_mild` (blend 0.55/0.45 with a
+smaller 5x5 blur, vs the original 0.42/0.58 with 7x7) was empirically tuned against 5 frames spanning
+the whole video to measure `contrast_std≈28` — still reliably `FOG_RAIN` (~2-point margin under the
+real 30 threshold throughout) but right at the boundary, not deep inside it. All 52 candidates again
+reviewed — zero false positives.
+
+| Fog intensity | Genuine candidates | DETECTED | UNCERTAIN |
+|---|---|---|---|
+| Original (`contrast_std≈21`) | 52 | 49 (94%) | 3 (6%) |
+| Milder (`contrast_std≈28`) | 52 | 51 (98%) | 1 (2%) |
+
+A real, honest confirmation: milder fog genuinely produces fewer misses, so at least part of the
+original 6% residual really was a transform-severity effect, not purely irreducible evidence-based
+caution — an important nuance the "no bug found" conclusion above didn't fully capture on its own. The
+single remaining `fog_mild` residual (`D=0.37`, far below the 0.77 mean, `S=0.92`/`H=1.0`/`T=0.85` all
+near-max) is the same genuine low-confidence-detection pattern as every other residual this session —
+visually confirmed as a real person, no bug.
+
 **Glare's residual was investigated too, and turned out to be a genuinely DIFFERENT situation from
 fog/night — checked, not assumed.** Fog and night's classification rules structurally GUARANTEE every
 classified frame fails the old reference (fog *requires* `contrast<30`, always below the old 60

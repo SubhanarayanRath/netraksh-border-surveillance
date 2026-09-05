@@ -155,6 +155,19 @@ limitation — an out-of-date limitations file is worse than none.
   through 0.75. Same conclusion as night: this is the Reliability Engine correctly expressing more
   caution on the objectively weakest evidence, not a defect, and left open for the same reason (no
   real dataset to fit against, no real fog footage to validate the transform's intensity).
+  **This "no bug, just transform severity" conclusion was then actually tested, not just assumed.**
+  A second, deliberately MILDER fog transform (`--synthetic-condition fog_mild`: blend 0.55/0.45 with
+  a smaller 5x5 blur, vs the original 0.42/0.58 with 7x7) was empirically tuned against 5 frames
+  spanning the whole real video to measure `contrast_std≈28` — still reliably classified `FOG_RAIN`
+  (a consistent ~2-point safety margin under the real 30 threshold throughout), but right at the
+  boundary rather than deep inside it. All 52 real candidates again manually reviewed — zero false
+  positives. Re-measured: DETECTED rose from 94% (49/52, the original fog intensity) to **98% (51/52)**
+  — a real, honest confirmation that milder fog genuinely produces fewer misses, validating that at
+  least part of the original 6% residual was a transform-severity effect, not pure irreducible
+  evidence-based caution. The single remaining `fog_mild` residual (`D=0.37`, far below the 0.77 mean,
+  with `S=0.92`/`H=1.0`/`T=0.85` all near-max) is the same genuine, low-confidence-detection pattern
+  already established for every other residual this session — visually confirmed as a real person,
+  no bug.
   **Sixth fix — GLARE, the fourth and last real `SceneCondition`, tested the same way.** A synthetic
   glare transform was added to `scripts/collect_calibration_data.py`
   (`--synthetic-condition glare`: scale pixel values ×1.8+20 and clip at 255, empirically measured
