@@ -32,6 +32,38 @@ available at the time this was run — see the Test run metadata note on video p
 | Duration | 795 frames / 79.5s of source video, processed twice (once per confirmation policy) |
 | Scene conditions covered | CLEAR_DAY only (daytime courtyard footage) — LOW_LIGHT_NIGHT/FOG_RAIN/GLARE are **not** covered by this run |
 
+## None of this report's real crossings are actual intrusions — checked directly, not assumed
+
+Read this before treating any DETECTED/UNCERTAIN rate in this document as a proxy for real-world
+intrusion-detection accuracy: it is not one, and this was verified concretely rather than left as an
+inference from the zone-placement note above.
+
+Investigating frame 694 — the single most closely-examined candidate in this whole report, across every
+condition tested — confirms it directly: the frame's actual taped-off/coned restricted area (real
+white/red tape and cones, clearly visible in every snapshot) is a SEPARATE dirt/mulch patch elsewhere in
+frame. The zone tested throughout this document covers the open, paved plaza instead, where multiple
+ordinary pedestrians casually cross in every direction simultaneously in the same single frame. The
+specific tracked person is a real, correctly-detected individual walking calmly and directly across an
+open public walkway — confirmed quantitatively: real path smoothness `0.878` and speed consistency
+`0.746` over a sustained 38-point trajectory, nothing erratic, evasive, or unusual about the movement.
+
+**This generalizes to the entire real-data calibration effort in this document, not just this one
+candidate.** Every "genuine crossing" collected and manually reviewed — 500+ candidates across
+daytime, night, fog, glare, and every compound/mild variant — is real in the sense that a real,
+correctly-detected person genuinely crossed the marked polygon boundary. None represent trespass, forced
+entry, evasion, or any other genuine security-relevant intrusion pattern; they are ordinary foot traffic
+through a normal campus walkway, chosen specifically because it reliably produces a high volume of real,
+benchmark-quality crossings for calibration purposes.
+
+**What this report's real-data work honestly validates:** the Hybrid Reliability Engine's D/T/S/H
+scoring mechanics respond correctly to real image degradation, real double-penalties, and real edge
+cases (occlusion, blur, compound conditions), using genuine, non-fabricated object detections — a
+real, substantial body of engineering validation. **What it does NOT and cannot validate:** whether the
+system correctly flags genuine border/security intrusions, since no such scenario — staged or real —
+exists anywhere in the tested footage. Every DETECTED/UNCERTAIN percentage in this document should be
+read as "how reliably does the Reliability Engine flag a real, non-spurious object crossing this
+polygon," not as "how well does this system catch intruders."
+
 ## Frame-level pipeline latency (ms)
 
 From the "with verifier" (shipped-defaults) pass — the other pass's numbers are materially identical
@@ -660,4 +692,5 @@ either factor alone.
 - [x] The machine/hardware is stated exactly, and no number is presented as if measured on different hardware
 - [x] The false-positive-reduction claim is NOT asserted — the honest result (no measured reduction on this clip) is reported instead of a more convenient-sounding number
 - [x] The video source is disclosed as a generic public test clip, not the team's actual demo footage — do not imply otherwise in the deck
+- [x] Verified directly (not assumed) that no crossing in this report's real-data calibration work is an actual intrusion — every DETECTED/UNCERTAIN number measures reliability-scoring behavior on real object detections, not intrusion-detection accuracy — see "None of this report's real crossings are actual intrusions" above
 - [ ] Re-run against real staged demo footage before final submission, and update this file from that run

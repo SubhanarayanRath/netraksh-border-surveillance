@@ -13,6 +13,31 @@ limitation — an out-of-date limitations file is worse than none.
   problem — no amount of pipeline engineering around it changes what the underlying detector was
   trained to recognize. `edge/condition/scene_condition.py`'s CLAHE preprocessing (once wired, see
   §3 below) and the calibration module's per-condition thresholds are mitigations, not fixes.
+- **None of the "real fence crossings" in this entire session's extensive real-data calibration work
+  (500+ candidates across daytime, night, fog, glare, and every compound/mild variant) represent an
+  actual intrusion. This was checked directly, not assumed.** The zone tested throughout is documented
+  (`docs/PERFORMANCE_REPORT.md`) as "visually placed over the main pedestrian walkway visible in the
+  clip" — investigating this concretely using frame 694 (the most closely-examined candidate in this
+  whole exercise) confirms exactly that: the frame's actual taped-off/coned restricted area (real white/
+  red tape and cones, clearly visible) is a SEPARATE dirt/mulch patch elsewhere in frame — the drawn
+  zone instead covers the open, paved plaza where multiple ordinary pedestrians casually cross in every
+  direction simultaneously in the same single frame. The specific tracked person is a real, correctly-
+  detected individual walking calmly and directly across an open public walkway — confirmed
+  quantitatively, not just visually: real path smoothness `0.878` and speed consistency `0.746` over a
+  sustained 38-point trajectory, with nothing erratic, evasive, or unusual about the movement. **This
+  generalizes to the entire real-data calibration effort, not just this one candidate**: every "genuine
+  crossing" (label=1) collected and manually reviewed this session is real in the sense that a real,
+  correctly-detected person genuinely crossed the marked polygon boundary — but NONE represent trespass,
+  forced entry, evasion, or any other genuine security-relevant intrusion pattern; they are all ordinary
+  foot traffic through a normal campus walkway, chosen specifically because it reliably produces a high
+  volume of real, benchmark-quality pedestrian crossings for calibration purposes. **What this session's
+  real-data work honestly validates**: the Hybrid Reliability Engine's D/T/S/H scoring mechanics respond
+  correctly to real image degradation, real double-penalties, and real edge cases (occlusion, blur,
+  compound conditions) using genuine, non-fabricated object detections. **What it does NOT and cannot
+  validate**: whether the system correctly flags genuine border/security intrusions, since no such
+  scenario — staged or real — exists anywhere in the tested footage. This is consistent with, and gives
+  a concrete, visually-confirmed example for, this project's own pre-existing disclosure elsewhere in
+  this file that a real staged-intrusion dataset has never been used to validate this system.
 - **Hybrid Reliability Engine weights and threshold are hand-picked, not calibrated — and a real
   attempt to calibrate them found this project's available real footage cannot supply what
   calibration needs.** `RELIABILITY_WEIGHT_D/T/S/H` and `RELIABILITY_R_THRESHOLD`
