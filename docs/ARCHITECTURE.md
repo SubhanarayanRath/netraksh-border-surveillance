@@ -292,10 +292,17 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   longer drives the DETECTED/UNCERTAIN split itself.
   A real attempt was made to fit these weights from labeled data
   (`scripts/collect_calibration_data.py` + `scripts/fit_reliability_weights.py`, against the same
-  real video/zone as `docs/PERFORMANCE_REPORT.md`): manual review of all 52 real candidates found
-  zero false positives to learn from, so the fit was correctly refused rather than faked — see
-  `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry for the full, honest writeup. The defaults
-  above remain unchanged as a result.
+  real video/zone as `docs/PERFORMANCE_REPORT.md`, plus two synthetic night/fog variants of it):
+  manual review of every real candidate in all three found zero false positives to learn from, so the
+  fit was correctly refused rather than faked. That same labeled data did surface a real, actionable
+  bug though — under fog, a double penalty (contrast loss counted once via `S` and again via `H`,
+  because the same blur that lowers scene quality also genuinely trips the Camera Health Monitor's
+  blur detector) meant 0/52 genuine crossings ever reached DETECTED. `_health_quality_score` now
+  exempts exactly that overlap (`EXCESSIVE_BLUR` + `FOG_RAIN`/`LOW_LIGHT_NIGHT`), which real
+  re-measurement raised to 37/52 (71%) — see `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry
+  and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after. `D/T/S/H`'s
+  hand-picked *weight values* themselves remain unchanged — this fixed how `H` is computed, not the
+  weights applied to it — pending real labeled data with actual false positives to fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating

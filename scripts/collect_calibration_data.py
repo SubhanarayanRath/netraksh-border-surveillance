@@ -184,7 +184,7 @@ def main() -> None:
             d = max(0.0, min(1.0, track.confidence))
             t_score = track_feature_tracker.compute(track.track_id, track.trajectory, time.time())
             s = _scene_quality_score(condition)
-            h = _health_quality_score(health)
+            h = _health_quality_score(health, condition)
 
             candidate_id = f"candidate_{len(candidates):03d}"
             snapshot = frame.copy()

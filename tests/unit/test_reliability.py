@@ -207,6 +207,64 @@ class TestHybridEngineIntentionalNightBehaviorChange:
         assert result.decision_state == DecisionState.DETECTED
 
 
+class TestWeatherExplainedBlurDoesNotDoublePenalize:
+    """
+    Real fix for a real, measured failure mode (docs/PERFORMANCE_REPORT.md's
+    "Reliability Engine behavior under real night/fog conditions"): a real
+    fog/night scene genuinely reduces both S (via its own contrast/
+    brightness measurement) AND the camera health monitor's Laplacian blur
+    score, which used to also halve H — double-counting one real
+    visual-softening signal as two independent penalties. All four cases
+    below share D=0.50, T=1.0 (default), and the same S fixture (S≈0.933)
+    — chosen so DETECTED vs UNCERTAIN is decided purely by whether H is
+    penalized, isolating exactly what this fix changes.
+    """
+
+    def test_excessive_blur_during_fog_is_not_health_penalized(self):
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition(SceneCondition.FOG_RAIN),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
+
+    def test_excessive_blur_during_night_is_not_health_penalized(self):
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition(SceneCondition.LOW_LIGHT_NIGHT),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
+
+    def test_excessive_blur_during_clear_day_is_still_fully_penalized(self):
+        """The exemption is scoped to weather conditions only — the same
+        blur during CLEAR_DAY has no scene-quality explanation for it (more
+        likely a genuinely dirty/defocused lens), so H stays fully
+        penalized, exactly as before this fix."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition(SceneCondition.CLEAR_DAY),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+    def test_other_degraded_reasons_during_fog_are_still_fully_penalized(self):
+        """The exemption is scoped to EXCESSIVE_BLUR specifically — a health
+        problem unrelated to weather (e.g. a frozen stream) happening to
+        coincide with a foggy scene is still a real, independent problem and
+        must still penalize H."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.FROZEN_STREAM),
+            condition_report=_condition(SceneCondition.FOG_RAIN),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+
 class TestHybridEngineTemporalScore:
     """T (temporal_score) is a real input to R, not decoration — a borderline
     case can flip between UNCERTAIN and DETECTED purely based on it."""

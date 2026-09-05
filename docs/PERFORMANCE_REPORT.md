@@ -124,29 +124,34 @@ actually mark UNCERTAIN instead of DETECTED?**
 |---|---|---|---|
 | Daytime (real, unmodified video) | 52 | 49 (94%) | 3 (6%) |
 | Synthetic night (real video, real Gaussian-darkened frames) | 51 | 21 (41%) | 30 (59%) |
-| Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 0 (0%) | 52 (100%) |
+| Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 37 (71%) | 15 (29%) |
 
-**Read this plainly: under the synthetic fog condition, the current hand-picked weights mark every
-single genuine crossing UNCERTAIN — not one is flagged DETECTED.** This is real, measured evidence for
-architecture v4 §8's documented "intentional behavior change" (degraded scene quality should make the
-system trust itself less) taken to an extreme this project had not previously measured: at this
-severity of fog, the tradeoff is not "somewhat more cautious," it is "the Reliability Gate stops
-flagging anything as DETECTED at all." Two real, disclosed factors compound here, not one: `S` (scene
-quality) drops because contrast collapses, **and** `H` (health quality) also drops to 0.5 because the
-same Gaussian blur applied to simulate fog haze genuinely triggers the real Camera Health Monitor's
-blur detector into a DEGRADED reading — a real, correct interaction between two real subsystems, not a
-double-counted synthetic artifact.
+**These fog numbers are AFTER a real fix** (see `docs/LIMITATIONS.md`'s Hybrid Reliability Engine
+entry and `edge/reliability/decision.py::_health_quality_score`) — the original, first-measured result
+was 0/52 (0%) DETECTED under fog, i.e. every single genuine crossing marked UNCERTAIN. Diagnosis: two
+supposedly-independent factors were actually double-counting the same real signal — `S` (scene
+quality) genuinely drops because fog reduces contrast, **and** `H` (health quality) was *also* dropping
+to 0.5 because the same real blur that simulates fog haze genuinely trips the Camera Health Monitor's
+Laplacian blur detector into a DEGRADED reading. That reading is correct in isolation (the frame really
+is blurrier), but H's actual purpose is to flag a broken/dirty/defocused *camera* — not weather the
+scene classifier already has its own dedicated signal for. The fix: `_health_quality_score` now scores
+H as healthy (1.0) specifically when health is DEGRADED for `EXCESSIVE_BLUR` *and* the scene is already
+independently classified `FOG_RAIN` or `LOW_LIGHT_NIGHT` — any other DEGRADED reason (frozen stream,
+abnormal exposure, FPS drop, clock drift, stream unavailable), or blur during `CLEAR_DAY`, still fully
+penalizes H exactly as before (see `tests/unit/test_reliability.py::TestWeatherExplainedBlurDoesNotDoublePenalize`
+for the four cases this locks in). Re-running the same real collection + labeling on this fixed formula
+raised fog from 0% to 71% DETECTED — real, substantial, honestly measured. Night's numbers are
+unchanged (21/51 both before and after) because the night transform never happened to trip
+`EXCESSIVE_BLUR` in this dataset, so there was nothing for this specific fix to change there.
 
-**What this does NOT mean:** it does not mean the fog transform's specific intensity (`cv2.addWeighted`
-at 0.42/0.58 plus a 7×7 Gaussian blur) is representative of every real fog condition NETRAKSH might
-face — a lighter haze would show a less extreme result, and this project has no real fog footage to
-calibrate the transform's intensity against either (see `docs/LIMITATIONS.md`). What it does mean:
-the current weights have never been checked against *any* degraded-condition data before this, and
-now that they have been, they show a real, honestly-measured failure mode worth fixing (raising `S`'s
-floor, decoupling blur-based health degradation from fog specifically, or lowering
-`RELIABILITY_R_THRESHOLD` for the FOG_RAIN condition) rather than leaving unaddressed. This is a real,
-open finding for this project's roadmap, not a solved one — no weight change has been applied yet
-pending a decision on which of those fixes to make.
+**What this does NOT mean:** it does not mean fog detection is now "solved" — 29% of genuine crossings
+under this specific fog intensity are still marked UNCERTAIN, which is a real, honest, remaining gap
+(this fix removed a proven double-penalty; it did not lower the bar for the genuinely-still-present
+single penalty from `S`). It also does not mean the fog transform's specific intensity
+(`cv2.addWeighted` at 0.42/0.58 plus a 7×7 Gaussian blur) is representative of every real fog condition
+NETRAKSH might face — a lighter haze would show a better result, a heavier one worse, and this project
+has no real fog footage to calibrate the transform's intensity against either (see
+`docs/LIMITATIONS.md`). This is real, open, partially-addressed work, not a fully solved one.
 
 ## Honesty checklist before this goes in the PPT
 

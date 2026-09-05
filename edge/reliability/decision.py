@@ -52,7 +52,7 @@ from __future__ import annotations
 import logging
 import os
 
-from shared.constants import CameraHealthState, DecisionState, SceneCondition
+from shared.constants import CameraHealthState, DecisionState, HealthReason, SceneCondition
 from shared.schemas import CameraHealthReport, ReliabilityDecision, SceneConditionReport
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,22 @@ _HEALTH_QUALITY_SCORE = {
     CameraHealthState.DEGRADED: 0.5,
 }
 
+# Real finding this fixes (docs/PERFORMANCE_REPORT.md's "Reliability Engine
+# behavior under real night/fog conditions", docs/LIMITATIONS.md): under a
+# real, honest fog measurement, 0/52 genuine crossings cleared
+# RELIABILITY_R_THRESHOLD. Root cause — a double penalty, not two
+# independent ones: fog/low-light genuinely reduces image contrast/
+# brightness, which S already measures and penalizes directly, AND
+# genuinely reduces the Laplacian blur score edge/health/camera_health.py
+# uses for its OWN, unrelated purpose (detecting a broken/dirty/defocused
+# camera) — so the SAME real visual-softening signal was silently counted
+# twice, once as S and again as H, for conditions where it isn't actually
+# two independent problems. FROZEN_STREAM, ABNORMAL_EXPOSURE, FPS_DEGRADED,
+# CLOCK_DRIFT, and STREAM_UNAVAILABLE are genuinely independent of scene
+# condition and are NOT touched by this — only EXCESSIVE_BLUR specifically
+# coinciding with a scene already classified FOG_RAIN or LOW_LIGHT_NIGHT.
+_WEATHER_EXPLAINED_BLUR_CONDITIONS = frozenset({SceneCondition.FOG_RAIN, SceneCondition.LOW_LIGHT_NIGHT})
+
 
 def _scene_quality_score(condition_report: SceneConditionReport) -> float:
     """Mode-A heuristic scene-quality score S in [0,1], derived from the same
@@ -96,10 +112,28 @@ def _scene_quality_score(condition_report: SceneConditionReport) -> float:
     return max(0.0, min(1.0, (brightness_score + contrast_score + glare_score) / 3.0))
 
 
-def _health_quality_score(health_report: CameraHealthReport) -> float:
+def _health_quality_score(
+    health_report: CameraHealthReport, condition_report: SceneConditionReport
+) -> float:
     """Mode-A heuristic health-quality score H in [0,1]. Only OK/DEGRADED are
     scored here — FAILED is handled exclusively by Gate 1 before this is
-    ever reached."""
+    ever reached.
+
+    One deliberate exception (see _WEATHER_EXPLAINED_BLUR_CONDITIONS above
+    for the real, measured failure mode this fixes): when the ONLY reason
+    health is DEGRADED is EXCESSIVE_BLUR, and the scene is independently
+    classified FOG_RAIN or LOW_LIGHT_NIGHT, H is scored as healthy (1.0)
+    instead of the usual 0.5 — S already penalizes this exact real signal,
+    so this avoids double-counting one real degradation as two. Any OTHER
+    DEGRADED reason still fully penalizes H exactly as before — those are
+    genuinely independent hardware/pipeline problems S has no signal for.
+    """
+    if (
+        health_report.health_state == CameraHealthState.DEGRADED
+        and health_report.health_reason == HealthReason.EXCESSIVE_BLUR
+        and condition_report.condition in _WEATHER_EXPLAINED_BLUR_CONDITIONS
+    ):
+        return 1.0
     return _HEALTH_QUALITY_SCORE.get(health_report.health_state, 0.5)
 
 
@@ -156,7 +190,7 @@ def make_reliability_decision(
     d = max(0.0, min(1.0, detector_confidence))
     t = max(0.0, min(1.0, temporal_score))
     s = _scene_quality_score(condition_report)
-    h = _health_quality_score(health_report)
+    h = _health_quality_score(health_report, condition_report)
 
     r = (
         RELIABILITY_WEIGHT_D * d
