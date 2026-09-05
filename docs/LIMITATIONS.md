@@ -165,9 +165,9 @@ limitation — an out-of-date limitations file is worse than none.
   showing a real drop of `0.262` here too. **This is now the THIRD independent condition, using three
   genuinely different kinds of visual degradation (haze/blur, brightening/washout, darkening), in which
   this exact same real person is the single largest confidence drop in its dataset** — a strong,
-  cross-validated conclusion that this one real crossing (against the tree-branch/mulch background
-  identified in the `fog_mild` investigation) is universally the hardest real detection in this whole
-  dataset, independent of which degradation is applied. The second residual (`candidate_032`, no exact
+  cross-validated conclusion that this one real crossing (the peak-occlusion instant with a second,
+  overlapping pedestrian identified in the `fog_mild` investigation) is universally the hardest real
+  detection in this whole dataset, independent of which degradation is applied. The second residual (`candidate_032`, no exact
   frame match — nearest daytime candidate is 1 frame off, at frame 487) shows a comparably large real
   drop too (`≈0.246`, daytime `D=0.719` → night_mild `D=0.472`) — a DIFFERENT real person, not
   previously flagged, but similarly night-sensitive. **Unlike `glare_mild` (where only 1 of 6 residuals
@@ -236,13 +236,29 @@ limitation — an out-of-date limitations file is worse than none.
   this is by far the LARGEST confidence drop in the dataset (`0.386`) — roughly 10x the next-largest
   (`0.035`) — while the other 41 matched candidates cluster tightly near a mean drop of just `0.005`.
   **`fog_mild`'s real effect on detection confidence is not a uniform mild degradation across all real
-  crossings — it is heavily concentrated in this one outlier.** Visual inspection explains why: this
-  person is standing directly in front of a visually similar-colored background (a pile of tree
-  branches/mulch), an already-marginal detection at baseline (`D=0.756`, not near-perfect even in
-  daytime) that is uniquely sensitive to any further visual degradation — unlike the 41 other real
-  crossings, most of which are set against plain, higher-contrast backgrounds and are essentially
-  unaffected by the same mild haze. This is a complete, honest explanation for why THIS specific real
-  crossing became the residual, not an unexplained coincidence — and a useful, real confirmation that
+  crossings — it is heavily concentrated in this one outlier.** An initial visual pass suggested a
+  similar-colored background (a pile of tree branches/mulch behind the person) as the explanation — but
+  a real, rigorous investigation (re-extracting the exact bounding box from the drawn snapshot, pulling
+  the raw frame directly from the video, and inspecting the surrounding frame sequence 691-696) found
+  the ACTUAL cause, and it's more precise and more interesting: **frame 694 is the peak instant of a
+  real, transient partial occlusion between two real pedestrians.** A second, taller person (dark
+  jacket) is walking almost directly behind/past the tracked person (blue jacket) — visible in the
+  sequence, his raised leg swings up and, at exactly frame 694, visually touches/overlaps the tracked
+  person's head in the 2D camera projection (frame 693: near-approach; frame 694: peak overlap; frame
+  695: separated again). Confirmed directly: track 59 (blue jacket, this candidate) fires its
+  fence-crossing event at exactly frame 694 — the single worst instant for a clean, unambiguous
+  silhouette — while track 41 (dark jacket) fires its OWN crossing event one frame later at 695, once
+  clearly separated (that track's confidence, `0.770`, is unaffected by any of the synthetic
+  transforms). This is a real, physical explanation for why baseline daytime confidence was already
+  only moderate (`0.756`, not near-perfect — a real detector genuinely finds a partially-merged
+  two-person silhouette harder to score confidently even undistorted) and why the SAME frame is
+  uniquely fragile to ANY further degradation, regardless of type (fog, night, glare, and combinations
+  all independently flag it): an already-ambiguous, borderline silhouette has far less margin to
+  absorb further visual noise than a clean, single-person silhouette does — unlike the 41 other real
+  crossings, most of which show a single, unambiguous person and are essentially unaffected by the same
+  mild degradation. This is a complete, honest, rigorously-verified explanation for why THIS specific
+  real crossing became the residual, not an unexplained coincidence — and a useful, real confirmation
+  that
   the Reliability Engine's caution here tracks a genuine, measured, real-world confidence collapse.
   **Sixth fix — GLARE, the fourth and last real `SceneCondition`, tested the same way.** A synthetic
   glare transform was added to `scripts/collect_calibration_data.py`
@@ -289,8 +305,8 @@ limitation — an out-of-date limitations file is worse than none.
   residuals, and told a real, more varied story than a single clean outlier.** Matching all 52
   `glare_mild` candidates to a daytime candidate at the same `frame_idx` (47 of 52 matched) found the
   SAME real crossing (frame 694) is once again by far the largest confidence drop (`0.309`) — roughly
-  7x the next-largest (`0.042`) — confirming this specific real person (against the same
-  similar-colored tree-branch/mulch background identified in the `fog_mild` investigation) is uniquely
+  7x the next-largest (`0.042`) — confirming this specific real person (at the peak-occlusion instant
+  with a second, overlapping pedestrian identified in the `fog_mild` investigation) is uniquely
   fragile to visual degradation IN GENERAL, not just fog specifically: it is the single hardest real
   detection in this whole dataset across every condition tested. **But the other 5 residuals tell a
   genuinely different, honest story — matched drops of `-0.002`, `-0.003`, `-0.032`, `0.001`, and

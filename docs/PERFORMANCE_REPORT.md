@@ -358,14 +358,26 @@ same `frame_idx` (42 of 52 matched):
 | Mean drop (other 41) | 0.005 |
 
 `fog_mild`'s real effect on detection confidence is not a uniform mild degradation across all real
-crossings — it is heavily concentrated in this one outlier, roughly 10x the next-largest drop.
-Visual inspection explains why: this person stands directly in front of a visually similar-colored
-background (a pile of tree branches/mulch) — an already-marginal detection at baseline (`D=0.756`, not
-near-perfect even in daytime) that's uniquely sensitive to any further visual degradation, unlike the
-41 other real crossings (mostly set against plain, higher-contrast backgrounds and essentially
-unaffected by the same mild haze). A complete, honest explanation for why this specific crossing
-became the residual — not an unexplained coincidence — and a real confirmation that the Reliability
-Engine's caution here tracks a genuine, measured confidence collapse.
+crossings — it is heavily concentrated in this one outlier, roughly 10x the next-largest drop. An
+initial visual pass suggested a similar-colored background (tree branches/mulch) as the explanation —
+but a rigorous investigation (re-extracting the exact bounding box from the drawn snapshot, pulling the
+raw frame directly from the video, and inspecting the surrounding sequence, frames 691-696) found the
+real cause, and it's more precise: **frame 694 is the peak instant of a real, transient partial
+occlusion between two real pedestrians.** A second, taller person (dark jacket) walks almost directly
+behind/past the tracked person (blue jacket); across the sequence his raised leg swings up and, at
+exactly frame 694, visually overlaps the tracked person's head in the 2D camera projection — frame 693
+shows the near-approach, 695 shows them separated again. Confirmed directly: track 59 (this candidate)
+fires its fence-crossing event at exactly frame 694 — the single worst instant for a clean silhouette —
+while track 41 (the dark-jacketed person) fires its own crossing event one frame later at 695, once
+clearly separated (that track's own confidence, 0.770, is unaffected by any synthetic transform). This
+explains both why baseline daytime confidence was already only moderate (0.756 — a real detector
+genuinely scores a partially-merged two-person silhouette lower even undistorted) and why this exact
+frame is uniquely fragile to ANY further degradation, regardless of type: an already-ambiguous
+silhouette has far less margin to absorb visual noise than a clean one does — unlike the 41 other real
+crossings, most of which show a single, unambiguous person and are essentially unaffected by the same
+mild haze. A complete, honest, rigorously-verified explanation for why this specific crossing became
+the residual — not an unexplained coincidence — and a real confirmation that the Reliability Engine's
+caution here tracks a genuine, measured confidence collapse.
 
 **Glare's residual was investigated too, and turned out to be a genuinely DIFFERENT situation from
 fog/night — checked, not assumed.** Fog and night's classification rules structurally GUARANTEE every
@@ -409,8 +421,9 @@ to a daytime candidate at the same `frame_idx`:
 | Other 4 residuals | −0.032 to 0.001 (essentially none) |
 
 Frame 694 is once again by far the largest drop — roughly 7x the next-largest — confirming this same
-real person (against the tree-branch/mulch background from the `fog_mild` finding) is uniquely fragile
-to visual degradation IN GENERAL, not just fog: the single hardest real detection in this whole
+real person (at the peak-occlusion instant with a second, overlapping pedestrian identified in the
+`fog_mild` finding) is uniquely fragile to visual degradation IN GENERAL, not just fog: the single
+hardest real detection in this whole
 dataset, across every condition tested. **But the other 5 residuals show essentially no real,
 glare-specific confidence penalty** (two are even marginally negative). They are UNCERTAIN not because
 glare degraded their detection confidence, but because their baseline daytime confidence was already
