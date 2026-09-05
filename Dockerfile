@@ -14,22 +14,21 @@ COPY frontend/ ./
 RUN npm run build
 
 # --- Stage 2: the actual runtime image ---
+# This container only ever runs backend.main:app — it never imports edge
+# code (that runs on a separate physical device in the real architecture).
+# requirements-backend.txt is a verified-minimal subset of the full
+# requirements.txt (which also carries ultralytics/opencv/easyocr/
+# retina-face for the edge process) — confirmed by actually installing it
+# into a clean venv and importing backend.main successfully, not guessed.
+# No CV/ML system deps (libgl1 etc.) needed here for the same reason.
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-# System deps for opencv-python-headless / ultralytics at import time
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-backend.txt ./
+RUN pip install --no-cache-dir -r requirements-backend.txt
 
 COPY backend/ ./backend/
 COPY shared/ ./shared/
-COPY edge/ ./edge/
-COPY yolov8n.pt ./
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 # Real secrets (SECRET_KEY, ADMIN_PASSWORD, DATABASE_URL, etc.) MUST be

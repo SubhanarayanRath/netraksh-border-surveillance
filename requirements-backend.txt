@@ -1,0 +1,22 @@
+# NETRAKSH — backend-only runtime dependencies.
+#
+# requirements.txt (the original file) installs the FULL stack — edge
+# (ultralytics/opencv/easyocr/retina-face/scikit-learn) AND backend — because
+# local dev runs both from one Python environment. The backend container
+# (Dockerfile) only ever runs `backend.main:app`; it never imports edge code
+# at all. Installing the edge stack into it would pull in torch/tensorflow-
+# scale dependencies for nothing, multiplying build time and image size for
+# a deploy that has real free-tier build-time and memory limits. This is
+# the actual import list backend/ and shared/ need — verified by grepping
+# every top-level import in both, not guessed.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+cryptography>=42.0.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.0

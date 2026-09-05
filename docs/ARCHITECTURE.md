@@ -1053,6 +1053,59 @@ pass, documented above per area.
 
 ---
 
+## Render Deployment Prep
+
+Prompted by "let's deploy it live." This is the concrete build/config work needed before a
+real deploy — not the deploy itself, which needs the user's own GitHub/Render accounts (see
+`docs/DEPLOYMENT.md` for the full walkthrough and what to do next).
+
+**What changed:**
+- `backend/config.py`: `DATABASE_URL` now normalizes the legacy `postgres://` scheme to
+  `postgresql://` via a `field_validator`. Render (and Heroku-style platforms before it)
+  hand out connection strings with the old scheme; SQLAlchemy 1.4+ rejects it outright.
+  Without this, pasting Render's own connection string into the env var would crash at
+  engine creation on first boot. New test: `tests/unit/test_backend_config.py`.
+- `requirements-backend.txt` (new): a verified-minimal dependency set for the backend
+  container. The original `requirements.txt` installs the full stack (edge's
+  `ultralytics`/`opencv`/`easyocr`/`retina-face` included) because local dev runs
+  everything from one Python environment — but the backend container only ever runs
+  `backend.main:app`, which never imports edge code at all (confirmed by grepping every
+  `from edge`/`import edge` in `backend/` — none exist). Verified, not assumed: built a
+  throwaway venv, installed only `requirements-backend.txt`, successfully imported
+  `backend.main`, then deleted the venv.
+- `Dockerfile`: rewritten to use `requirements-backend.txt`, drop the `edge/` and
+  `yolov8n.pt` copies (unused, per above), and drop the `libgl1`/`libglib2.0-0` system
+  packages (were only needed for opencv/ultralytics, no longer installed in this image).
+  The previous Dockerfile had never been built even once — Docker is unavailable on the
+  dev machine this project was built on — so this rewrite is itself unverified by an
+  actual `docker build`, same caveat as before, now on a smaller, more carefully-reasoned
+  image.
+- `render.yaml` (new): a Render Blueprint defining the web service (Docker, free plan,
+  `healthCheckPath: /health`) and a managed Postgres database, wired together via
+  `fromDatabase`. `SECRET_KEY`/`ADMIN_PASSWORD`/`INITIAL_OPERATOR_PASSWORD`/
+  `INITIAL_AUDITOR_PASSWORD` use Render's `generateValue: true` — real random values
+  generated at deploy time, never the `CHANGE_ME_*` placeholders this project defaults to
+  locally, and never committed to source control.
+- `docs/DEPLOYMENT.md` (new): the actual step-by-step walkthrough, including what this
+  deployment deliberately does NOT include (the edge pipeline, a real blockchain network)
+  and why.
+
+**What did NOT change:** no application logic, no API behavior, no frontend code. This is
+pure deployment configuration.
+
+**Honestly unverified:** the Postgres code path itself (`psycopg2-binary`, the connection
+pooling settings in `backend/database/session.py`, `init_db()`'s migration logic against a
+real Postgres rather than SQLite) has never been exercised against a real running Postgres
+server — every verification in this project to date has been against real SQLite, because
+that's what's available locally. The schema/migration code is written to be
+database-agnostic (SQLAlchemy's `inspect()`, not raw SQLite pragmas), but "written to be"
+and "verified to be" are different claims, and this document tries never to blur them.
+
+**Tests:** 204/204 passing (3 new, for the `DATABASE_URL` normalization). Confirmed the
+running dev server still boots cleanly after the `backend/config.py` change.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

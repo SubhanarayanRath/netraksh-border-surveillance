@@ -5,6 +5,7 @@ All secrets come from environment variables. No hardcoded credentials.
 import os
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +25,23 @@ class Settings(BaseSettings):
 
     # --- Database ---
     DATABASE_URL: str = "postgresql://netraksh:netraksh_password@localhost:5432/netraksh"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalize_postgres_scheme(cls, v: str) -> str:
+        """
+        Render (and Heroku-style platforms before it) hand out a managed
+        Postgres connection string starting with the legacy `postgres://`
+        scheme. SQLAlchemy 1.4+ rejects that scheme outright — it requires
+        `postgresql://`. Without this, DATABASE_URL pasted verbatim from
+        Render's dashboard into an env var would fail at engine creation,
+        not at request time, so this is caught here rather than being a
+        confusing first-boot crash on the exact platform this project
+        targets for its live deployment.
+        """
+        if v.startswith("postgres://"):
+            return "postgresql://" + v[len("postgres://"):]
+        return v
 
     # --- Security / JWT ---
     SECRET_KEY: str = "CHANGE_ME_USE_openssl_rand_hex_32"
