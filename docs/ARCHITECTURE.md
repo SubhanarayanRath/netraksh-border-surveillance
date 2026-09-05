@@ -1348,6 +1348,43 @@ read directly via JS) rather than a screenshot alone.
 
 ---
 
+## Demo Events Re-Seeded with Real Ed25519 Signatures
+
+Prompted by "re-seed the demo events with real signatures," after the button audit found
+`GET /system/verify-chain` honestly reporting the earlier demo-seed data as failed (it was
+sent with a clearly-labeled `"demo-seed-not-a-real-signature"` stub, not a real signature).
+
+**What changed:** `scripts/seed_demo_events.py` (new, committed — the earlier version was a
+throwaway scratchpad script) generates a real Ed25519 keypair per demo camera, registers
+each public key via the real `PUT /cameras/{id}/public-key`, then builds each event's hash
+and signature using the exact same functions the backend verifies against
+(`backend/services/verification.py::compute_sha256`, `EvidencePackage.get_signable_fields`
+— imported directly, not reimplemented by hand, to guarantee an exact match rather than a
+hopefully-matching reimplementation) with correctly chained `sequence_number`/
+`previous_hash` per camera. `NETRAKSH_ADMIN_PASSWORD` is read from an environment variable,
+never hardcoded — the throwaway version that ran once against the live deployment had the
+real password inline; the committed version does not.
+
+**Verified, in the same order as everything else in this project:** dry-run against the
+local dev server first (temporarily inserting matching camera/zone rows to mirror the live
+deployment, cleaned up after), where every event came back `"verified": true` from the real
+ingestion endpoint. Then run for real against the live Render deployment — same result,
+all 6 new events verified `true`, and confirmed via `GET /events` that `verified_ok` is
+genuinely `True` on each one (not merely returned truthy in the POST response).
+
+**What did NOT get fixed, and why — disclosed, not glossed over:** the OLD 8
+fake-signature demo events are still on the live deployment. There is no `DELETE /events`
+endpoint (by design — evidence is meant to be append-only) and no direct database access
+from this environment, so `GET /system/verify-chain` still reports "8 block(s) failed"
+after this change — unchanged from before, because nothing was removed, only added
+alongside. Identified the exact 8 `event_id`s (and the 2 `alerts` rows referencing them)
+via `GET /events`/`GET /alerts` and handed the user copy-paste SQL to remove them via
+Render's own database access, in FK-safe order (`alerts` → `evidence_packages` →
+`events`) — that step needs the user's own database credentials, which this session
+correctly never had.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
