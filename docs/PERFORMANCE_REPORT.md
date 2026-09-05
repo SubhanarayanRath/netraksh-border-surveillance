@@ -286,6 +286,38 @@ by `S`'s uniform penalty), BOTH of `night_mild`'s residuals are genuinely, subst
 night-degraded** — a real, honest difference in character between night's and glare's residual
 populations, not a coincidence of small sample size.
 
+## The compound-condition datasets, and a methodological correction caught along the way
+
+The same paired comparison was extended to the compound-condition datasets — and caught a real mistake
+before it was published. Frame-`idx` matching between two datasets is a useful heuristic, but is NOT
+guaranteed to be the same real track: when several people cross near the zone at similar times, a
+different physical person can fire the fence-crossing event at the same `frame_idx` in two separately-
+run datasets. Caught directly: `night_fog` and `fog_glare` both flagged a candidate at frame 242 with an
+apparent large drop (`≈0.265` against daytime's own frame-242 candidate) — but visually comparing the
+snapshots shows daytime's frame-242 candidate is a DIFFERENT person (mid-zone, near the sign) than the
+small, distant figure `night_fog`/`fog_glare` actually flag (top-right corner). `night_fog` and
+`fog_glare` genuinely agree with EACH OTHER (identical figure, identical position) — just not with
+daytime's own frame-242 candidate. **That specific comparison is retracted as spurious.** Every other
+comparison reported in this document — including every frame-694 instance — was individually visually
+re-verified (identical scene composition, bounding-box position, and surrounding people) before being
+reported, precisely because this false match was found.
+
+With that correction in place:
+
+| Dataset | Residuals | Frame 694 present? | Pattern |
+|---|---|---|---|
+| `fog_glare` | 15 | Yes — drop `0.265`, largest in the dataset (visually confirmed) | Mostly small-moderate real drops (0.003-0.106); frame 694 the one standout |
+| `night_glare` | 7 | No | Small real drops only (max 0.087, one -0.035) — ordinary borderline detections |
+| `night_fog` | 2 (n=7) | Inconclusive (frame-242 match retracted) | Too small a sample to characterize further |
+| `night_fog_glare` | 0 (n=3) | — | Nothing to investigate |
+| `night_fog_glare_mild` | 4 | Yes (already documented above) | Consistent with the overall picture |
+
+`fog_glare`'s frame 694 match is a FIFTH independent, visually-confirmed instance of this one crossing's
+universal fragility — now spanning every single-condition transform tested this session plus at least
+one real compound. `night_glare`'s residuals, by contrast, show only small real drops, consistent with
+its already-healthy 87% DETECTED rate and residuals that are ordinary borderline detections — the same
+character as most of `glare_mild`'s residuals.
+
 **Fog's residual, investigated the same way, reaches the identical conclusion:** all 3 remaining
 UNCERTAIN fog candidates are genuine, correctly-detected people (small/distant figures visibly
 softened by the haze/blur transform). `S` is nearly flat across all 52 fog candidates

@@ -176,6 +176,35 @@ limitation — an out-of-date limitations file is worse than none.
   genuinely, substantially night-degraded detections** (~0.25 drop each) — a real, honest difference in
   character between night's and glare's residual populations, not just a coincidence of small sample
   size.
+  **The same paired comparison was extended to the compound-condition datasets, and caught a real
+  methodological mistake before it was published — worth documenting alongside the actual findings.**
+  Frame-`idx` matching between two datasets is a useful heuristic, but is NOT guaranteed to be the same
+  real track: when several people cross near the zone at similar times, a different physical person can
+  fire the fence-crossing event at the same `frame_idx` in two separately-run datasets. This was caught
+  directly: `night_fog` and `fog_glare` both flag a candidate at frame 242 with a large apparent drop
+  (`≈0.265` against daytime's own frame-242 candidate) — but visually comparing the snapshots shows
+  daytime's frame-242 candidate is a DIFFERENT person (mid-zone, near the sign) than the small, distant
+  figure `night_fog`/`fog_glare` actually flag (top-right corner) — `night_fog` and `fog_glare` genuinely
+  agree with EACH OTHER (identical figure, identical position), just not with daytime's own frame-242
+  candidate. That specific "0.265 drop" comparison is retracted as spurious; every other comparison
+  reported in this document (including every frame-694 instance below) was individually visually
+  re-verified — identical scene composition, identical bounding-box position, identical surrounding
+  people — before being reported, precisely because this false match was found.
+  **With that correction in place, frame 694 (the universally fragile crossing from the `fog_mild`/
+  `glare_mild`/`night_mild` findings above) shows up again, genuinely, in the compound datasets**:
+  `fog_glare`'s candidate_042 (`daytime D=0.756` → `fog_glare D=0.491`, drop `0.265`) is visually
+  confirmed as the same real crossing, and is again that dataset's single largest drop among its 15
+  residuals — a FIFTH independent confirmation (daytime-paired) of this one crossing's universal
+  fragility, now spanning every single-condition and several compound-condition transforms tested this
+  session. `night_glare`'s 7 residuals, by contrast, show only small real drops (visually confirmed
+  genuine for `candidate_026`, frame 345: `0.087`) — one is even marginally negative (`-0.035`) — none
+  approaching frame 694's magnitude, consistent with `night_glare`'s already-healthy 87% DETECTED rate
+  and its residuals being ordinary borderline detections, the same character as most of `glare_mild`'s
+  residuals. `fog_glare`'s other 14 residuals mostly show small-to-moderate real drops (`0.003`-`0.106`)
+  — a mix of ordinary borderline detections and mild, real fog-driven degradation, with frame 694 as the
+  one standout. `night_fog_glare` has zero residuals (all 3 real candidates DETECTED) — nothing to
+  investigate. `night_fog_glare_mild`'s residuals were already investigated in detail above (frame 694
+  present again, plus a genuinely young-track case) — consistent with this same overall picture.
   **The fog residual was investigated the same way and reaches the identical honest conclusion.** All
   3 remaining UNCERTAIN fog candidates are genuine, correctly-detected people (each snapshot manually
   re-checked — small/distant figures visibly softened by the haze/blur transform). `S` is nearly flat
