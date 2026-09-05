@@ -3,6 +3,7 @@ import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle } from 'lucide-rea
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
 import LoginPrompt from '../components/LoginPrompt';
+import { parseUtc } from '../utils/time';
 
 // Real alert data has no free-text title/description field anywhere in the
 // data model (AlertResponse only carries severity/camera/zone/event_type/
@@ -58,7 +59,7 @@ export default function Alerts() {
     for (const a of restAlerts) byId.set(a.alert_id, a);
     for (const a of wsAlerts) byId.set(a.alert_id, { ...byId.get(a.alert_id), ...a });
     return [...byId.values()].sort((a, b) =>
-      new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0)
+      (parseUtc(b.timestamp || b.created_at) || new Date(0)) - (parseUtc(a.timestamp || a.created_at) || new Date(0))
     );
   }, [restAlerts, wsAlerts]);
 
@@ -138,7 +139,7 @@ export default function Alerts() {
 
                 <div className="flex gap-6 mt-2 pt-3 border-t border-[rgba(239,68,68,0.2)] text-xs font-display text-muted">
                   <span className="flex items-center gap-1"><MapPin size={14}/> {alert.camera_id || alert.zone_id || 'Unknown'}</span>
-                  <span className="flex items-center gap-1"><Crosshair size={14}/> T - {Math.floor((Date.now() - new Date(alert.timestamp || alert.created_at || Date.now())) / 60000)} MINS</span>
+                  <span className="flex items-center gap-1"><Crosshair size={14}/> T - {Math.floor((Date.now() - (parseUtc(alert.timestamp || alert.created_at) || new Date())) / 60000)} MINS</span>
                   {!alert.isMock && (
                     alert.acknowledged_at ? (
                       <span className="flex items-center gap-1 text-ok"><CheckCircle size={14}/> Acknowledged{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}</span>

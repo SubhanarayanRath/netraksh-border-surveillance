@@ -1148,6 +1148,64 @@ scratch and confirmed `bcrypt.__about__.__version__` is now present and
 
 ---
 
+## Real Data on the Live Deployment + a Timezone Bug Found While Seeding It
+
+Prompted by "seed some realistic demo events" for the live Render deployment so it doesn't
+show empty states on first load for judges.
+
+**What changed:** `POST /events` and `POST /cameras/{id}/health` — the same real, public
+endpoints a real edge device uses — were called with 6 varied demo events (different
+cameras, severities, decision states, scene conditions, one deliberately DEGRADED-camera
+case) and 2 camera health reports, against the real live Postgres database. Dry-run tested
+first against the local dev server (temporarily inserting matching camera/zone rows to
+mirror the live deployment's real seed data, all cleaned up afterward) — caught and fixed
+a real payload bug this way (`CameraHealthReport` requires `camera_id` in the request body,
+not only the URL path) before it ever touched the live deployment.
+
+**A second, more interesting bug, found by actually looking at the live result:** a demo
+alert created moments earlier showed "T - 330 MINS" elapsed instead of ~1 minute. 330
+minutes is exactly the IST UTC offset (5:30) — not a coincidence. Investigating: every
+datetime this backend returns (`Event.timestamp`, `Alert.created_at`, etc.) comes back as a
+naive ISO string with no UTC marker (`"2026-09-05T05:21:00"`, not `"...05:21:00Z"`) — even
+for a field the client originally sent WITH a `Z` suffix. SQLAlchemy `DateTime` columns
+store/return naive Python datetimes regardless of the input's timezone info, and Pydantic
+doesn't add a marker back when serializing a naive datetime. Every timestamp in this app is
+UTC by convention (every display already labels it "UTC") — but `new Date(str)` on a
+marker-less string is parsed as the *browser's local time*, silently shifting every
+displayed and elapsed time by that viewer's own UTC offset. For any judge or teammate
+viewing this from India, every elapsed-time and clock display in this app was wrong by
+exactly 5 hours 30 minutes, and would have stayed invisible on a dev machine that never
+happened to test from outside UTC.
+
+**Fixed at the frontend** (`frontend/src/utils/time.js`'s new `parseUtc()`), not by
+changing the backend's DB column types or migrating existing data — every timestamp
+display in `Dashboard.jsx`, `Evidence.jsx`, and `Alerts.jsx` (both the elapsed-time
+calculation and the sort comparator) now routes through it. Also fixed in the same pass,
+found while touching this code: `Evidence.jsx`'s event-list timestamp used
+`.toLocaleTimeString()` (the viewer's local wall-clock time) immediately followed by the
+literal text "UTC" — displaying local time mislabeled as UTC, independent of the naive-
+string bug above. Now uses the same UTC-safe formatting as everywhere else in the app.
+
+**Verified, with the actual real numbers, not just re-reasoned about:** captured the real
+`created_at` value and real `Date.now()` from the live deployment during diagnosis, then
+ran both the old and new parsing logic against those exact real values head-to-head:
+331 minutes (reproducing the bug) → 1 minute (correct) after the fix.
+
+**What did NOT change:** the backend's database schema, column types, or any
+`datetime.utcnow()` call site — this project's tests already flag that call as deprecated
+Python (see the `DeprecationWarning` in every test run), and migrating every `DateTime`
+column to `timezone=True` would be the more "correct" long-term fix, but is a materially
+larger, riskier change (schema migration across every table with a timestamp) for the
+identical practical result this frontend-side fix already achieves, given this app's
+timestamps are UTC by convention everywhere already.
+
+**Tests:** no new automated test (this is frontend-only, JS-only logic — the project has
+no frontend test suite, pre-existing gap); verified via a standalone Node script running
+`parseUtc` against the real captured values from the live bug, and via `vite build`
+(zero errors) + `oxlint` (pre-existing warning patterns only, no new class introduced).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

@@ -3,6 +3,7 @@ import { ShieldCheck, HelpCircle, ShieldAlert, CheckCircle } from 'lucide-react'
 import VideoFeed from '../components/VideoFeed';
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL } from '../services/auth';
+import { parseUtc } from '../utils/time';
 
 // Parses the REAL decision_reason string edge/reliability/decision.py writes,
 // e.g. "R_ABOVE_THRESHOLD:R=0.907>=0.750 (D=0.80,T=0.85,S=0.93,H=1.00)" or
@@ -129,7 +130,7 @@ export default function Dashboard() {
               ) : (
                 events.map((ev, i) => (
                   <div key={i} className="flex gap-4 text-sm font-body">
-                    <span className="text-muted w-20">{new Date(ev.timestamp).toISOString().substring(11, 19)}</span>
+                    <span className="text-muted w-20">{parseUtc(ev.timestamp).toISOString().substring(11, 19)}</span>
                     <span className={i === 0 ? 'text-ok' : 'text-main'}>
                       {ev.decision_state === 'DETECTED' ? `Track #${ev.track_id || ''} established. Crossed virtual fence line.` : `Motion detected in Sector 4`}
                     </span>

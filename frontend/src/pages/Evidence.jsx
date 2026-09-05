@@ -3,6 +3,7 @@ import { Search, Shield, CheckCircle, Database, GitBranch, Cloud } from 'lucide-
 import useWebSocket from '../hooks/useWebSocket';
 import { authFetch, WS_URL } from '../services/auth';
 import LoginPrompt from '../components/LoginPrompt';
+import { parseUtc } from '../utils/time';
 
 export default function Evidence() {
   const { events } = useWebSocket(WS_URL);
@@ -180,7 +181,7 @@ export default function Evidence() {
                   </div>
                   <div className="text-sm text-main mb-1 truncate">{ev.event_type || ev.decision_state}</div>
                   <div className="text-xs text-muted font-body">
-                    {new Date(ev.timestamp).toLocaleTimeString()} UTC • {ev.zone_id}
+                    {parseUtc(ev.timestamp).toISOString().substring(11, 19)} UTC • {ev.zone_id}
                   </div>
                 </div>
               );
@@ -209,7 +210,7 @@ export default function Evidence() {
               <div className="grid grid-cols-2 gap-y-6 gap-x-4 mb-8">
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">CAPTURE TIME</span>
-                  <span className="text-sm font-body">{selectedEvent ? new Date(selectedEvent.timestamp).toISOString().replace('T', ' ') : 'N/A'}</span>
+                  <span className="text-sm font-body">{selectedEvent ? parseUtc(selectedEvent.timestamp).toISOString().replace('T', ' ') : 'N/A'}</span>
                 </div>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">SENSOR ID</span>

@@ -103,6 +103,18 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 2. Implemented, but scoped narrower than it might sound
 
+- **Every backend-generated timestamp is stored and returned as a naive datetime with no
+  UTC marker** (`SQLAlchemy`'s `DateTime` columns, populated via `datetime.utcnow()`
+  throughout the codebase — the same call this project's own test suite already flags as
+  deprecated Python). This was fixed at the frontend (`frontend/src/utils/time.js`'s
+  `parseUtc()`), not at the source: every `DateTime` column would need to become
+  `DateTime(timezone=True)` for the backend itself to emit correctly-marked timestamps,
+  which is a real schema migration across every timestamped table, not a one-line fix. The
+  frontend fix is complete and verified for every timestamp this app currently displays,
+  but any *new* timestamp display added later must remember to route through `parseUtc()` —
+  the underlying naive-storage gap has not been closed, only worked around at its one
+  actual point of failure (parsing in the browser). See `docs/ARCHITECTURE.md`'s "Real Data
+  on the Live Deployment + a Timezone Bug Found While Seeding It" for how this was found.
 - **ANPR is a simplified, non-production heuristic**, not a real license-plate detector. It crops a
   fixed lower-middle-third region of the *vehicle* bounding box (a rough heuristic for typical plate
   location) and runs EasyOCR directly on that crop — there is no dedicated plate-detection model
