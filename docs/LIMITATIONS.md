@@ -221,6 +221,38 @@ limitation — an out-of-date limitations file is worse than none.
   always below its threshold by construction). The 6 remaining `glare_mild` residuals show moderate,
   plausible `D`/`T` combinations (no floor, no single dominant factor, `S`≈0.63-0.68 for all,
   `H`=1.0) — genuine evidence-based uncertainty, not a further bug.
+- **`SceneCondition` is a single, mutually-exclusive categorical value — a real scene that is genuinely
+  BOTH foggy AND dark cannot be represented as such, only as one or the other, and this was tested, not
+  just noted as a theoretical gap.** A new `--synthetic-condition night_fog`
+  (`scripts/collect_calibration_data.py`) combines the real night-darkening transform with a real
+  fog-style haze blend on top of it (dimmed to match, not daytime fog's bright 190 — real fog under
+  low light scatters little into a dim gray, it doesn't glow white), producing a real compound
+  degradation: `brightness_mean≈39`, `contrast_std≈7` — genuinely lower contrast than EITHER "night"
+  (≈15) or "fog" (≈21) alone. Because `FOG_RAIN`'s classification rule requires `brightness>60`
+  (`edge/condition/scene_condition.py`), this compound scene is always classified `LOW_LIGHT_NIGHT`,
+  never `FOG_RAIN` — a real, structural consequence of Gate 2's categorical design, not a bug in this
+  test. Two real findings came out of actually running it:
+  1. **The reliability-scoring fixes already made this session generalize correctly to a MORE severe
+     case than either was individually measured against** — no new double-penalty or reference-point
+     bug was found. `_SCENE_CONTRAST_GOOD_NIGHT` (fix 4) still applies, correctly scoring this more
+     severe contrast worse than either individual condition; `_WEATHER_EXPLAINED_DEGRADED_REASONS`
+     (fixes 1/6) still applies if blur trips (`LOW_LIGHT_NIGHT` was already in its exemption set).
+     Manual review of all real candidates found zero false positives, and of those, 5/7 (71%)
+     DETECTED — the few candidates that survive to a reliability decision are handled reasonably.
+  2. **A more fundamental, more operationally significant real finding: only 7 real fence-crossing
+     candidates ever formed across all 795 frames, versus ~52 for every single-degradation condition
+     tested this session — an ~86% drop in candidate YIELD, not just detection accuracy.** At this
+     severity, the overwhelming majority of real crossings never even reach the Hybrid Reliability
+     Engine at all — they are lost earlier, in detection/tracking itself (YOLO confidence and/or
+     ByteTrack continuity degrading under compounded low-contrast, low-light pixels), a limitation no
+     amount of tuning `RELIABILITY_WEIGHT_*`/`RELIABILITY_R_THRESHOLD` can address, since those only
+     ever see candidates that already survived to become one. This is real, honest, and important to
+     say plainly: the Reliability Engine's threshold accuracy on survivors is not the same claim as
+     "the system reliably detects crossings under severe compound degradation," and this project has
+     no fix for the latter yet — it would require detector-level work (a fine-tuned model, adaptive
+     preprocessing tuned to this compound case specifically) outside this session's scope. `n=7` is
+     also too small to treat the 71% DETECTED figure itself as a precise measurement — it is reported
+     as an honest observation on this small a sample, not a statistically confident rate.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

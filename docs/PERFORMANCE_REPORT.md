@@ -321,6 +321,42 @@ The 6 remaining `glare_mild` residuals show moderate, plausible `D`/`T` combinat
 single dominant factor, `S`≈0.63-0.68 for all, `H`=1.0) — genuine evidence-based uncertainty, not a
 further bug.
 
+## A real compound condition: night AND fog together
+
+Every condition above tests ONE degradation at a time, matching `SceneCondition`'s real design — a
+single, mutually-exclusive categorical value (`edge/condition/scene_condition.py`). But a real border
+camera can face darkness AND fog simultaneously. `--synthetic-condition night_fog`
+(`scripts/collect_calibration_data.py`) combines the real night-darkening transform with a real
+fog-style haze blend dimmed to match (not daytime fog's bright 190 — real fog under low light scatters
+into a dim gray, it doesn't glow white), producing a genuinely compound degradation: `brightness_mean
+≈39`, `contrast_std≈7` — lower contrast than EITHER "night" (≈15) or "fog" (≈21) alone. Because
+`FOG_RAIN` requires `brightness>60`, this compound scene is always classified `LOW_LIGHT_NIGHT`, never
+`FOG_RAIN` — a real, structural consequence of the categorical design, not a test artifact.
+
+Two real findings from actually running it (all real candidates manually reviewed — zero false
+positives, as always):
+
+1. **This session's reliability-scoring fixes generalize correctly to a case more severe than either
+   was individually measured against.** `_SCENE_CONTRAST_GOOD_NIGHT` (fix 4) still applies and
+   correctly scores this worse than either individual condition; the H exemption
+   (`_WEATHER_EXPLAINED_DEGRADED_REASONS`, fixes 1/6) still covers `LOW_LIGHT_NIGHT` if blur trips. Of
+   the real candidates that reached a reliability decision, 5/7 DETECTED — the few survivors are
+   handled reasonably. No new double-penalty or reference-point bug was found.
+2. **A more fundamental finding: only 7 real fence-crossing candidates formed across all 795 frames,
+   versus ~52 for every single-degradation condition — an ~86% drop in candidate YIELD, not detection
+   accuracy.** At this severity, most real crossings never reach the Hybrid Reliability Engine at all
+   — they are lost earlier, in detection/tracking itself. No amount of tuning
+   `RELIABILITY_WEIGHT_*`/`RELIABILITY_R_THRESHOLD` addresses this, since those only ever see
+   candidates that already survived to become one. **This is the honest, important distinction to
+   report: the Reliability Engine's threshold accuracy on survivors is not the same claim as "the
+   system reliably detects crossings under severe compound degradation."** This project has no fix for
+   the latter — it would need detector-level work (a fine-tuned model, or preprocessing tuned to this
+   specific compound case), outside this session's scope.
+
+`n=7` is too small to treat the 71% DETECTED figure as a precise measurement — reported as an honest
+observation on a small sample, not a statistically confident rate, unlike the ~52-candidate figures
+elsewhere in this report.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

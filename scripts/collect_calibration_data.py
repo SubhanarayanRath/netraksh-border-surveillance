@@ -177,6 +177,37 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         # still glary" rather than "severely glary."
         brightened = frame.astype(np.float32) * 1.3 + 10
         return np.clip(brightened, 0, 255).astype(np.uint8)
+    if condition_sim == "night_fog":
+        # A NEW, genuinely COMPOUND condition — not a milder/harsher variant
+        # of one of the four above, but a real scenario this project's Gate
+        # 2 classifier cannot actually represent: a real border camera can
+        # face fog AND darkness at the same time, but SceneCondition is a
+        # single, mutually-exclusive categorical value
+        # (edge/condition/scene_condition.py), so a genuinely compound scene
+        # can only ever be classified as ONE of CLEAR_DAY/LOW_LIGHT_NIGHT/
+        # FOG_RAIN/GLARE — never two at once. This transform darkens first
+        # (real night: dim ambient light), then blends the ALREADY-DARKENED
+        # frame toward a DIM gray haze (45, not daytime fog's bright 190 —
+        # real fog under low light scatters what little light exists into a
+        # dim gray, it does not glow white) and blurs — simulating real,
+        # compounding contrast loss ON TOP OF real low brightness, not just
+        # one or the other. Empirically measured (5 frames spanning the
+        # whole video): brightness_mean≈39 (well under LOW_LIGHT_NIGHT's <60
+        # boundary, so this classifies LOW_LIGHT_NIGHT, not FOG_RAIN — the
+        # real classifier's brightness>60 requirement for FOG_RAIN means a
+        # dark-AND-foggy scene is always seen as "night" here, not "fog"),
+        # contrast_std≈7 — genuinely lower than EITHER "night" (≈15) or
+        # "fog" (≈21) alone, a real test of whether the existing per-
+        # condition fixes (night's own contrast reference, the blur/health
+        # exemption) generalize correctly to a MORE severe case than either
+        # was originally measured against, or whether compounding reveals a
+        # NEW gap neither individual fix anticipated.
+        darkened = frame.astype(np.float32) * 0.28
+        noise = rng.normal(0, 6.0, darkened.shape)
+        dark = np.clip(darkened + noise, 0, 255).astype(np.uint8)
+        haze_color = np.full_like(dark, 45)
+        blended = cv2.addWeighted(dark, 0.5, haze_color, 0.5, 0)
+        return cv2.GaussianBlur(blended, (5, 5), 0)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -198,7 +229,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild"], default="none",
+        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",
