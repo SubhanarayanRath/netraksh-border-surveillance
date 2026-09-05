@@ -5,7 +5,7 @@ All branches must pass.
 """
 import pytest
 
-from shared.constants import CameraHealthState, DecisionState, HealthReason, SceneCondition
+from shared.constants import CameraHealthState, DecisionState, FOG_CONTRAST_THRESHOLD, HealthReason, SceneCondition
 from shared.schemas import CameraHealthReport, SceneConditionReport
 from edge.reliability.decision import (
     make_reliability_decision,
@@ -331,6 +331,69 @@ class TestWeatherExplainedExposureDoesNotDoublePenalize:
         result = make_reliability_decision(
             health_report=_health(CameraHealthState.DEGRADED, HealthReason.FROZEN_STREAM),
             condition_report=_condition(SceneCondition.GLARE),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+
+class TestWeatherExplainedBlurByRealContrastNotJustLabel:
+    """
+    Real, at-scale follow-up fix (docs/LIMITATIONS.md, docs/PERFORMANCE_REPORT.md's
+    fog+glare compound finding): a real fog+glare compound scene is
+    classified GLARE alone (GLARE's classification check runs first), so the
+    label-keyed EXCESSIVE_BLUR exemption above (scoped to FOG_RAIN/
+    LOW_LIGHT_NIGHT) cannot see the real, co-occurring fog that is the
+    actual blur cause. Measured at real scale, not a small sample:
+    EXCESSIVE_BLUR fired on 246/260 (95%) real frames of a real fog+glare
+    compound test. This checks the REAL measured contrast_std directly
+    (against the same real FOG_CONTRAST_THRESHOLD already used elsewhere)
+    instead of relying solely on which label won the classification.
+    """
+
+    def test_excessive_blur_during_glare_with_fog_like_contrast_is_not_health_penalized(self):
+        """The scene is classified GLARE, but its REAL contrast is already
+        fog-like (below FOG_CONTRAST_THRESHOLD) — the genuine, physical
+        cause of the blur, even though the label can't say so."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition_with(
+                SceneCondition.GLARE, contrast_std=FOG_CONTRAST_THRESHOLD - 5.0, brightness_mean=128.0
+            ),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.DETECTED
+
+    def test_excessive_blur_during_glare_with_normal_contrast_is_still_fully_penalized(self):
+        """The exemption is scoped to genuinely fog-like contrast — a real
+        dirty/defocused lens during real glare, where contrast is normal to
+        high (measured 55-94 across every real glare candidate this
+        session, never fog-like), must still fully penalize H. This is the
+        exact real scenario the label-only exemption was deliberately NOT
+        extended to cover (see TestWeatherExplainedExposureDoesNotDoublePenalize
+        above)."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.EXCESSIVE_BLUR),
+            condition_report=_condition_with(
+                SceneCondition.GLARE, contrast_std=FOG_CONTRAST_THRESHOLD + 25.0, brightness_mean=128.0
+            ),
+            detector_confidence=0.50,
+            calibration_threshold=THRESHOLD,
+        )
+        assert result.decision_state == DecisionState.UNCERTAIN
+
+    def test_contrast_based_exemption_does_not_affect_other_degraded_reasons(self):
+        """Scoped to EXCESSIVE_BLUR specifically — ABNORMAL_EXPOSURE or any
+        other DEGRADED reason must not be exempted just because contrast
+        happens to be low; that would be a real, independent problem the
+        real fog-like contrast doesn't explain on its own (contrast dropping
+        does not itself explain, say, a frozen stream)."""
+        result = make_reliability_decision(
+            health_report=_health(CameraHealthState.DEGRADED, HealthReason.FROZEN_STREAM),
+            condition_report=_condition_with(
+                SceneCondition.GLARE, contrast_std=FOG_CONTRAST_THRESHOLD - 5.0, brightness_mean=128.0
+            ),
             detector_confidence=0.50,
             calibration_threshold=THRESHOLD,
         )

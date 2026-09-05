@@ -269,6 +269,39 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         glow = np.stack([glow_mask] * 3, axis=-1).astype(np.float32)
         with_glow = np.clip(blended.astype(np.float32) + glow, 0, 255).astype(np.uint8)
         return cv2.GaussianBlur(with_glow, (5, 5), 0)
+    if condition_sim == "fog_glare":
+        # A FOURTH real compound condition — daytime fog with sun glare
+        # cutting through it (e.g. driving/looking into low sun on a foggy
+        # day) — no night darkening this time, unlike the three compounds
+        # above. Uses the SAME daytime fog blend as "fog" (bright haze
+        # color 190, not night_fog's dimmed 45) plus the SAME localized
+        # glow as "night_glare"/"night_fog_glare". Empirically measured (5
+        # frames spanning the whole video): brightness_mean≈176,
+        # contrast_std≈41, glare_fraction≈0.171 (comfortably past the real
+        # 0.15 cutoff) — classifies GLARE via the real priority order,
+        # same as the other glow-containing compounds.
+        #
+        # Checked BEFORE running the real collection (a lesson directly
+        # learned from night_fog_glare's frozen-frame side effect): direct
+        # instrumentation of 260 real frames through CameraHealthMonitor
+        # found frozen_stream on only 14 (5%) — one blur + a static glow,
+        # unlike night_fog_glare's two stacked blurs, does not suppress
+        # frame-to-frame variance nearly as much — but excessive_blur fired
+        # on 246 (95%), a REAL, at-scale (not n=3 anecdotal) test of the
+        # open question already documented in docs/LIMITATIONS.md: does
+        # EXCESSIVE_BLUR during GLARE (not exempted, since the blur
+        # exemption only covers FOG_RAIN/LOW_LIGHT_NIGHT) meaningfully
+        # double-penalize H when the real blur cause is a co-occurring fog
+        # component the classifier doesn't report?
+        haze_color = np.full_like(frame, 190)
+        blended = cv2.addWeighted(frame, 0.42, haze_color, 0.58, 0)
+        foggy = cv2.GaussianBlur(blended, (7, 7), 0)
+        h, w = frame.shape[:2]
+        glow_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(glow_mask, (150, 120), 160, 255, -1)
+        glow_mask = cv2.GaussianBlur(glow_mask, (21, 21), 0)
+        glow = np.stack([glow_mask] * 3, axis=-1).astype(np.float32)
+        return np.clip(foggy.astype(np.float32) + glow, 0, 255).astype(np.uint8)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -290,7 +323,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog", "night_glare", "night_fog_glare"], default="none",
+        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog", "night_glare", "night_fog_glare", "fog_glare"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",

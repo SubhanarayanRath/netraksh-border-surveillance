@@ -226,10 +226,35 @@ def _health_quality_score(
     condition, e.g. EXCESSIVE_BLUR during CLEAR_DAY) still fully penalizes H
     exactly as before — those are genuinely independent hardware/pipeline
     problems S has no signal for.
+
+    A SECOND exemption, added after a real, at-scale finding (a real
+    fog+glare compound scene, docs/LIMITATIONS.md: EXCESSIVE_BLUR fired on
+    246/260 real frames — 95%, not a small-sample anecdote): SceneCondition
+    is a single categorical label, so a scene that is genuinely BOTH FOG_RAIN
+    and GLARE (glare_fraction wins the classification priority) is reported
+    as GLARE alone — and the EXCESSIVE_BLUR exemption above, keyed only to
+    the WINNING label, cannot see the real, co-occurring fog that is the
+    actual cause. Rather than add GLARE to the label-keyed exemption (which
+    would incorrectly also exempt a genuinely dirty/defocused lens during
+    real glare with no fog involved — glare's own transform, with no blur
+    applied, never once triggered EXCESSIVE_BLUR across ~160 real candidates
+    collected this session), this checks the REAL underlying signal directly:
+    if contrast_std is already below FOG_CONTRAST_THRESHOLD — the same real
+    constant that defines "is this fog" — the blur is plausibly explained by
+    genuine fog-like conditions regardless of which label won the
+    classification. A real dirty lens during pure glare has normal-to-high
+    contrast (measured 55-94 across every real glare/glare_mild/night_glare
+    candidate this session, all well above 30) and is therefore NOT exempted
+    by this check — only a scene whose contrast is ACTUALLY fog-like is.
     """
     if health_report.health_state == CameraHealthState.DEGRADED:
         explained_conditions = _WEATHER_EXPLAINED_DEGRADED_REASONS.get(health_report.health_reason)
         if explained_conditions and condition_report.condition in explained_conditions:
+            return 1.0
+        if (
+            health_report.health_reason == HealthReason.EXCESSIVE_BLUR
+            and condition_report.contrast_std < FOG_CONTRAST_THRESHOLD
+        ):
             return 1.0
     return _HEALTH_QUALITY_SCORE.get(health_report.health_state, 0.5)
 

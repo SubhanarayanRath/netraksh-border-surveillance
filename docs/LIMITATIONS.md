@@ -309,6 +309,48 @@ limitation — an out-of-date limitations file is worse than none.
   the strength of one small, synthetically-constructed case.
   Of the 3 real candidates that survived Gate 1 at all, 1/3 DETECTED — `n=3` is far too small to treat
   as anything beyond an anecdotal observation, unlike every other figure in this document.
+  **A fourth compound condition — daytime fog with sun glare (no night darkening) — was used to test
+  the "left open" blur/co-occurring-condition gap above at REAL SCALE (n=52, not the n=3 anecdote
+  above), and turned an open question into a concrete, tested fix — which then honestly turned out to
+  be real but incomplete.** `--synthetic-condition fog_glare` combines the SAME daytime fog blend as
+  "fog" (bright haze 190, not `night_fog`'s dimmed 45) with the SAME localized glow as `night_glare`,
+  modeling a real, plausible scenario (driving/looking into low sun on a foggy day). Checked BEFORE
+  the real collection, learning directly from `night_fog_glare`'s side effect: direct instrumentation
+  of 260 real frames found `frozen_stream` on only 14 (5%, healthy — one blur, not two, plus a static
+  glow does not suppress frame-to-frame variance the way stacking two blurs did) — but `excessive_blur`
+  fired on 246 (95%), confirming the open question at real scale, not anecdote: this scene's real,
+  genuine blur (from the same fog transform's blur, present regardless of the glow) is not exempted,
+  because the winning classification is `GLARE`, and `EXCESSIVE_BLUR`'s exemption only covered
+  `FOG_RAIN`/`LOW_LIGHT_NIGHT`.
+  **The fix, real and unit-tested:** rather than add `GLARE` to the label-keyed exemption (which would
+  incorrectly also exempt a genuinely dirty/defocused lens during real glare with no fog — confirmed
+  never happening: `EXCESSIVE_BLUR` never fired once across ~160 real candidates from the pure
+  `glare`/`glare_mild`/`night_glare` datasets, all of which had real contrast 55-94, well above 30),
+  `_health_quality_score` now also exempts `EXCESSIVE_BLUR` whenever the REAL measured `contrast_std`
+  is directly below `FOG_CONTRAST_THRESHOLD` — the same real constant, checked against the real signal
+  instead of relying solely on which label won. 3 new tests
+  (`tests/unit/test_reliability.py::TestWeatherExplainedBlurByRealContrastNotJustLabel`); full suite
+  242/242; all five earlier real datasets (daytime/night/fog/glare/`night_glare`) re-verified byte-for-
+  byte unchanged by this generalization.
+  **Honestly, though, re-measuring `fog_glare` with the fix in place found it does NOT solve the real
+  case it was built for: DETECTED stayed at 0/52 (0%), unchanged.** The real reason: this scene's
+  measured `contrast_std` is `≈41` — ABOVE `FOG_CONTRAST_THRESHOLD` (30), because the localized bright
+  glow inflates the FRAME'S GLOBAL contrast statistic well past what the hazy majority of the frame
+  would show on its own (compare `night_fog_glare`, where the glow against a genuinely DARK background
+  inflated global contrast even more, to ≈81). A single global scalar cannot distinguish "uniformly
+  hazy" from "hazy background plus one small very-high-contrast bright spot." Recomputing what
+  DETECTED would have been *if* the exemption had correctly fired (`H=1.0` for all 52) confirms the
+  diagnosis was still right: **37/52 (71%)** — the same order of magnitude as the original fog fix —
+  showing this is a real, substantial, still-open problem, not a false alarm; the fix implemented here
+  is simply not sufficient to catch it. A real, more complete fix would need `SceneConditionClassifier`
+  to measure a REGION-AWARE contrast/sharpness signal (e.g. excluding blown-out pixels from the
+  statistic, or a local-patch metric) rather than one global scalar over the whole frame — a real,
+  more invasive architectural change to the scene-condition measurement itself, out of scope for a
+  same-session H-scoring adjustment, and left as real, honestly-flagged future work rather than rushed.
+  The contrast-based exemption added this session is kept — it is real, tested, and strictly additive
+  (never regresses an existing case) — but it should NOT be presented as having solved the
+  fog+glare-compound blur problem; it solves the narrower case where global contrast genuinely is
+  fog-like, which this specific real compound scenario does not hit.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

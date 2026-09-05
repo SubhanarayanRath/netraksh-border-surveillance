@@ -419,6 +419,42 @@ one small, synthetically-constructed case.
 Of the 3 real candidates that survived Gate 1 at all, 1/3 DETECTED — `n=3` is too small to treat as
 anything beyond an anecdotal observation, unlike every other figure in this report.
 
+## A fourth compound condition: daytime fog with sun glare — tests the open blur question at real scale
+
+`--synthetic-condition fog_glare` combines the same daytime fog blend as "fog" (bright haze 190) with
+the same localized glow as `night_glare` — modeling a real, plausible scenario: driving/looking into
+low sun on a foggy day. Checked before the real collection: `frozen_stream` fired on only 14/260 frames
+(5%, healthy — one blur, not two, doesn't suppress variance the way `night_fog_glare`'s stacked blurs
+did), but `excessive_blur` fired on **246/260 (95%)** — turning the earlier "left open, n=3" question
+into a real, at-scale confirmation.
+
+**The fix, real and unit-tested:** rather than add `GLARE` to the label-keyed blur exemption (which
+would incorrectly also exempt a genuinely dirty lens during real glare with no fog — confirmed never
+happening across ~160 real pure-glare candidates, all with contrast 55-94, well above 30),
+`_health_quality_score` now also exempts `EXCESSIVE_BLUR` whenever the real measured `contrast_std` is
+directly below `FOG_CONTRAST_THRESHOLD`, regardless of which label won the classification. 3 new tests;
+full suite 242/242; every earlier dataset re-verified unchanged.
+
+**Honestly, re-measuring `fog_glare` with the fix found it does NOT solve the case it was built for:**
+
+| | DETECTED |
+|---|---|
+| `fog_glare`, with the fix, actual result | 0/52 (0%) |
+| `fog_glare`, if the exemption HAD fired (`H=1.0` hypothetically) | 37/52 (71%) |
+
+The reason: this scene's measured `contrast_std≈41` is ABOVE `FOG_CONTRAST_THRESHOLD` (30) — the
+localized bright glow inflates the frame's GLOBAL contrast statistic well past what the hazy majority
+of the frame shows on its own. A single global scalar cannot distinguish "uniformly hazy" from "hazy
+background plus one small very-high-contrast bright spot." The 71% hypothetical confirms the original
+diagnosis was correct — this is a real, substantial problem, not a false alarm — but the fix
+implemented is not sufficient to catch it. A complete fix would need `SceneConditionClassifier` to
+measure a region-aware contrast/sharpness signal (excluding blown-out pixels, or a local-patch metric)
+instead of one global scalar — a real, more invasive architectural change, left as honestly-flagged
+future work rather than rushed. The contrast-based exemption added this session is kept (real, tested,
+strictly additive, never regresses an existing case) but should not be presented as having solved the
+fog+glare blur problem — it solves the narrower case where global contrast genuinely is fog-like,
+which this specific real compound scenario does not hit.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated
