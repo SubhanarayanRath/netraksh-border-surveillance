@@ -299,9 +299,14 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   because the same blur that lowers scene quality also genuinely trips the Camera Health Monitor's
   blur detector) meant 0/52 genuine crossings ever reached DETECTED. `_health_quality_score` now
   exempts exactly that overlap (`EXCESSIVE_BLUR` + `FOG_RAIN`/`LOW_LIGHT_NIGHT`), which real
-  re-measurement raised to 37/52 (71%) — see `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry
-  and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after. `D/T/S/H`'s
-  hand-picked *weight values* themselves remain unchanged — this fixed how `H` is computed, not the
+  re-measurement raised to 37/52 (71%). A second fix followed the same real diagnosis pattern:
+  `_scene_quality_score`'s contrast component was judging FOG_RAIN frames against a clear-day
+  contrast ideal (60.0) they can never meet by definition, when the real, already-existing
+  `FOG_CONTRAST_THRESHOLD` (30.0) — literally the rule that classifies a scene as foggy in the first
+  place — is the honest reference to use instead. That raised fog further, to 45/52 (87%). See
+  `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s night/fog
+  section for the full, honest before/after of both fixes. `D/T/S/H`'s hand-picked *weight values*
+  themselves remain unchanged — these fixed how `H` and `S` are computed, not the
   weights applied to it — pending real labeled data with actual false positives to fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a

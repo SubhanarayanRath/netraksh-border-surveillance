@@ -11,6 +11,7 @@ from edge.reliability.decision import (
     make_reliability_decision,
     make_abstain,
     make_uncertain,
+    _scene_quality_score,
     RELIABILITY_R_THRESHOLD,
     RELIABILITY_WEIGHT_D,
     RELIABILITY_WEIGHT_T,
@@ -36,6 +37,20 @@ def _condition(cond: SceneCondition = SceneCondition.CLEAR_DAY) -> SceneConditio
         brightness_mean=128.0,
         contrast_std=50.0,
         glare_fraction=0.01,
+    )
+
+
+def _condition_with(
+    cond: SceneCondition, contrast_std: float, brightness_mean: float = 128.0, glare_fraction: float = 0.0
+) -> SceneConditionReport:
+    """Like _condition(), but with explicit control over contrast_std —
+    used to isolate _scene_quality_score's per-condition contrast reference."""
+    return SceneConditionReport(
+        camera_id="test-cam",
+        condition=cond,
+        brightness_mean=brightness_mean,
+        contrast_std=contrast_std,
+        glare_fraction=glare_fraction,
     )
 
 
@@ -263,6 +278,55 @@ class TestWeatherExplainedBlurDoesNotDoublePenalize:
             calibration_threshold=THRESHOLD,
         )
         assert result.decision_state == DecisionState.UNCERTAIN
+
+
+class TestSceneQualityFogContrastReference:
+    """
+    Real follow-up fix (docs/PERFORMANCE_REPORT.md's "Reliability Engine
+    behavior under real night/fog conditions"): even after the H
+    double-penalty fix above, 29% of genuine fog crossings still missed
+    RELIABILITY_R_THRESHOLD, because contrast_score judged FOG_RAIN frames
+    against a clear-day contrast ideal (60.0) they were never going to meet
+    by definition — FOG_CONTRAST_THRESHOLD=30.0 is the real, already-existing
+    rule that classifies a scene FOG_RAIN in the first place. These tests
+    call _scene_quality_score directly (not through make_reliability_decision)
+    to isolate exactly this behavior.
+    """
+
+    def test_fog_at_classification_threshold_scores_full_contrast_component(self):
+        """A fog frame whose contrast sits exactly at the real
+        FOG_CONTRAST_THRESHOLD (30.0) that got it classified FOG_RAIN in the
+        first place should score full marks on the contrast component — it
+        is, by this project's own real rule, as clear as "still fog" gets."""
+        s = _scene_quality_score(_condition_with(SceneCondition.FOG_RAIN, contrast_std=30.0))
+        assert s == pytest.approx(1.0)
+
+    def test_identical_contrast_scores_lower_under_clear_day(self):
+        """The SAME raw contrast_std, but classified CLEAR_DAY, still uses
+        the clear-day contrast ideal (60.0) and scores lower — proving this
+        is a per-condition reference change, not a general softening of the
+        contrast component for every condition."""
+        fog_s = _scene_quality_score(_condition_with(SceneCondition.FOG_RAIN, contrast_std=30.0))
+        day_s = _scene_quality_score(_condition_with(SceneCondition.CLEAR_DAY, contrast_std=30.0))
+        assert fog_s > day_s
+
+    def test_fog_contrast_well_below_threshold_still_scores_proportionally_lower(self):
+        """Not a blanket free pass — a fog frame meaningfully MORE degraded
+        than the classification boundary itself still scores worse than one
+        right at the boundary, so real variation within "foggy" still
+        matters."""
+        at_threshold = _scene_quality_score(_condition_with(SceneCondition.FOG_RAIN, contrast_std=30.0))
+        well_below = _scene_quality_score(_condition_with(SceneCondition.FOG_RAIN, contrast_std=10.0))
+        assert well_below < at_threshold
+
+    def test_low_light_night_contrast_reference_is_unchanged(self):
+        """Regression lock: this fix is scoped to FOG_RAIN only.
+        LOW_LIGHT_NIGHT's real measured driver (docs/PERFORMANCE_REPORT.md)
+        is brightness, not contrast, so it still uses the clear-day contrast
+        reference exactly as before this fix."""
+        night_s = _scene_quality_score(_condition_with(SceneCondition.LOW_LIGHT_NIGHT, contrast_std=30.0))
+        day_s = _scene_quality_score(_condition_with(SceneCondition.CLEAR_DAY, contrast_std=30.0))
+        assert night_s == pytest.approx(day_s)
 
 
 class TestHybridEngineTemporalScore:

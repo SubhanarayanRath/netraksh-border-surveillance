@@ -62,11 +62,24 @@ limitation — an out-of-date limitations file is worse than none.
   passing; full suite 211/211). Re-measuring the same real labeled fog candidates against the fixed
   formula raised DETECTED from 0/52 (0%) to 37/52 (71%) — real, substantial, and honestly re-measured,
   not just claimed. Night's numbers are genuinely unchanged (21/51 both before and after) because the
-  night transform never happened to trip `EXCESSIVE_BLUR` in this dataset. **This is a partial fix, not
-  a solved problem** — 29% of genuine crossings under this specific fog intensity are still marked
-  UNCERTAIN; that remaining gap comes from `S` alone (now the only penalty, correctly, but still a real
-  one) and has no further fix applied yet. See `docs/PERFORMANCE_REPORT.md`'s "Reliability Engine
-  behavior under real night/fog conditions" section for the full numbers and before/after comparison.
+  night transform never happened to trip `EXCESSIVE_BLUR` in this dataset.
+  **Second follow-up fix, same real diagnosis pattern:** 71% still left 29% of genuine fog crossings
+  UNCERTAIN, traced to `_scene_quality_score`'s `contrast_score` judging every FOG_RAIN frame against
+  `_SCENE_CONTRAST_GOOD` (60.0) — a clear-day ideal a scene classified FOG_RAIN can never meet, since
+  `contrast_std < FOG_CONTRAST_THRESHOLD` (30.0) is literally the real rule
+  `edge/condition/scene_condition.py`'s `SceneConditionClassifier` already uses to call a scene foggy
+  in the first place. The fix reuses that same, already-existing `FOG_CONTRAST_THRESHOLD` constant as
+  FOG_RAIN's own contrast reference, instead of inventing a new number — a frame right at the real
+  classification boundary now scores full contrast marks; one meaningfully foggier than that still
+  scores proportionally lower, so this isn't a blanket free pass (locked in by
+  `tests/unit/test_reliability.py::TestSceneQualityFogContrastReference`, 4 more new tests; full suite
+  215/215). `LOW_LIGHT_NIGHT`/`CLEAR_DAY`/`GLARE` are untouched — night's real measured driver is
+  brightness, not contrast (confirmed unchanged: 21/51 before and after this fix too). Re-measured
+  result: fog rose further, from 71% to 87% DETECTED (45/52). **This remains a partial fix, not a
+  solved problem** — 13% of genuine crossings under this specific fog intensity are still marked
+  UNCERTAIN, and no further fix has been applied pending real fog footage to calibrate against. See
+  `docs/PERFORMANCE_REPORT.md`'s "Reliability Engine behavior under real night/fog conditions" section
+  for the full numbers and both fixes' before/after comparison.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

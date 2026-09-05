@@ -52,7 +52,13 @@ from __future__ import annotations
 import logging
 import os
 
-from shared.constants import CameraHealthState, DecisionState, HealthReason, SceneCondition
+from shared.constants import (
+    CameraHealthState,
+    DecisionState,
+    FOG_CONTRAST_THRESHOLD,
+    HealthReason,
+    SceneCondition,
+)
 from shared.schemas import CameraHealthReport, ReliabilityDecision, SceneConditionReport
 
 logger = logging.getLogger(__name__)
@@ -75,6 +81,29 @@ RELIABILITY_R_THRESHOLD = float(os.environ.get("RELIABILITY_R_THRESHOLD", "0.75"
 _SCENE_BRIGHTNESS_IDEAL = 128.0
 _SCENE_CONTRAST_GOOD = 60.0
 _SCENE_GLARE_BAD = 0.30
+
+# Real finding this fixes (docs/PERFORMANCE_REPORT.md's "Reliability Engine
+# behavior under real night/fog conditions"): even after the H double-penalty
+# fix above, 29% of genuine fog crossings still missed RELIABILITY_R_THRESHOLD
+# — because contrast_score judged FOG_RAIN frames against _SCENE_CONTRAST_GOOD
+# (60.0), a clear-day ideal. But `contrast_std < FOG_CONTRAST_THRESHOLD` is
+# LITERALLY the real rule SceneConditionClassifier already uses to call a
+# scene FOG_RAIN in the first place (edge/condition/scene_condition.py) — so
+# every frame classified FOG_RAIN is, by definition, already below 60, and
+# judging it against 60 anyway scores it as "badly foggy" even when it is
+# merely "typically foggy for what got it classified as fog at all." This
+# reuses that SAME real, already-existing constant as FOG_RAIN's own
+# contrast reference instead — not a new, unjustified number — so a frame at
+# the actual boundary of "is this foggy" scores a full contrast_score, and a
+# frame foggier than that (which does mean something concretely worse: low
+# contrast well beyond the classification threshold itself) still scores
+# proportionally lower. CLEAR_DAY/GLARE/LOW_LIGHT_NIGHT are unaffected —
+# LOW_LIGHT_NIGHT's real driver measured in this project's data is brightness
+# (contrast_score wasn't what suppressed its DETECTED rate — see
+# docs/PERFORMANCE_REPORT.md), so it keeps the clear-day contrast reference.
+_SCENE_CONTRAST_GOOD_BY_CONDITION = {
+    SceneCondition.FOG_RAIN: FOG_CONTRAST_THRESHOLD,
+}
 
 # Health-quality (H) scoring. FAILED is never looked up here — Gate 1
 # handles it exclusively, before this table would ever be consulted.
@@ -103,11 +132,18 @@ _WEATHER_EXPLAINED_BLUR_CONDITIONS = frozenset({SceneCondition.FOG_RAIN, SceneCo
 def _scene_quality_score(condition_report: SceneConditionReport) -> float:
     """Mode-A heuristic scene-quality score S in [0,1], derived from the same
     raw brightness/contrast/glare signals SceneConditionClassifier already
-    computes. NOT calibrated — see docs/LIMITATIONS.md."""
+    computes. NOT calibrated — see docs/LIMITATIONS.md.
+
+    contrast_score's reference point is per-condition (see
+    _SCENE_CONTRAST_GOOD_BY_CONDITION above) for FOG_RAIN specifically, to
+    avoid judging an inherently-lower-contrast condition against a clear-day
+    ideal it was never going to meet by definition.
+    """
     brightness_score = 1.0 - min(
         abs(condition_report.brightness_mean - _SCENE_BRIGHTNESS_IDEAL) / _SCENE_BRIGHTNESS_IDEAL, 1.0
     )
-    contrast_score = min(condition_report.contrast_std / _SCENE_CONTRAST_GOOD, 1.0)
+    contrast_good = _SCENE_CONTRAST_GOOD_BY_CONDITION.get(condition_report.condition, _SCENE_CONTRAST_GOOD)
+    contrast_score = min(condition_report.contrast_std / contrast_good, 1.0)
     glare_score = 1.0 - min(condition_report.glare_fraction / _SCENE_GLARE_BAD, 1.0)
     return max(0.0, min(1.0, (brightness_score + contrast_score + glare_score) / 3.0))
 
