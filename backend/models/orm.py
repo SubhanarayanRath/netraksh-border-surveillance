@@ -312,3 +312,44 @@ class AuditLog(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True)
 
     user: Mapped[Optional["User"]] = relationship("User", back_populates="audit_logs")
+
+
+# ---------------------------------------------------------------------------
+# PipelineMetricsSnapshot — real edge performance telemetry (architecture v4 §15)
+# ---------------------------------------------------------------------------
+
+class PipelineMetricsSnapshot(Base):
+    """
+    A periodic real performance snapshot from one edge device
+    (edge/instrumentation/metrics.py's PipelineMetrics.summary(), pushed by
+    edge/main.py's _report_metrics()). Before this table existed, this real,
+    already-measured data (perf_counter() latency per stage, measured FPS,
+    real psutil CPU/RSS) was written only to a local JSON file on the edge
+    device and never reached the backend at all — the Performance dashboard
+    page had nothing to show. Same "compute it for real, then actually wire
+    it somewhere" gap this project has closed before (camera health was the
+    same shape of problem).
+
+    Per-stage breakdowns (frames/events) are stored as JSON rather than
+    exploded into individual columns, since the stage set itself is owned by
+    PipelineMetrics.FRAME_STAGES/EVENT_STAGES in edge code — this table
+    shouldn't need a migration if that set ever changes.
+    """
+    __tablename__ = "pipeline_metrics"
+    __table_args__ = (
+        Index("ix_pipeline_metrics_edge_ts", "edge_device_id", "timestamp"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    edge_device_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    uptime_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    fps: Mapped[float] = mapped_column(Float, nullable=False)
+    alerts_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cpu_percent: Mapped[Optional[float]] = mapped_column(Float)
+    rss_mb: Mapped[Optional[float]] = mapped_column(Float)
+    psutil_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    frames_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    events_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    adaptive_gate_json: Mapped[Optional[dict]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

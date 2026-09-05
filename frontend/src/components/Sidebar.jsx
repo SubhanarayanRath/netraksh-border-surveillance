@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Eye, Shield, Map, Activity, Bell } from 'lucide-react';
+import { Eye, Shield, Map, Activity, Bell, Gauge } from 'lucide-react';
 import Logo from './Logo';
 
 export default function Sidebar() {
@@ -58,6 +58,9 @@ export default function Sidebar() {
         </Link>
         <Link to="/cross-command-alerts" className={getClassName("/cross-command-alerts")} title="Cross-Command Alerts" style={{width: '48px', height: '48px'}}>
           <Bell size={22} />
+        </Link>
+        <Link to="/performance" className={getClassName("/performance")} title="Edge Performance" style={{width: '48px', height: '48px'}}>
+          <Gauge size={22} />
         </Link>
         <Link to="/architecture" className={getClassName("/architecture")} title="Architecture" style={{width: '48px', height: '48px'}}>
           <Map size={22} />

@@ -73,9 +73,27 @@ async def broadcast_camera_health(health_data: dict) -> None:
     if not _connected_clients:
         return
     message = json.dumps({
-        "type": "camera_health", 
-        "health": jsonable_encoder(health_data), 
+        "type": "camera_health",
+        "health": jsonable_encoder(health_data),
         "timestamp": datetime.utcnow().isoformat()
+    })
+    disconnected = set()
+    for client in _connected_clients:
+        try:
+            await client.send_text(message)
+        except Exception:
+            disconnected.add(client)
+    _connected_clients.difference_update(disconnected)
+
+
+async def broadcast_metrics(metrics_data: dict) -> None:
+    """Called when a real edge performance snapshot is ingested (POST /system/metrics)."""
+    if not _connected_clients:
+        return
+    message = json.dumps({
+        "type": "pipeline_metrics",
+        "metrics": jsonable_encoder(metrics_data),
+        "timestamp": datetime.utcnow().isoformat(),
     })
     disconnected = set()
     for client in _connected_clients:

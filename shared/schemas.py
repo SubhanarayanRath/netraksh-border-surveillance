@@ -398,3 +398,47 @@ class WSAlertMessage(BaseModel):
     """Pushed over WebSocket to dashboard on new alert."""
     type: str = "new_alert"
     alert: AlertResponse
+
+
+# ---------------------------------------------------------------------------
+# Pipeline performance metrics (architecture v4 §15)
+# ---------------------------------------------------------------------------
+
+class PipelineMetricsReport(BaseModel):
+    """
+    Request body for POST /system/metrics — the real shape
+    edge/instrumentation/metrics.py's PipelineMetrics.summary() already
+    produces, plus edge_device_id/timestamp added at report time
+    (edge/main.py's _report_metrics). `frames`/`events` are the nested
+    per-stage dicts as-is; not re-typed field-by-field here since the
+    stage set is owned by PipelineMetrics.FRAME_STAGES/EVENT_STAGES, not
+    this schema.
+    """
+    edge_device_id: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    uptime_seconds: float
+    fps: float
+    frames: dict
+    events: dict
+    alerts_generated: int = 0
+    cpu_percent: Optional[float] = None
+    rss_mb: Optional[float] = None
+    psutil_available: bool = False
+    adaptive_gate: Optional[dict] = None
+
+
+class PipelineMetricsResponse(BaseModel):
+    edge_device_id: str
+    timestamp: datetime
+    uptime_seconds: float
+    fps: float
+    frames: dict
+    events: dict
+    alerts_generated: int
+    cpu_percent: Optional[float]
+    rss_mb: Optional[float]
+    psutil_available: bool
+    adaptive_gate: Optional[dict] = None
+
+    class Config:
+        from_attributes = True

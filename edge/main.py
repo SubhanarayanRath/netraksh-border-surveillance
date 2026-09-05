@@ -669,6 +669,35 @@ class EdgePipeline:
         )
         self.metrics.dump_json(self._metrics_json_path, extra={"adaptive_gate": gate_stats})
 
+        # Push the same real summary to the backend (POST /system/metrics),
+        # independent of local disk persistence above — before this, the
+        # summary was written only to a local JSON file and never reached
+        # the backend at all, so the Performance dashboard page had nothing
+        # to show. Best-effort, same posture as _report_camera_health: a
+        # failed POST here must never interrupt the frame loop, and this is
+        # NOT routed through the offline sync queue — it's a heartbeat, not
+        # evidence.
+        try:
+            import httpx
+            httpx.post(
+                f"{self.sync_client.backend_url}/system/metrics",
+                json={
+                    "edge_device_id": self.camera_id,
+                    "uptime_seconds": summary["uptime_seconds"],
+                    "fps": summary["fps"],
+                    "frames": summary["frames"],
+                    "events": summary["events"],
+                    "alerts_generated": summary["alerts_generated"],
+                    "cpu_percent": summary["cpu_percent"],
+                    "rss_mb": summary["rss_mb"],
+                    "psutil_available": summary["psutil_available"],
+                    "adaptive_gate": gate_stats,
+                },
+                timeout=3.0,
+            )
+        except Exception as exc:
+            logger.debug(f"[Metrics] Backend report failed (non-fatal): {exc}")
+
     def stop(self) -> None:
         self._running = False
 

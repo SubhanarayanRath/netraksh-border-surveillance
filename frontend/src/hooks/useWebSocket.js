@@ -4,10 +4,11 @@ export default function useWebSocket(url) {
   const [events, setEvents] = useState([]);
   const [health, setHealth] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [metrics, setMetrics] = useState({});
 
   useEffect(() => {
     const ws = new WebSocket(url);
-    
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -17,6 +18,8 @@ export default function useWebSocket(url) {
           setHealth(prev => ({ ...prev, [data.health.camera_id]: data.health }));
         } else if (data.type === 'new_alert') {
           setAlerts(prev => [data.alert, ...prev]);
+        } else if (data.type === 'pipeline_metrics') {
+          setMetrics(prev => ({ ...prev, [data.metrics.edge_device_id]: data.metrics }));
         }
       } catch (err) {
         console.error("WebSocket parsing error", err);
@@ -28,5 +31,5 @@ export default function useWebSocket(url) {
     };
   }, [url]);
 
-  return { events, health, alerts };
+  return { events, health, alerts, metrics };
 }

@@ -1396,6 +1396,63 @@ camera health cards still render correctly, nothing else was disturbed by the cl
 
 ---
 
+## Edge Performance Dashboard — New Feature
+
+Prompted by "what more advanced features... for the SIH" → "Start on the Performance
+dashboard." `edge/instrumentation/metrics.py`'s `PipelineMetrics` has measured real
+`perf_counter()` per-stage latency, real measured FPS, and real `psutil` CPU/RSS every
+frame since early in this project — but it only ever wrote to a local JSON file on the edge
+device (`edge/data/metrics_*.json`). Nothing exposed this anywhere; the same shape of gap
+Camera Health had before this engagement closed it.
+
+**What changed:**
+- `backend/models/orm.py`: new `PipelineMetricsSnapshot` table — one real snapshot per
+  edge-device report. Per-stage breakdowns (`frames`/`events`) are stored as `JSON` columns
+  rather than exploded field-by-field, since that stage set is owned by
+  `PipelineMetrics.FRAME_STAGES`/`EVENT_STAGES` in edge code, not this table.
+- `shared/schemas.py`: `PipelineMetricsReport` (ingest) / `PipelineMetricsResponse` (read) —
+  the exact shape `PipelineMetrics.summary()` already produces, not reinvented.
+- `backend/api/system.py`: `POST /system/metrics` (real ingestion, same MVP no-auth posture
+  as `POST /events`/`POST /cameras/{id}/health`), `GET /system/metrics` (latest snapshot per
+  distinct edge device — same "one row per known X" shape as `GET /cameras`), and
+  `GET /system/metrics/history` (recent snapshots for one device, for a future trend line).
+- `backend/api/websocket.py`: new `broadcast_metrics()`, same pattern as
+  `broadcast_camera_health`.
+- `edge/main.py`: `_report_metrics()` (previously local-JSON-only) now also POSTs the same
+  real summary to the backend — best-effort, same failure posture as
+  `_report_camera_health()` (never interrupts the frame loop; not routed through the
+  offline sync queue, since this is a heartbeat, not evidence).
+- `frontend/src/pages/Performance.jsx` (new page, `/performance` route, new sidebar icon):
+  fetches `GET /system/metrics` on load, merges live WS `pipeline_metrics` pushes, shows
+  real FPS/CPU/RSS tiles, real per-stage latency tables (mean/p95/max, with real sample
+  counts), and real Adaptive Compute Gate skip-ratio stats — with an honest empty state
+  ("No edge device has reported... yet") rather than ever fabricating a number, matching
+  every other page's convention. `frontend/src/hooks/useWebSocket.js` gained a `metrics`
+  slice for the new message type.
+
+**Verified live, every state, not just the happy path:** POSTed a real-shaped synthetic
+snapshot (the exact structure `PipelineMetrics.summary()` produces) and confirmed
+`GET /system/metrics` round-trips it exactly; confirmed the auth-required state (cleared
+localStorage, reloaded, got the login form); confirmed the honest empty state (no rows);
+confirmed the live WS path specifically — POSTed a second update while the page was open
+and watched FPS/CPU/uptime change in the browser with no reload, not just checked the
+network log. Test data cleaned up from the local database afterward.
+
+**What did NOT change:** no change to how `PipelineMetrics` itself measures anything —
+this is purely a "connect the already-real data to somewhere it can be seen" change, same
+category as the Camera Health wiring.
+
+**Tests:** 207/207 passing (no existing test broken by the new table/columns — this is
+purely additive; `Base.metadata.create_all()` picks up the new table on next boot with no
+migration script needed, since it's a new table, not a new column on an existing one). No
+new backend HTTP-level test added (same pre-existing, documented gap as every other
+endpoint in this codebase — see `docs/LIMITATIONS.md` §2); verified instead via the live
+POST/GET/WS sequence above, this project's established method for exactly this kind of
+check. Frontend: `vite build` (zero errors), `oxlint` (two pre-existing warning patterns
+only, no new class introduced).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
