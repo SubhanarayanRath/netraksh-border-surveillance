@@ -49,6 +49,14 @@ def _migrate_add_missing_columns() -> None:
         logger.info("[DB] Migrating cameras table: adding evidence_key_wrapped column")
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE cameras ADD COLUMN evidence_key_wrapped TEXT"))
+    # latitude/longitude — added for the real geospatial map (previously the
+    # Alerts page's map was pure decoration: no camera anywhere had real
+    # coordinates). Same guard pattern as evidence_key_wrapped above.
+    if "latitude" not in existing_columns:
+        logger.info("[DB] Migrating cameras table: adding latitude/longitude columns")
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE cameras ADD COLUMN latitude FLOAT"))
+            conn.execute(text("ALTER TABLE cameras ADD COLUMN longitude FLOAT"))
 
 
 def init_db() -> None:

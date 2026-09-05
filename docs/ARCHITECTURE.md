@@ -1487,6 +1487,79 @@ class).
 
 ---
 
+## Real Geospatial Map + a Systemic Layout Bug Found Building It
+
+Prompted by "Start on the real geospatial map." The Alerts page's map used to be pure
+decoration: a static background image with 3 hardcoded pixel positions named "SECTOR 7" /
+"HQ" / "NODE C", tied to nothing real — no camera anywhere in this project had real
+coordinates (no `latitude`/`longitude` field existed at all).
+
+**What changed:**
+- `backend/models/orm.py`: `Camera` gained `latitude`/`longitude` (`Optional[float]`), added
+  to `_migrate_add_missing_columns()` (`backend/database/session.py`) the same way
+  `evidence_key_wrapped` was — a real `ALTER TABLE` guard, not a fresh-table-only change,
+  verified against the real local dev database's existing camera rows (no crash, correctly
+  `null` until set).
+- `shared/schemas.py`: `CameraStatusResponse` widened with the same two fields;
+  `CameraLocationUpdate` for the new endpoint below.
+- `backend/api/cameras.py`: `PUT /cameras/{id}/location` (ADMIN) — real coordinate
+  registration. `POST /cameras` (register) also accepts them now.
+- `backend/main.py`'s `_seed_demo_data`: the two demo cameras placed near the real,
+  publicly-known Attari-Wagah border checkpoint (Punjab) for geographic plausibility —
+  disclosed clearly in code comments as NOT real deployed camera positions or an implied
+  actual MHA installation, same spirit as every other seed script in this project.
+- `frontend/src/components/TacticalMap.jsx` (new): a real Leaflet map (OpenStreetMap
+  tiles), plotting every camera with real coordinates, colored by that camera's actual
+  `health_state`, with a pulsing ring on any camera currently carrying an unacknowledged
+  real alert — not a separately-invented pin. Vanilla Leaflet, not `react-leaflet`: this
+  project is on React 19, which `react-leaflet` doesn't yet reliably support.
+- `frontend/package.json`: added `leaflet` (real npm dependency, not a CDN script — this is
+  a normal Vite app, not a sandboxed Artifact).
+
+**A real Leaflet initialization bug, found live, not assumed:** the map rendered into only
+a fraction of its container on first load (a visible black gap below the tiles). Leaflet
+reads its container's size once, at construction — the flex-sized panel around it hadn't
+finished settling by then. Fixed with a `ResizeObserver` on the container calling
+`map.invalidateSize()`, plus one delayed call for the very first paint.
+
+**A much bigger, systemic bug found in the process, affecting far more than the map:**
+building this page's 2-column layout (`grid grid-cols-1 lg:grid-cols-2`) revealed that
+`.grid`, every `grid-cols-*`, and every responsive breakpoint class (`md:`, `lg:`, `xl:`)
+used throughout this frontend do **nothing** — this project has no Tailwind compiler, only
+a small hand-written CSS subset (`index.css`), and none of those classes were ever defined
+in it. Confirmed via `getComputedStyle` (`gridTemplateColumns` came back `"none"`), not
+assumed from a screenshot — the exact same root cause as the earlier `text-center` bug in
+`Sidebar.jsx`. Grepped the whole frontend for every other `grid`/`grid-cols-*` usage and
+found **6 more**, across `Health.jsx` (the camera-cards grid and each card's own FPS/blur/
+exposure/sync 2×2), `Evidence.jsx` (the metadata 2×2), `Dashboard.jsx` (Gate 3's D/T/S/H
+4-up and the DETECTED/UNCERTAIN/ABSTAIN 3-up), and `Performance.jsx`'s stat tiles — every
+one of them had been silently collapsing to a single column this whole time. Fixed all 6
+the same way: real CSS Grid via inline `style`, using `repeat(auto-fill, minmax(...))` in
+place of the (non-functional) responsive breakpoint classes — genuine responsive column
+count with zero media queries needed at all.
+
+**Verified, every one, not just the map:** live screenshots of Camera Health (cards now
+genuinely side-by-side, each card's stat grid genuinely 2×2), Evidence (metadata genuinely
+2×2), Dashboard (posted a real event and confirmed Gate 3's D/T/S/H render as 4 real
+columns, and the status-pill row as 3 real columns), and Performance (4 real stat-tile
+columns) — before-and-after, not a single one taken on faith. Real coordinates set on the
+local dev database's actual existing cameras (`edge-001`, `CAM-07`) via the new endpoint,
+confirmed the map plots them at the right position with a working popup showing real
+name/location/health, cleaned up afterward.
+
+**What did NOT change:** no other CSS classes were audited or touched — only the 7 total
+`grid`-family usages found by an exhaustive grep. Whether the same "utility class name
+looks like Tailwind but isn't backed by anything" pattern affects other class families
+(`text-*` alignment/size variants beyond the one `text-center` case already found, spacing
+utilities beyond `gap-*` which was confirmed real, etc.) was not investigated — flagged in
+`docs/LIMITATIONS.md`, not silently assumed fine.
+
+**Tests:** 207/207 passing (backend additive only — new columns via the established
+migration guard, no existing behavior changed). `vite build` clean, `oxlint` clean (same
+pre-existing warning patterns throughout, no new class introduced by any of the 7 fixes).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

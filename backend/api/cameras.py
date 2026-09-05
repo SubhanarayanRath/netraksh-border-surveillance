@@ -6,6 +6,7 @@ POST /cameras          — register camera (ADMIN)
 POST /cameras/{id}/health       — periodic real health telemetry from the edge
 PUT  /cameras/{id}/public-key   — upload edge device public key (ADMIN)
 PUT  /cameras/{id}/evidence-key — upload edge device evidence-encryption key (ADMIN)
+PUT  /cameras/{id}/location     — set real lat/lon for the geospatial map (ADMIN)
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from backend.database.session import get_db
 from backend.models.orm import Camera, CameraHealth
 from backend.security.auth import require_admin, require_any_role
 from backend.security.evidence_key_wrap import wrap_key
-from shared.schemas import CameraHealthReport, CameraStatusResponse
+from shared.schemas import CameraHealthReport, CameraLocationUpdate, CameraStatusResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cameras", tags=["cameras"])
@@ -116,6 +117,8 @@ async def register_camera(
         location=payload.get("location", "Unknown"),
         rtsp_url=payload.get("rtsp_url"),
         owning_command_id=payload.get("owning_command_id", "COMMAND_A"),
+        latitude=payload.get("latitude"),
+        longitude=payload.get("longitude"),
     )
     db.add(cam)
     db.commit()
@@ -182,6 +185,28 @@ async def upload_evidence_key(
     return {"status": "ok", "camera_id": camera_id}
 
 
+@router.put("/{camera_id}/location", status_code=status.HTTP_200_OK)
+async def update_camera_location(
+    camera_id: str,
+    payload: CameraLocationUpdate,
+    db: Session = Depends(get_db),
+    _admin = Depends(require_admin),
+):
+    """
+    Set a camera's real latitude/longitude — what the Alerts page's
+    geospatial map actually plots. Before this endpoint existed, no camera
+    anywhere had real coordinates and that map was pure decoration (a
+    static illustrative image with hardcoded pin positions).
+    """
+    cam = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    cam.latitude = payload.latitude
+    cam.longitude = payload.longitude
+    db.commit()
+    return {"status": "ok", "camera_id": camera_id, "latitude": cam.latitude, "longitude": cam.longitude}
+
+
 def _camera_to_response(cam: Camera, db: Session) -> CameraStatusResponse:
     latest_health = (
         db.query(CameraHealth)
@@ -201,4 +226,6 @@ def _camera_to_response(cam: Camera, db: Session) -> CameraStatusResponse:
         exposure_clip_fraction=latest_health.exposure_clip_fraction if latest_health else None,
         fps_actual=latest_health.fps_actual if latest_health else None,
         drift_seconds=latest_health.drift_seconds if latest_health else None,
+        latitude=cam.latitude,
+        longitude=cam.longitude,
     )

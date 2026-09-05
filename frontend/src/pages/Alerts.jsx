@@ -3,6 +3,7 @@ import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle } from 'lucide-rea
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
 import LoginPrompt from '../components/LoginPrompt';
+import TacticalMap from '../components/TacticalMap';
 import { parseUtc } from '../utils/time';
 
 // Real alert data has no free-text title/description field anywhere in the
@@ -110,8 +111,19 @@ export default function Alerts() {
       )}
 
       {status !== 'auth-required' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-grow">
-          <div className="flex flex-col gap-4 overflow-y-auto pr-2">
+        // NOT `grid grid-cols-1 lg:grid-cols-2` — found while building the
+        // real map that neither class does anything in this project: there
+        // is no Tailwind compiler here, only a small hand-written CSS
+        // subset (index.css), and `.grid`/`grid-cols-*`/`@media` breakpoints
+        // were never defined in it at all (confirmed via
+        // getComputedStyle — gridTemplateColumns came back "none"). Same
+        // root cause as the earlier `text-center` bug (Sidebar.jsx). This
+        // one specific layout is fixed with real, working flex classes;
+        // every other `grid`/`grid-cols-*` usage elsewhere in this codebase
+        // has the same latent bug and is not touched here — see
+        // docs/LIMITATIONS.md.
+        <div className="flex gap-6 flex-grow" style={{ minHeight: 0 }}>
+          <div className="flex flex-col gap-4 overflow-y-auto pr-2" style={{ flex: '1 1 0%', minWidth: 0 }}>
             {status === 'loading' && <div className="text-muted text-sm text-center mt-4">Loading real alerts…</div>}
             {status === 'error' && <div className="text-danger text-sm text-center mt-4">Could not reach the backend.</div>}
             {realAlerts.length === 0 && status === 'ready' && (
@@ -158,34 +170,12 @@ export default function Alerts() {
             ))}
           </div>
 
-          <div className="bg-panel border rounded p-2 relative h-full min-h-[400px]">
-            {/* Map view is a fixed illustrative layout, not real geodata — there is
-                no lat/lon or real-world coordinate model anywhere in this project
-                (zones are normalized 0-1 within a single camera's frame, not a
-                map). Left as a clearly decorative tactical overview. */}
-            <div className="w-full h-full bg-black rounded relative overflow-hidden" style={{ backgroundImage: 'url(/mock-map.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', filter: 'grayscale(100%) sepia(20%) hue-rotate(180deg) brightness(80%)' }}>
-              <div className="absolute top-0 left-0 w-full h-full bg-[rgba(15,23,42,0.7)]"></div>
-
-              <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(var(--border-color) 1px, transparent 1px), linear-gradient(90deg, var(--border-color) 1px, transparent 1px)', backgroundSize: '50px 50px' }}></div>
-
-              <div className="absolute top-1/4 left-1/4 flex flex-col items-center group cursor-pointer">
-                <div className="w-4 h-4 bg-danger rounded-full animate-ping absolute"></div>
-                <div className="w-4 h-4 bg-danger border-2 border-white rounded-full relative z-10 shadow-[0_0_10px_rgba(239,68,68,1)]"></div>
-                <span className="text-[10px] font-display text-white mt-1 bg-dark px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">SECTOR 7</span>
-              </div>
-
-              <div className="absolute top-1/2 left-2/3 flex flex-col items-center group cursor-pointer">
-                <div className="w-3 h-3 bg-ok border border-white rounded-full relative z-10 shadow-[0_0_5px_rgba(74,222,128,1)]"></div>
-                <span className="text-[10px] font-display text-white mt-1 bg-dark px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">HQ</span>
-              </div>
-
-              <div className="absolute bottom-1/4 right-1/3 flex flex-col items-center group cursor-pointer">
-                <div className="w-3 h-3 bg-ok border border-white rounded-full relative z-10 shadow-[0_0_5px_rgba(74,222,128,1)]"></div>
-                <span className="text-[10px] font-display text-white mt-1 bg-dark px-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">NODE C</span>
-              </div>
-
-              <div className="absolute bottom-4 left-4 text-xs font-display text-muted bg-dark border rounded px-2 py-1">TACTICAL OVERVIEW (illustrative)</div>
-            </div>
+          <div className="bg-panel border rounded p-2 relative h-full min-h-[400px]" style={{ flex: '1 1 0%', minWidth: 0 }}>
+            {/* Real geospatial map — replaces what used to be a fully
+                decorative <div> (static background image, 3 hardcoded pixel
+                positions named "SECTOR 7"/"HQ"/"NODE C", tied to nothing
+                real). See components/TacticalMap.jsx. */}
+            <TacticalMap alerts={realAlerts} />
           </div>
         </div>
       )}

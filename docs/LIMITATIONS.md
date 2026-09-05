@@ -103,6 +103,22 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 2. Implemented, but scoped narrower than it might sound
 
+- **This project has no Tailwind compiler — only a small hand-written CSS subset
+  (`frontend/src/index.css`) — and several class names that look like Tailwind utilities
+  throughout the frontend do nothing at all**, because they were never defined in that
+  file. Confirmed (not assumed) via `getComputedStyle`: `.grid`, every `grid-cols-*`, and
+  every responsive breakpoint prefix (`md:`, `lg:`, `xl:` — there are no `@media` rules in
+  this file at all) silently collapsed every such layout to a single column. Found while
+  building the real geospatial map (`docs/ARCHITECTURE.md`'s "Real Geospatial Map" entry)
+  and fixed everywhere an exhaustive grep found it: `Alerts.jsx`, `Health.jsx` (twice),
+  `Evidence.jsx`, `Dashboard.jsx` (twice), `Performance.jsx` — 7 total, all now real CSS
+  Grid via inline `style`. The identical root cause as the earlier `text-center` bug
+  (`Sidebar.jsx`, see the "Sidebar Logo Label Overflow Fix" entry). **Not investigated**:
+  whether other class families beyond `grid`/`grid-cols-*`/breakpoint prefixes and the one
+  `text-center` case have the same "looks real, isn't" problem — `gap-*` was checked and
+  confirmed genuinely defined, but the rest of the class list in this codebase has not been
+  systematically audited against `index.css`. Treat any layout that looks visually "off" as
+  worth checking this way before assuming it's a different bug.
 - **The header's Sync Status panel now honestly calls the real `GET /system/verify-chain`
   for its "Chain Integrity" line** (previously a hardcoded "Chain Integrity OK" regardless
   of any real state) — this means it shows "N block(s) failed integrity verification. Chain

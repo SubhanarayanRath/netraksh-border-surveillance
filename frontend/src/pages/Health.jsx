@@ -103,7 +103,10 @@ export default function Health() {
             <span className="text-xs text-muted">{cam.location}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-xs font-display text-muted uppercase">
+          {/* Not `grid grid-cols-2` (a class that does nothing in this
+              project — see docs/LIMITATIONS.md's "grid classes are inert"
+              entry) — real CSS Grid via inline style instead. */}
+          <div className="text-xs font-display text-muted uppercase" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', rowGap: '1rem', columnGap: '0.5rem' }}>
             <div className="flex-col">
               <span>FPS {cam.fps_declared ? `(of ${cam.fps_declared})` : ''}</span>
               <span className="text-main mt-1 block">{cam.fps_actual != null ? cam.fps_actual.toFixed(1) : '-'}</span>
@@ -213,7 +216,13 @@ export default function Health() {
           ) : visibleCameras.length === 0 ? (
             <div className="text-muted text-sm text-center mt-8">No cameras need attention right now.</div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            // Not `grid-cols-1 md:... lg:... xl:...` — those breakpoint
+            // classes don't exist in this project's CSS either (no
+            // @media rules at all — see docs/LIMITATIONS.md), so this
+            // never responded to viewport width. `repeat(auto-fill, ...)`
+            // gives real responsive column count with zero media queries
+            // needed.
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.5rem' }}>
               {visibleCameras.map((cam) => <CameraCard key={cam.camera_id} cam={cam} />)}
             </div>
           )}

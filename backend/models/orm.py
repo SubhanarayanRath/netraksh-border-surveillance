@@ -47,6 +47,12 @@ class Camera(Base):
     # AES-256 evidence-encryption key (architecture v4 §10), wrapped via
     # backend/security/evidence_key_wrap.py before storage — never the raw key.
     evidence_key_wrapped: Mapped[Optional[str]] = mapped_column(Text)
+    # Real coordinates for the geospatial map (Alerts page) — Optional
+    # because most cameras registered before this existed have neither;
+    # the map honestly omits a camera with no location rather than
+    # guessing one.
+    latitude: Mapped[Optional[float]] = mapped_column(Float)
+    longitude: Mapped[Optional[float]] = mapped_column(Float)
     owning_command_id: Mapped[str] = mapped_column(String(64), nullable=False, default="COMMAND_A")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

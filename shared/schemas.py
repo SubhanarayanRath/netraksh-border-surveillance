@@ -357,10 +357,21 @@ class CameraStatusResponse(BaseModel):
     # instead of the mock BLUR INDEX / EXPOSURE fields it had before.
     blur_score: Optional[float]
     exposure_clip_fraction: Optional[float]
+    # Real coordinates for the geospatial map — None for any camera
+    # registered before this existed, or never given a location. The map
+    # honestly omits such a camera rather than guessing a position.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     class Config:
         use_enum_values = True
         from_attributes = True
+
+
+class CameraLocationUpdate(BaseModel):
+    """Request body for PUT /cameras/{id}/location."""
+    latitude: float = Field(ge=-90.0, le=90.0)
+    longitude: float = Field(ge=-180.0, le=180.0)
 
 
 class SyncStatusResponse(BaseModel):

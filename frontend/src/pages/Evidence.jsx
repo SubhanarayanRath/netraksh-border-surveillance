@@ -207,7 +207,8 @@ export default function Evidence() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-y-6 gap-x-4 mb-8">
+              {/* Not `grid grid-cols-2` — inert class, see docs/LIMITATIONS.md */}
+              <div className="mb-8" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', rowGap: '1.5rem', columnGap: '1rem' }}>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">CAPTURE TIME</span>
                   <span className="text-sm font-body">{selectedEvent ? parseUtc(selectedEvent.timestamp).toISOString().replace('T', ' ') : 'N/A'}</span>

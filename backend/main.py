@@ -57,6 +57,12 @@ def _seed_demo_data(db) -> None:
 
     logger.info("Seeding demo camera and zone data...")
 
+    # Coordinates placed near the real Attari-Wagah border checkpoint,
+    # Punjab (a real, publicly-known India-Pakistan border crossing) for
+    # geographic plausibility on the geospatial map — these are NOT real
+    # deployed camera positions or an implied actual MHA installation,
+    # same "realistic but clearly a demo" spirit as the rest of this
+    # project's seed data (e.g. scripts/seed_demo_events.py).
     # Command A — main camera
     cam_a = Camera(
         id="cam-border-01",
@@ -64,6 +70,8 @@ def _seed_demo_data(db) -> None:
         location="Sector 7, Border Post Alpha",
         rtsp_url=None,
         owning_command_id="COMMAND_A",
+        latitude=31.6050,
+        longitude=74.5700,
     )
     cam_b = Camera(
         id="cam-checkpoint-01",
@@ -71,6 +79,8 @@ def _seed_demo_data(db) -> None:
         location="Main checkpoint, Sector 7",
         rtsp_url=None,
         owning_command_id="COMMAND_A",
+        latitude=31.6025,
+        longitude=74.5745,
     )
     db.add_all([cam_a, cam_b])
     db.flush()

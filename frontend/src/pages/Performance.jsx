@@ -97,7 +97,10 @@ export default function Performance() {
         <Gauge size={24} className="text-muted" />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Not `grid-cols-2 md:grid-cols-4` — those breakpoint classes don't
+          exist in this project's CSS (see docs/LIMITATIONS.md); auto-fill
+          gives real responsive columns with no media query needed. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
         <StatTile icon={Zap} label="Measured FPS" value={m.fps.toFixed(1)} sub="rolling window, not declared rate" />
         {/* CPU and RSS gate independently on their own field being non-null,
             not jointly on `psutil_available` — a single end-of-run CPU%

@@ -227,7 +227,8 @@ export default function Dashboard() {
                 stats={
                   parsed?.kind === 'scored' ? (
                     <div className="flex-col w-full">
-                      <div className="grid grid-cols-4 gap-2 w-full mb-2">
+                      {/* Not `grid grid-cols-4` — inert class, see docs/LIMITATIONS.md */}
+                      <div className="w-full mb-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                         {[
                           ['D', parsed.d], ['T', parsed.t], ['S', parsed.s], ['H', parsed.h],
                         ].map(([label, value]) => (
@@ -278,7 +279,8 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          {/* Not `grid grid-cols-3` — inert class, see docs/LIMITATIONS.md */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
             <StatusPill 
               title="DETECTED" desc="Evidence Cryptographically Verified" 
               type="detected" active={latestEvent?.decision_state === 'DETECTED'} />
