@@ -365,6 +365,24 @@ limitation — an out-of-date limitations file is worse than none.
   `frozen_stream` override (a real, separate, previously-documented finding) still dominates that
   dataset's low candidate yield, unaffected by this fix. This is now a real, complete, verified fix —
   not "future work" — for the specific fog+glare compound blur problem it targets.
+  **The `night_fog_glare` yield collapse itself was then tested with a milder triple-compound
+  intensity, the same way fog/night/glare's own residuals were validated with `_mild` variants.**
+  `--synthetic-condition night_fog_glare_mild` uses `night_mild`'s lighter darkening (×0.45 vs ×0.28),
+  a milder haze blend toward a brighter gray (70 vs 45, blend 0.65/0.35 vs 0.5/0.5), a smaller glow
+  blur kernel (15×15 vs 21×21) — and, the change expected to matter most, DROPS the extra whole-frame
+  final blur entirely (the original's stacking of two Gaussian blurs plus a fully static glow overlay
+  was the diagnosed cause of the frozen-frame collapse). Checked before the real collection: frame-to-
+  frame variance across the first 260 frames stayed above the real `FROZEN_FRAME_VARIANCE_THRESHOLD`
+  (5.0) on EVERY frame (min ≈7.3), versus 96% below threshold for the original — confirming the
+  frozen-frame collapse really was this specific transform's severity, not an inherent property of any
+  triple-compound scene. All 52 real candidates manually reviewed — zero false positives, as always.
+  **Real result: candidate yield recovered from 3 to 52** (the same order of magnitude as every
+  single/pairwise-condition dataset this session), and **DETECTED reached 92% (48/52)** — `H=1.0`
+  across all candidates (the region-aware contrast fix correctly firing, `contrast_std_excluding_glare
+  ≈18-19`, genuinely below `FOG_CONTRAST_THRESHOLD`), confirming both the Gate-1 and blur-exemption
+  fixes generalize correctly to this milder triple-compound case too. The 4 remaining residuals show
+  the same genuine, moderate `D`/`T` pattern (no floor, `H`=1.0, `S`≈0.72 for all) as every other
+  residual this session — real evidence-based uncertainty, not a further bug.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

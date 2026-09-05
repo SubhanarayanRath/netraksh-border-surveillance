@@ -302,6 +302,40 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         glow_mask = cv2.GaussianBlur(glow_mask, (21, 21), 0)
         glow = np.stack([glow_mask] * 3, axis=-1).astype(np.float32)
         return np.clip(foggy.astype(np.float32) + glow, 0, 255).astype(np.uint8)
+    if condition_sim == "night_fog_glare_mild":
+        # A DELIBERATELY MILDER triple compound, added to test a real
+        # hypothesis the same way fog_mild/glare_mild/night_mild did for
+        # their single-condition residuals (docs/LIMITATIONS.md): was
+        # night_fog_glare's severe candidate-yield collapse (only 3 real
+        # candidates, from Gate 1's frozen_stream override firing on 96% of
+        # frames) an inherent property of ANY triple-compound scene, or
+        # specifically a side effect of THIS transform's severity (stacking
+        # two Gaussian blurs, a flat haze blend, and a fully static glow
+        # overlay)? This variant uses night_mild's lighter darkening
+        # (x0.45 vs x0.28), a milder haze blend toward a brighter gray (70
+        # vs 45, blend 0.65/0.35 vs 0.5/0.5), a smaller glow blur kernel
+        # (15x15 vs 21x21), and — the change expected to matter most —
+        # DROPS the extra whole-frame final blur entirely (the glow's own
+        # blur already gives it a soft edge; night_fog_glare's additional
+        # full-frame blur was the main suspect for suppressing real
+        # frame-to-frame motion signal). Empirically checked BEFORE the real
+        # collection (5 frames spanning the whole video): glare_fraction≈0.166
+        # (still comfortably past the real 0.15 cutoff, classifying GLARE)
+        # — and, checked the same way as night_fog_glare's original
+        # instrumentation, frame-to-frame variance across the first 260
+        # frames stayed above the real FROZEN_FRAME_VARIANCE_THRESHOLD (5.0)
+        # on EVERY frame (min ≈7.3, vs the original's 96% below threshold).
+        darkened = frame.astype(np.float32) * 0.45
+        noise = rng.normal(0, 6.0, darkened.shape)
+        dark = np.clip(darkened + noise, 0, 255).astype(np.uint8)
+        haze_color = np.full_like(dark, 70)
+        blended = cv2.addWeighted(dark, 0.65, haze_color, 0.35, 0)
+        h, w = frame.shape[:2]
+        glow_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(glow_mask, (150, 120), 160, 255, -1)
+        glow_mask = cv2.GaussianBlur(glow_mask, (15, 15), 0)
+        glow = np.stack([glow_mask] * 3, axis=-1).astype(np.float32)
+        return np.clip(blended.astype(np.float32) + glow, 0, 255).astype(np.uint8)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -323,7 +357,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog", "night_glare", "night_fog_glare", "fog_glare"], default="none",
+        "--synthetic-condition", choices=["none", "night", "night_mild", "fog", "fog_mild", "glare", "glare_mild", "night_fog", "night_glare", "night_fog_glare", "fog_glare", "night_fog_glare_mild"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",

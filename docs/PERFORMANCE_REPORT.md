@@ -479,6 +479,32 @@ meaningful; Gate 1's `frozen_stream` override (a separate, previously-documented
 dominates that dataset's low candidate yield, unaffected by this fix. This is now a real, complete,
 verified fix for the fog+glare compound blur problem it targets — not future work.
 
+## night_fog_glare's yield collapse, validated with a milder triple-compound intensity
+
+The same milder-intensity validation applied to fog/night/glare's own residuals was applied to
+`night_fog_glare`'s severe candidate-yield collapse. `--synthetic-condition night_fog_glare_mild` uses
+`night_mild`'s lighter darkening (×0.45 vs ×0.28), a milder haze blend (70/0.65 vs 45/0.5), a smaller
+glow blur kernel (15×15 vs 21×21) — and drops the extra whole-frame final blur entirely, the change
+expected to matter most (stacking two Gaussian blurs plus a fully static glow overlay was the
+diagnosed cause of the original frozen-frame collapse).
+
+Checked before the real collection: frame-to-frame variance across the first 260 frames stayed above
+`FROZEN_FRAME_VARIANCE_THRESHOLD` (5.0) on every single frame (min ≈7.3), versus 96% below threshold
+for the original — confirming the frozen-frame collapse really was this specific transform's severity,
+not an inherent property of any triple-compound scene. All 52 real candidates reviewed — zero false
+positives.
+
+| | Candidates formed | DETECTED |
+|---|---|---|
+| `night_fog_glare` (original intensity) | 3 | 1/3 (33%) |
+| `night_fog_glare_mild` | 52 | 48/52 (92%) |
+
+Candidate yield recovered to the same order of magnitude as every other dataset this session, and
+DETECTED reached 92% with `H=1.0` across all candidates — confirming both the Gate-1 and blur-exemption
+fixes generalize correctly to this milder triple-compound case too. The 4 remaining residuals show the
+same genuine, moderate `D`/`T` pattern as every other residual this session — real evidence-based
+uncertainty, not a further bug.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated
