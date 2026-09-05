@@ -314,11 +314,31 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   `BRIGHTNESS_NIGHT_THRESHOLD`) is a genuinely new, hand-picked heuristic — justified by a real
   physical property (a non-negative pixel distribution capped near a low mean can't have much spread
   without clipping), not a reused classification-boundary constant. That raised night further, to
-  39/51 (76%). See `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and
-  `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after of all four fixes.
-  `D/T/S/H`'s hand-picked *weight values* themselves remain unchanged — these fixed how `H` and `S` are
-  computed, not the weights applied to them — pending real labeled data with actual false positives to
-  fit against.
+  39/51 (76%). **A fifth fix, found while investigating why 3/52 DAYTIME crossings still missed
+  threshold despite S≈0.92 and H=1.0 (no scene/health issue at all), turned out to be a real,
+  previously-shipped production bug — not a calibration-side issue like the four above.**
+  `edge/temporal/track_features.py`'s `TrackFeatureTracker` only ever had its per-track `_first_seen`
+  bookkeeping registered inside `compute()` — and both `edge/main.py` and
+  `scripts/collect_calibration_data.py` only ever call `compute()` from an EVENT-triggered branch (a
+  fence-crossing handler, which fires once per track at the crossing transition). That means
+  `_first_seen[track_id]` got set at the moment of a track's first qualifying event, not its real
+  first-observed frame — so `age_seconds` was **always 0.0** on that first (and often only) call,
+  regardless of how long the track had genuinely already been tracked (measured directly: the 3
+  daytime candidates each had 34-50 real trajectory points — 1.4-2 real seconds of prior tracking —
+  yet `T_age_score` was exactly `0.0` for all three). The fix: a new `TrackFeatureTracker.observe()`
+  method, called unconditionally for every active track every frame in both `edge/main.py` and the
+  collection script — independent of whether any rule event fires that frame — so age is registered
+  as soon as a track is truly first seen (4 new tests,
+  `tests/unit/test_track_features.py::TestObserveFixesEventTriggeredAgeZeroing`; full suite
+  227/227). Re-measured result, across ALL THREE conditions at once (this bug was condition-
+  independent): daytime rose from 49/52 (94%) to **52/52 (100%)**; night from 39/51 (76%) to
+  **47/51 (92%)**; fog from 45/52 (87%) to **49/52 (94%)** — by a wide margin the largest single fix
+  this session, since it corrects a genuine defect in the real, deployed edge pipeline itself, not
+  just a calibration-script measurement. See `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry
+  and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest before/after of all five
+  fixes. `D/T/S/H`'s hand-picked *weight values* themselves remain unchanged — these fixed how `H`,
+  `S`, and now `T` are computed, not the weights applied to them — pending real labeled data with
+  actual false positives to fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating

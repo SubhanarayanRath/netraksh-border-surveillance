@@ -35,6 +35,21 @@ and every snapshot say plainly that a synthetic condition was applied, so
 this is never confusable with the real, unmodified vtest.avi dataset in
 scripts/calibration_data/.
 
+TRACK-AGE CLOCK (real methodology fix, see docs/LIMITATIONS.md): T's
+track_age_score (edge/temporal/track_features.py::TrackFeatureTracker)
+needs a "now" to measure elapsed track age against. edge/main.py correctly
+uses real wall-clock time.time() there, because a LIVE camera's frames
+genuinely arrive at real wall-clock intervals. This script analyzes a
+video FILE instead, which cv2.VideoCapture reads as fast as this machine
+can process it — NOT gated to the video's own real playback speed — so
+feeding it the same wall-clock time.time() would measure how fast THIS
+MACHINE happened to run, not the track's real age within the video's own
+timeline (measured, not hypothetical: one real run took 46.28 wall-clock
+seconds to process a 795-frame/25fps clip whose real content is only 31.8
+seconds). This script instead derives a video-timeline clock from
+frame_idx / video_fps, so T reflects the real video's own content,
+reproducibly, regardless of this machine's processing speed.
+
 Usage:
     python scripts/collect_calibration_data.py \\
         --video demo/videos/vtest.avi \\
@@ -65,7 +80,12 @@ from edge.detection.detector import DetectionTracker
 from edge.health.camera_health import CameraHealthMonitor
 from edge.reliability.decision import _health_quality_score, _scene_quality_score
 from edge.rules.modules import VirtualFenceModule
-from edge.temporal.track_features import TrackFeatureTracker
+from edge.temporal.track_features import (
+    TRACK_AGE_SATURATION_SECONDS,
+    TrackFeatureTracker,
+    _path_smoothness,
+    _speed_consistency,
+)
 from shared.constants import CameraHealthState
 from shared.schemas import Point, Polygon, ZoneSchema
 
@@ -133,7 +153,8 @@ def main() -> None:
     if not cap.isOpened():
         raise SystemExit(f"Could not open video: {args.video}")
 
-    health_monitor = CameraHealthMonitor(camera_id="benchmark", fps_declared=cap.get(cv2.CAP_PROP_FPS) or 25.0)
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    health_monitor = CameraHealthMonitor(camera_id="benchmark", fps_declared=video_fps)
     condition_classifier = SceneConditionClassifier(camera_id="benchmark")
     calibration = CalibrationModule()
     detector = DetectionTracker(model_size="yolov8n.pt", device="cpu")
@@ -169,8 +190,17 @@ def main() -> None:
             print(f"[frame {frame_idx}] detector error: {exc}", file=sys.stderr)
             tracks = []
 
+        video_time = frame_idx / video_fps
         for t in tracks:
             trajectories[t.track_id] = t.trajectory
+            # Real bug fix (see edge/temporal/track_features.py's class
+            # docstring and docs/PERFORMANCE_REPORT.md): observe() must be
+            # called unconditionally for every active track, every frame —
+            # not only inside the event-triggered branch below — or
+            # _first_seen gets registered at the moment of a track's first
+            # fence-crossing event instead of its real first-observed frame,
+            # always zeroing age_score on that one call.
+            track_feature_tracker.observe(t.track_id, video_time)
 
         for track in tracks:
             fence_event = fence_module.check(track, frame_width, frame_height)
@@ -182,9 +212,37 @@ def main() -> None:
             # for this candidate — imported directly, not reimplemented, so
             # this is guaranteed to match what the real pipeline would score.
             d = max(0.0, min(1.0, track.confidence))
-            t_score = track_feature_tracker.compute(track.track_id, track.trajectory, time.time())
+            # Real methodology finding (docs/LIMITATIONS.md): this offline
+            # video-file analysis genuinely runs slower than the video's own
+            # real-time playback speed (measured: 46.28 wall-clock seconds to
+            # process a 795-frame/25fps clip whose real content is only 31.8
+            # seconds — printed in this run's own wall_seconds vs
+            # frames_processed/video_fps, not asserted). edge/main.py
+            # correctly uses time.time() for TrackFeatureTracker.compute()'s
+            # `now` because a LIVE camera's frames really do arrive at real
+            # wall-clock intervals — but feeding this offline script's own
+            # (slower-than-real-time, CPU-speed-dependent) wall clock into
+            # the SAME function would measure "how fast this machine
+            # happened to process this video," not the track's real age
+            # within the video's own timeline, silently distorting T's
+            # track_age_score for every candidate. Using the video's own
+            # timeline (frame_idx / video_fps) instead ties T to the real
+            # video content, reproducibly, regardless of this machine's
+            # processing speed.
+            t_score = track_feature_tracker.compute(track.track_id, track.trajectory, video_time)
             s = _scene_quality_score(condition)
             h = _health_quality_score(health, condition)
+
+            # T's three sub-components, recorded separately for real,
+            # honest diagnosis of WHY a given candidate's T is low — not
+            # reimplemented: age_seconds comes from the same tracker's own
+            # public accessor, and smoothness/speed_consistency are the
+            # exact same module-level functions TrackFeatureTracker.compute()
+            # itself calls internally.
+            age_seconds = track_feature_tracker.get_track_age_seconds(track.track_id, video_time)
+            t_age_score = min(age_seconds / TRACK_AGE_SATURATION_SECONDS, 1.0) if age_seconds is not None else None
+            t_smoothness = _path_smoothness(track.trajectory)
+            t_speed_consistency = _speed_consistency(track.trajectory)
 
             candidate_id = f"candidate_{len(candidates):03d}"
             snapshot = frame.copy()
@@ -206,6 +264,13 @@ def main() -> None:
                 "detection_class": str(track.detection_class),
                 "D": round(d, 4),
                 "T": round(t_score, 4),
+                # T's real sub-components, for honest diagnosis of what's
+                # actually driving a low/high T — not part of the R formula
+                # itself (only "T" is), purely diagnostic.
+                "T_age_score": round(t_age_score, 4) if t_age_score is not None else None,
+                "T_smoothness": round(t_smoothness, 4),
+                "T_speed_consistency": round(t_speed_consistency, 4),
+                "trajectory_point_count": len(track.trajectory),
                 "S": round(s, 4),
                 "H": round(h, 4),
                 # Real, measured (not asserted) values proving what condition
@@ -218,7 +283,9 @@ def main() -> None:
                 "label": None,  # filled in later by manual review — see fit_reliability_weights.py
             })
             print(f"  {candidate_id}: frame={frame_idx} track={track.track_id} "
-                  f"D={d:.2f} T={t_score:.2f} S={s:.2f} H={h:.2f} "
+                  f"D={d:.2f} T={t_score:.2f} (age={t_age_score if t_age_score is None else round(t_age_score,2)} "
+                  f"smooth={t_smoothness:.2f} speed={t_speed_consistency:.2f} pts={len(track.trajectory)}) "
+                  f"S={s:.2f} H={h:.2f} "
                   f"cond={condition.condition} bri={condition.brightness_mean:.0f} con={condition.contrast_std:.0f}")
 
     cap.release()

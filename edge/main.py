@@ -408,12 +408,26 @@ class EdgePipeline:
         # Update trajectory state + snapshot each active track's appearance
         # (histogram + centroid) so the Continuity Guard has something to
         # match against the moment this track is later lost.
+        #
+        # track_feature_tracker.observe() is called here UNCONDITIONALLY for
+        # every active track, every frame — a real, measured bug fix (see
+        # edge/temporal/track_features.py's class docstring and
+        # docs/PERFORMANCE_REPORT.md's "Reliability Engine behavior" section):
+        # this class's `_first_seen` bookkeeping must be registered as soon
+        # as a track is first observed, not only when some task module
+        # module later happens to fire an event for it (temporal_score_for()
+        # below only calls `compute()` inside those event-triggered
+        # branches) — a fence-crossing event, which by its nature usually
+        # fires exactly once per track at the crossing transition, would
+        # otherwise ALWAYS see age_seconds=0.0 on that one call, regardless
+        # of how long the track had genuinely already been tracked.
         for t in tracks:
             self._trajectories[t.track_id] = t.trajectory
             self._track_last_snapshot[t.track_id] = {
                 "histogram": compute_track_histogram(frame, t.bbox),
                 "centroid": t.bbox.centroid,
             }
+            self.track_feature_tracker.observe(t.track_id, time.time())
 
         # Clean up stale trajectories — hand off to the Continuity Guard's
         # lost pool (with a grace window) instead of forgetting immediately.

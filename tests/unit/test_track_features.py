@@ -58,6 +58,61 @@ class TestTrackAge:
         assert t.get_track_age_seconds(2, now=110.0) == 5.0
 
 
+class TestObserveFixesEventTriggeredAgeZeroing:
+    """
+    Real bug fix (see the TrackFeatureTracker class docstring and
+    docs/PERFORMANCE_REPORT.md's "Reliability Engine behavior" section for
+    the full, measured writeup): a caller that only ever invokes `compute()`
+    inside an event-triggered branch (e.g. edge/main.py's fence-crossing
+    handler, which fires once per track at the crossing transition) would
+    register `_first_seen` at that FIRST EVENT's moment, not the track's
+    real first-observed frame — so age_seconds was always 0.0 on that one
+    call, regardless of how long the track had genuinely already existed.
+    `observe()` exists so a caller can register presence every frame,
+    independent of whether any event fires that frame.
+    """
+
+    def test_observe_registers_first_seen_without_compute(self):
+        t = TrackFeatureTracker()
+        assert t.get_track_age_seconds(1, now=100.0) is None
+        t.observe(1, now=100.0)
+        assert t.get_track_age_seconds(1, now=100.0) == 0.0
+
+    def test_observe_called_every_frame_then_compute_reflects_real_age(self):
+        """The exact real-world scenario this fixes: a track is observed for
+        several frames before any rule event ever fires on it, then an
+        event finally triggers compute() — age must reflect the track's
+        REAL elapsed lifetime (10s), not 0.0 (what a caller that only ever
+        calls compute() at the event moment would have recorded)."""
+        t = TrackFeatureTracker()
+        t.observe(1, now=100.0)   # frame the track first appears
+        t.observe(1, now=105.0)   # a later frame, still no event yet
+        # ... an event finally fires at now=110.0, 10 real seconds after the
+        # track first appeared:
+        score = t.compute(1, _stationary(n=20), now=110.0)
+        assert t.get_track_age_seconds(1, now=110.0) == 10.0
+        assert score > 0.9  # age fully saturated (default 5.0s) + stationary consistency
+
+    def test_observe_is_idempotent_after_first_call(self):
+        """Repeated observe() calls for an already-known track must not
+        reset its first-seen time."""
+        t = TrackFeatureTracker()
+        t.observe(1, now=100.0)
+        t.observe(1, now=200.0)  # must be a no-op — track already known
+        assert t.get_track_age_seconds(1, now=210.0) == 110.0
+
+    def test_compute_without_prior_observe_reproduces_the_original_bug(self):
+        """Documents the failure mode this fix addresses: a caller that
+        skips observe() and only calls compute() at the event moment still
+        gets age=0.0 on that first call — observe() is opt-in per caller,
+        not a change to compute()'s own standalone behavior (see
+        test_first_observation_has_zero_age above, which this must not
+        break)."""
+        t = TrackFeatureTracker()
+        score = t.compute(1, _stationary(n=20), now=110.0)  # no observe() calls first
+        assert t.get_track_age_seconds(1, now=110.0) == 0.0
+
+
 class TestComputeReturnsBoundedScore:
     def test_score_is_between_zero_and_one(self):
         t = TrackFeatureTracker()

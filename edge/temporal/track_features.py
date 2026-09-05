@@ -105,16 +105,50 @@ class TrackFeatureTracker:
     Maintains per-track first-seen timestamps (the only state this class
     needs — trajectory data itself already lives on each frame's TrackData
     and in EdgePipeline._trajectories) and computes T on request.
+
+    Real bug this class's callers must avoid (see docs/LIMITATIONS.md and
+    docs/PERFORMANCE_REPORT.md's "Reliability Engine behavior" section for
+    the full, measured writeup): track_age_score is only meaningful if
+    `observe()` (or `compute()`, which also registers first-seen as a side
+    effect) is called for a track as soon as it is FIRST SEEN — every frame,
+    for every active track — not only when some rule module happens to fire
+    an event for it. A caller that only calls `compute()` inside an
+    event-triggered branch (e.g. only when a fence-crossing event fires)
+    will register `_first_seen` at the moment of that FIRST event, not the
+    track's real first-observed frame — so a fence-crossing event, which by
+    its nature usually fires exactly once per track at the crossing
+    transition, would then ALWAYS see age_seconds=0.0 on that one and only
+    call, regardless of how long the track had genuinely been tracked
+    beforehand. This was a real, measured bug in both edge/main.py and
+    scripts/collect_calibration_data.py until both were fixed to call
+    `observe()` unconditionally for every active track every frame.
     """
 
     def __init__(self, age_saturation_seconds: float = TRACK_AGE_SATURATION_SECONDS):
         self._first_seen: Dict[int, float] = {}
         self._age_saturation_seconds = age_saturation_seconds
 
-    def compute(self, track_id: int, trajectory: List[Point], now: float) -> float:
-        """Returns T in [0,1] for this track at this point in time."""
+    def observe(self, track_id: int, now: float) -> None:
+        """Register that this track was seen at `now`, if not already known.
+        Call this UNCONDITIONALLY for every active track, every frame — see
+        the class docstring for why this must not be left to `compute()`
+        alone in a caller that only invokes `compute()` conditionally."""
         if track_id not in self._first_seen:
             self._first_seen[track_id] = now
+
+    def compute(self, track_id: int, trajectory: List[Point], now: float) -> float:
+        """Returns T in [0,1] for this track at this point in time.
+
+        Also calls `observe()` as a convenience/safety net, so a caller that
+        only ever invokes `compute()` (e.g. these unit tests, or a one-off
+        script) still gets correct, self-consistent "first observation has
+        zero age" behavior — but a caller whose observations are gated
+        behind a conditional event (see class docstring) MUST call
+        `observe()` unconditionally itself; this fallback cannot fix that
+        case, since by the time `compute()` is reached the damage (the
+        wrong, event-triggered timestamp) is already what gets recorded.
+        """
+        self.observe(track_id, now)
         age_seconds = now - self._first_seen[track_id]
         age_score = min(age_seconds / self._age_saturation_seconds, 1.0)
 

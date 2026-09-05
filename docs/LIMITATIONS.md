@@ -105,12 +105,35 @@ limitation — an out-of-date limitations file is worse than none.
   `tests/unit/test_reliability.py::TestSceneQualityNightContrastReference`, 4 more new tests, including
   a regression lock confirming `FOG_RAIN`'s own contrast reference is unaffected; full suite 223/223).
   Re-measured result: night rose further, from 61% to 76% DETECTED (39/51).
-  **All four fixes together remain a partial fix, not a solved problem** — 13% of genuine fog crossings
-  and 24% of genuine night crossings under these specific synthetic intensities are still marked
-  UNCERTAIN, with no further fix applied pending real night/fog footage to validate any of these
-  heuristic values against (fix 4's especially, given it lacks the independent grounding fixes 2/3 had).
-  See `docs/PERFORMANCE_REPORT.md`'s "Reliability Engine behavior under real night/fog conditions"
-  section for the full numbers and all four fixes' before/after comparison.
+  **Fifth fix — a real, previously-shipped PRODUCTION bug, found while investigating why 3/52 DAYTIME
+  crossings still missed threshold despite S≈0.92 and H=1.0 (no scene/health issue to blame):**
+  `TrackFeatureTracker` (`edge/temporal/track_features.py`) only ever registered a track's
+  `_first_seen` time inside `compute()` — and both `edge/main.py` (the real, deployed pipeline) and
+  `scripts/collect_calibration_data.py` only ever call `compute()` from an EVENT-triggered branch (a
+  fence-crossing handler, firing once per track at the crossing transition). That means
+  `_first_seen[track_id]` got registered at the moment of a track's FIRST qualifying event, not its
+  real first-observed frame — so `age_seconds` was always `0.0` on that one call, regardless of how
+  long the track had genuinely already existed. Measured directly, not assumed: the 3 daytime
+  candidates each had 34-50 real trajectory points (1.4-2 real seconds of prior tracking) yet
+  `T_age_score` was exactly `0.0` for all three. The fix: a new `TrackFeatureTracker.observe()`
+  method, called unconditionally for every active track every frame in both `edge/main.py` and the
+  collection script — independent of whether any rule event fires that frame — so age is registered
+  the moment a track is truly first seen. 4 new tests
+  (`tests/unit/test_track_features.py::TestObserveFixesEventTriggeredAgeZeroing`); full suite
+  227/227. This bug was condition-independent, so it improved ALL THREE datasets at once when
+  re-measured: daytime rose from 49/52 (94%) to **52/52 (100%)** — the 3 residual daytime candidates
+  are now fully resolved; night rose from 39/51 (76%) to 47/51 (92%); fog rose from 45/52 (87%) to
+  49/52 (94%). This is the largest single fix of the whole session, since — unlike fixes 1-4, which
+  only changed `edge/reliability/decision.py`'s scoring heuristics — this corrects a genuine defect
+  in the real, deployed edge pipeline's temporal-scoring wiring itself.
+  **All five fixes together still leave a real, honest remainder** — 6% of genuine fog crossings and
+  8% of genuine night crossings under these specific synthetic intensities are still marked
+  UNCERTAIN, with no further fix applied pending real night/fog footage to validate the heuristic
+  values fixes 2-4 introduced (fix 4's `_SCENE_CONTRAST_GOOD_NIGHT` especially, given it lacks the
+  independent grounding fixes 2/3 had). Daytime, notably, is now at 100% — the remaining gap is
+  entirely in the two synthetic degraded-condition datasets. See `docs/PERFORMANCE_REPORT.md`'s
+  "Reliability Engine behavior under real night/fog conditions" section for the full numbers and all
+  five fixes' before/after comparison.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

@@ -122,11 +122,11 @@ actually mark UNCERTAIN instead of DETECTED?**
 
 | Condition | Genuine (label=1) candidates | DETECTED (R ≥ 0.75) | UNCERTAIN (real crossing missed) |
 |---|---|---|---|
-| Daytime (real, unmodified video) | 52 | 49 (94%) | 3 (6%) |
-| Synthetic night (real video, real Gaussian-darkened frames) | 51 | 39 (76%) | 12 (24%) |
-| Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 45 (87%) | 7 (13%) |
+| Daytime (real, unmodified video) | 52 | 52 (100%) | 0 (0%) |
+| Synthetic night (real video, real Gaussian-darkened frames) | 51 | 47 (92%) | 4 (8%) |
+| Synthetic fog (real video, real haze-blended + blurred frames) | 52 | 49 (94%) | 3 (6%) |
 
-**These numbers are after FOUR real, separate fixes, applied in sequence** — each honestly
+**These numbers are after FIVE real, separate fixes, applied in sequence** — each honestly
 re-measured, none a full solution on its own:
 
 1. **Fix 1 — H double-penalty** (`edge/reliability/decision.py::_health_quality_score`). The
@@ -188,16 +188,38 @@ re-measured, none a full solution on its own:
    `tests/unit/test_reliability.py::TestSceneQualityNightContrastReference`, 4 tests, including a
    regression lock confirming `FOG_RAIN`'s own contrast reference is unaffected). This raised night
    further, from 61% to 76% DETECTED.
+5. **Fix 5 — a real, previously-shipped PRODUCTION bug, not a calibration-side issue like fixes 1-4.**
+   Found while investigating why 3/52 DAYTIME crossings still missed threshold despite S≈0.92 and
+   H=1.0 — no scene or health issue to blame at all. `TrackFeatureTracker`
+   (`edge/temporal/track_features.py`) only ever registered a track's `_first_seen` time inside
+   `compute()` — and both `edge/main.py` (the real, deployed pipeline) and
+   `scripts/collect_calibration_data.py` only ever call `compute()` from an EVENT-triggered branch (a
+   fence-crossing handler, firing once per track at the crossing transition). That means
+   `_first_seen[track_id]` got registered at the moment of a track's FIRST qualifying event, not its
+   real first-observed frame — so `age_seconds` was always `0.0` on that one call, regardless of how
+   long the track had genuinely already existed. Measured directly, not assumed: the 3 daytime
+   candidates each had 34-50 real trajectory points (1.4-2 real seconds of prior tracking) yet
+   `T_age_score` (a new diagnostic field this investigation added to the manifest) was exactly `0.0`
+   for all three. The fix: a new `TrackFeatureTracker.observe()` method, called unconditionally for
+   every active track every frame in both `edge/main.py` and the collection script — independent of
+   whether any rule event fires that frame — so age is registered the moment a track is truly first
+   seen (see `tests/unit/test_track_features.py::TestObserveFixesEventTriggeredAgeZeroing`, 4 tests;
+   full suite 227/227). This bug was condition-independent, so re-measuring improved ALL THREE
+   datasets at once: daytime rose from 94% to **100%** (all 3 residual candidates now resolved);
+   night rose from 76% to 92%; fog rose from 87% to 94%. By a wide margin the largest single fix this
+   session — it corrects a genuine defect in the real, deployed edge pipeline's temporal-scoring
+   wiring, not just a calibration-script heuristic.
 
-**What this does NOT mean:** it does not mean fog or night detection is now "solved" — 13% of genuine
-fog crossings and 24% of genuine night crossings under these specific synthetic intensities still miss,
-a real, honest, remaining gap. It also does not mean either synthetic transform's specific intensity
-(night: scaling pixel values by 0.28 plus Gaussian noise; fog: `cv2.addWeighted` at 0.42/0.58 plus a
-7×7 Gaussian blur) is representative of every real night/fog condition NETRAKSH might face — this
-project has no real night or fog footage to calibrate either transform's intensity against, or to
-validate fix 4's specific heuristic value against, the way fixes 2 and 3 could lean on an
-already-existing, independently-justified constant (see `docs/LIMITATIONS.md`). This is real, open,
-partially-addressed work, not a fully solved one.
+**What this does NOT mean:** it does not mean fog or night detection is now "solved" — 6% of genuine
+fog crossings and 8% of genuine night crossings under these specific synthetic intensities still miss,
+a real, honest, remaining gap (daytime, notably, is now fully resolved at 100% — the remaining gap is
+entirely in the two synthetic degraded-condition datasets). It also does not mean either synthetic
+transform's specific intensity (night: scaling pixel values by 0.28 plus Gaussian noise; fog:
+`cv2.addWeighted` at 0.42/0.58 plus a 7×7 Gaussian blur) is representative of every real night/fog
+condition NETRAKSH might face — this project has no real night or fog footage to calibrate either
+transform's intensity against, or to validate fix 4's specific heuristic value against, the way fixes
+2 and 3 could lean on an already-existing, independently-justified constant (see `docs/LIMITATIONS.md`).
+This is real, open, partially-addressed work, not a fully solved one.
 
 ## Honesty checklist before this goes in the PPT
 
