@@ -303,11 +303,15 @@ Else:  R = wD*D + wT*T + wS*S + wH*H
   `_scene_quality_score`'s contrast component was judging FOG_RAIN frames against a clear-day
   contrast ideal (60.0) they can never meet by definition, when the real, already-existing
   `FOG_CONTRAST_THRESHOLD` (30.0) — literally the rule that classifies a scene as foggy in the first
-  place — is the honest reference to use instead. That raised fog further, to 45/52 (87%). See
-  `docs/LIMITATIONS.md`'s Hybrid Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s night/fog
-  section for the full, honest before/after of both fixes. `D/T/S/H`'s hand-picked *weight values*
-  themselves remain unchanged — these fixed how `H` and `S` are computed, not the
-  weights applied to it — pending real labeled data with actual false positives to fit against.
+  place — is the honest reference to use instead. That raised fog further, to 45/52 (87%). A third fix
+  did the same for night's own bottleneck: `brightness_score` judged `LOW_LIGHT_NIGHT` frames against
+  the same clear-day ideal (128.0), when the real, already-existing `BRIGHTNESS_NIGHT_THRESHOLD` (60.0)
+  — literally the rule that classifies a scene as night in the first place — is the honest reference
+  to use instead. That raised night from 21/51 (41%) to 31/51 (61%). See `docs/LIMITATIONS.md`'s Hybrid
+  Reliability Engine entry and `docs/PERFORMANCE_REPORT.md`'s night/fog section for the full, honest
+  before/after of all three fixes. `D/T/S/H`'s hand-picked *weight values* themselves remain
+  unchanged — these fixed how `H` and `S` are computed, not the weights applied to them — pending real
+  labeled data with actual false positives to fit against.
 
 **Intentional behavior change — read this before assuming a regression:** under the old cascade, a
 lower per-condition confidence threshold made night/fog detections *easier* to accept (a compensating

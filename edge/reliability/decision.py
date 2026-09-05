@@ -53,6 +53,7 @@ import logging
 import os
 
 from shared.constants import (
+    BRIGHTNESS_NIGHT_THRESHOLD,
     CameraHealthState,
     DecisionState,
     FOG_CONTRAST_THRESHOLD,
@@ -97,13 +98,32 @@ _SCENE_GLARE_BAD = 0.30
 # the actual boundary of "is this foggy" scores a full contrast_score, and a
 # frame foggier than that (which does mean something concretely worse: low
 # contrast well beyond the classification threshold itself) still scores
-# proportionally lower. CLEAR_DAY/GLARE/LOW_LIGHT_NIGHT are unaffected —
-# LOW_LIGHT_NIGHT's real driver measured in this project's data is brightness
-# (contrast_score wasn't what suppressed its DETECTED rate — see
-# docs/PERFORMANCE_REPORT.md), so it keeps the clear-day contrast reference.
+# proportionally lower. CLEAR_DAY/GLARE/LOW_LIGHT_NIGHT keep the clear-day
+# contrast reference — this project has no existing, already-defined
+# constant analogous to FOG_CONTRAST_THRESHOLD for what "good" contrast
+# means specifically at night, and inventing a fresh number here (rather
+# than reusing a real one, as this fix does for fog) would repeat exactly
+# the kind of unjustified-heuristic problem this whole exercise exists to
+# avoid — see docs/LIMITATIONS.md for this as an open, honestly-flagged gap.
 _SCENE_CONTRAST_GOOD_BY_CONDITION = {
     SceneCondition.FOG_RAIN: FOG_CONTRAST_THRESHOLD,
 }
+
+# Real finding this fixes (same section of docs/PERFORMANCE_REPORT.md):
+# LOW_LIGHT_NIGHT's real measured driver was brightness_score, not contrast —
+# every night frame is, by definition, below BRIGHTNESS_NIGHT_THRESHOLD (60.0,
+# the real rule that classifies a scene as LOW_LIGHT_NIGHT in the first place,
+# edge/condition/scene_condition.py), yet brightness_score judged it against
+# the CLEAR_DAY midpoint ideal (128.0) meant for a symmetric too-dark/too-
+# bright measurement — scoring every night frame as "badly dark" even at the
+# very boundary of "still counts as night." Reusing BRIGHTNESS_NIGHT_THRESHOLD
+# here, exactly like FOG_CONTRAST_THRESHOLD above: within the night band, MORE
+# light is unambiguously better for detection (not "distance from an ideal"
+# the way CLEAR_DAY/GLARE/FOG_RAIN's symmetric formula assumes), so this uses
+# a ratio score capped at the real classification boundary — a frame right at
+# that boundary scores full brightness marks; a darker one than that still
+# scores proportionally lower.
+_NIGHT_BRIGHTNESS_SCORED_CONDITIONS = frozenset({SceneCondition.LOW_LIGHT_NIGHT})
 
 # Health-quality (H) scoring. FAILED is never looked up here — Gate 1
 # handles it exclusively, before this table would ever be consulted.
@@ -134,14 +154,18 @@ def _scene_quality_score(condition_report: SceneConditionReport) -> float:
     raw brightness/contrast/glare signals SceneConditionClassifier already
     computes. NOT calibrated — see docs/LIMITATIONS.md.
 
-    contrast_score's reference point is per-condition (see
-    _SCENE_CONTRAST_GOOD_BY_CONDITION above) for FOG_RAIN specifically, to
-    avoid judging an inherently-lower-contrast condition against a clear-day
-    ideal it was never going to meet by definition.
+    Two reference points are per-condition rather than global (see the
+    comments above each lookup table): contrast_score for FOG_RAIN, and
+    brightness_score for LOW_LIGHT_NIGHT — both to avoid judging an
+    inherently-degraded-by-definition condition against a clear-day ideal it
+    was never going to meet.
     """
-    brightness_score = 1.0 - min(
-        abs(condition_report.brightness_mean - _SCENE_BRIGHTNESS_IDEAL) / _SCENE_BRIGHTNESS_IDEAL, 1.0
-    )
+    if condition_report.condition in _NIGHT_BRIGHTNESS_SCORED_CONDITIONS:
+        brightness_score = min(condition_report.brightness_mean / BRIGHTNESS_NIGHT_THRESHOLD, 1.0)
+    else:
+        brightness_score = 1.0 - min(
+            abs(condition_report.brightness_mean - _SCENE_BRIGHTNESS_IDEAL) / _SCENE_BRIGHTNESS_IDEAL, 1.0
+        )
     contrast_good = _SCENE_CONTRAST_GOOD_BY_CONDITION.get(condition_report.condition, _SCENE_CONTRAST_GOOD)
     contrast_score = min(condition_report.contrast_std / contrast_good, 1.0)
     glare_score = 1.0 - min(condition_report.glare_fraction / _SCENE_GLARE_BAD, 1.0)

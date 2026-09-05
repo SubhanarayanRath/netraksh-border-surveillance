@@ -329,6 +329,57 @@ class TestSceneQualityFogContrastReference:
         assert night_s == pytest.approx(day_s)
 
 
+class TestSceneQualityNightBrightnessReference:
+    """
+    Real follow-up fix, same pattern as TestSceneQualityFogContrastReference
+    above (docs/PERFORMANCE_REPORT.md's "Reliability Engine behavior under
+    real night/fog conditions"): LOW_LIGHT_NIGHT's real measured driver was
+    brightness_score judging every night frame against the CLEAR_DAY ideal
+    (128.0) it can never meet by definition — BRIGHTNESS_NIGHT_THRESHOLD
+    (60.0) is the real, already-existing rule that classifies a scene
+    LOW_LIGHT_NIGHT in the first place. These tests call
+    _scene_quality_score directly to isolate exactly this behavior.
+    """
+
+    def test_night_at_classification_threshold_scores_full_brightness_component(self):
+        """A night frame whose brightness sits exactly at the real
+        BRIGHTNESS_NIGHT_THRESHOLD (60.0) that got it classified
+        LOW_LIGHT_NIGHT in the first place should score full marks on the
+        brightness component — as bright as "still night" gets."""
+        s = _scene_quality_score(_condition_with(SceneCondition.LOW_LIGHT_NIGHT, contrast_std=50.0, brightness_mean=60.0))
+        assert s == pytest.approx(1.0 / 3.0 + min(50.0 / 60.0, 1.0) / 3.0 + 1.0 / 3.0)
+
+    def test_identical_brightness_scores_lower_under_clear_day(self):
+        """The SAME raw brightness_mean, but classified CLEAR_DAY, still uses
+        the clear-day distance-from-128 formula and scores lower — proving
+        this is a per-condition reference change, not a general softening of
+        the brightness component for every condition."""
+        night_s = _scene_quality_score(_condition_with(SceneCondition.LOW_LIGHT_NIGHT, contrast_std=50.0, brightness_mean=60.0))
+        day_s = _scene_quality_score(_condition_with(SceneCondition.CLEAR_DAY, contrast_std=50.0, brightness_mean=60.0))
+        assert night_s > day_s
+
+    def test_night_brightness_well_below_threshold_still_scores_proportionally_lower(self):
+        """Not a blanket free pass — a night frame meaningfully darker than
+        the classification boundary itself still scores worse than one right
+        at the boundary, so real variation within "night" still matters."""
+        at_threshold = _scene_quality_score(_condition_with(SceneCondition.LOW_LIGHT_NIGHT, contrast_std=50.0, brightness_mean=60.0))
+        well_below = _scene_quality_score(_condition_with(SceneCondition.LOW_LIGHT_NIGHT, contrast_std=50.0, brightness_mean=20.0))
+        assert well_below < at_threshold
+
+    def test_fog_brightness_reference_is_unchanged(self):
+        """Regression lock: this fix is scoped to LOW_LIGHT_NIGHT only.
+        FOG_RAIN still uses the clear-day distance-from-128 brightness
+        formula exactly as before this fix (its own contrast-side fix is
+        separate and unaffected)."""
+        fog_s_brightness_only = _scene_quality_score(
+            _condition_with(SceneCondition.FOG_RAIN, contrast_std=1e9, brightness_mean=60.0)
+        )
+        day_s_brightness_only = _scene_quality_score(
+            _condition_with(SceneCondition.CLEAR_DAY, contrast_std=1e9, brightness_mean=60.0)
+        )
+        assert fog_s_brightness_only == pytest.approx(day_s_brightness_only)
+
+
 class TestHybridEngineTemporalScore:
     """T (temporal_score) is a real input to R, not decoration — a borderline
     case can flip between UNCERTAIN and DETECTED purely based on it."""
