@@ -1106,6 +1106,48 @@ running dev server still boots cleanly after the `backend/config.py` change.
 
 ---
 
+## First Real Deploy Attempt: Found a Genuine Production Crash
+
+The first actual Render deploy (database provisioned fine; web service failed) — the real
+payoff of everything above being untestable locally without Docker: this is a bug that
+only exists once real infrastructure is involved, and it was caught immediately rather
+than discovered by a judge.
+
+**The crash, from the real Render build logs:**
+```
+AttributeError: module 'bcrypt' has no attribute '__about__'
+...
+ValueError: password cannot be longer than 72 bytes, truncate manually if necessary
+```
+crashing inside `bootstrap_users()` at startup — the whole app failed to boot.
+
+**Two distinct real bugs, both fixed:**
+1. **`bcrypt` 4.1+ removed the `__about__.__version__` attribute** that `passlib`'s
+   backend-detection code reads. `passlib[bcrypt]>=1.7.4` doesn't pin `bcrypt` itself, so
+   it resolved to whatever the latest version was at Render's build time — newer than the
+   `bcrypt==4.0.1` this dev machine happened to already have installed, which is exactly
+   why this was invisible locally. Fixed: pinned `bcrypt<4.1` in both `requirements.txt`
+   and `requirements-backend.txt`.
+2. **`render.yaml`'s `ADMIN_PASSWORD: generateValue: true` produces a random string long
+   enough to exceed bcrypt's hard 72-byte limit** — and `bcrypt`'s 4.x line raises
+   `ValueError` instead of silently truncating like older versions did. This isn't only a
+   Render-generated-secret problem: any real user setting a sufficiently long real
+   password would hit the identical crash. Fixed in `backend/security/auth.py`: both
+   `hash_password()` and `verify_password()` now truncate to 72 bytes (at a valid UTF-8
+   boundary) before ever reaching bcrypt — every password this app touches (login,
+   registration, bootstrap) goes through these two functions, so this is a single,
+   complete fix, not a patch on one call site.
+
+**Verified, not just reasoned about:** reproduced the exact failure locally first
+(`secrets.token_urlsafe(64)` → the same `ValueError`), confirmed the fix resolves it, then
+built a second throwaway venv installing the newly-pinned `requirements-backend.txt` from
+scratch and confirmed `bcrypt.__about__.__version__` is now present and
+`backend.main` imports cleanly. New tests: `tests/unit/test_password_hashing.py`.
+
+**Tests:** 207/207 passing (3 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

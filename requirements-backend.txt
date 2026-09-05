@@ -15,6 +15,13 @@ sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+# Pinned <4.1: bcrypt 4.1 removed the `__about__.__version__` attribute
+# passlib's backend-detection code reads, causing a trapped-but-noisy
+# warning locally and a hard crash in production (Render resolved an
+# unpinned `bcrypt` to a newer version than this dev machine happened to
+# have installed). See backend/security/auth.py's _truncate_for_bcrypt for
+# the other half of this fix (the 72-byte limit).
+bcrypt<4.1
 python-multipart>=0.0.9
 cryptography>=42.0.0
 pydantic>=2.9.0

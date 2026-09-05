@@ -22,6 +22,7 @@ alembic>=1.14.0
 psycopg2-binary>=2.9.0      # PostgreSQL driver
 python-jose[cryptography]>=3.3.0  # JWT
 passlib[bcrypt]>=1.7.4      # Password hashing
+bcrypt<4.1                  # 4.1 removed __about__.__version__ that passlib reads — see backend/security/auth.py
 python-multipart>=0.0.9     # Form data / file uploads
 aiofiles>=24.1.0
 websockets>=13.0

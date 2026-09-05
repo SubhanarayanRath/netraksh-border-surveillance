@@ -30,12 +30,28 @@ security_scheme = HTTPBearer(auto_error=False)
 # Password utilities
 # ---------------------------------------------------------------------------
 
+def _truncate_for_bcrypt(password: str) -> str:
+    """
+    bcrypt has a hard 72-byte limit and, as of the `bcrypt` package's 4.x
+    line, raises ValueError instead of silently truncating like older
+    versions did. This bit in production: Render's `generateValue: true`
+    for ADMIN_PASSWORD (render.yaml) produces a random string long enough
+    to exceed 72 bytes, which crashed the whole app at startup inside
+    bootstrap_users() — a real user could hit the same crash with a long
+    real password, not just a generated one. Truncates at the byte level,
+    dropping any partial trailing UTF-8 sequence so the result decodes
+    cleanly. Every password this app hashes or verifies goes through this,
+    for login (backend/api/auth.py), registration, and bootstrap alike.
+    """
+    return password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+
+
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    return pwd_context.hash(_truncate_for_bcrypt(plain))
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return pwd_context.verify(_truncate_for_bcrypt(plain), hashed)
 
 
 # ---------------------------------------------------------------------------
