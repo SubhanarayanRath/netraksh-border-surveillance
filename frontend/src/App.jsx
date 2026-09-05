@@ -9,6 +9,7 @@ import Health from './pages/Health';
 import Architecture from './pages/Architecture';
 import Alerts from './pages/Alerts';
 import Performance from './pages/Performance';
+import CameraManagement from './pages/CameraManagement';
 
 function App() {
   return (
@@ -30,6 +31,7 @@ function App() {
                 because that's client-side routing, never a real request. */}
             <Route path="/cross-command-alerts" element={<Alerts />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/camera-management" element={<CameraManagement />} />
             <Route path="/architecture" element={<Architecture />} />
           </Routes>
         </main>

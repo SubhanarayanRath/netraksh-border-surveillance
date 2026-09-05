@@ -1,10 +1,12 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Eye, Shield, Map, Activity, Bell, Gauge } from 'lucide-react';
+import { Eye, Shield, Map, Activity, Bell, Gauge, Settings } from 'lucide-react';
 import Logo from './Logo';
+import useAuth from '../hooks/useAuth';
 
 export default function Sidebar() {
   const location = useLocation();
   const path = location.pathname;
+  const { role } = useAuth();
 
   const getClassName = (activePath) => {
     const base = "w-full h-full flex items-center justify-center rounded transition-colors";
@@ -62,6 +64,17 @@ export default function Sidebar() {
         <Link to="/performance" className={getClassName("/performance")} title="Edge Performance" style={{width: '48px', height: '48px'}}>
           <Gauge size={22} />
         </Link>
+        {/* The first genuinely role-gated nav item — visible only when
+            actually signed in as ADMIN, matching the real backend RBAC
+            (require_admin) that CameraManagement.jsx's endpoints enforce.
+            Every other icon here is reachable by any role; this one
+            reflects a real permission difference instead of showing every
+            viewer an identical sidebar regardless of who they are. */}
+        {role === 'ADMIN' && (
+          <Link to="/camera-management" className={getClassName("/camera-management")} title="Camera Management (ADMIN)" style={{width: '48px', height: '48px'}}>
+            <Settings size={22} />
+          </Link>
+        )}
         <Link to="/architecture" className={getClassName("/architecture")} title="Architecture" style={{width: '48px', height: '48px'}}>
           <Map size={22} />
         </Link>

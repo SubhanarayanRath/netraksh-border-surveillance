@@ -12,6 +12,16 @@
 
 const TOKEN_KEY = 'netraksh_token';
 const ROLE_KEY = 'netraksh_role';
+const USERNAME_KEY = 'netraksh_username';
+// Fired on every login()/logout() so any mounted component (Header, in
+// particular) can react live without a full page reload. Plain
+// localStorage reads are otherwise not reactive — the backend's real
+// /auth/token response has always included `username` (backend/api/
+// auth.py, TokenResponse.username), but nothing in this frontend stored
+// or displayed it, or the real role RBAC already enforces server-side —
+// there was no way to tell, from the UI, who was logged in or what they
+// could do before that permission was actually attempted and rejected.
+export const AUTH_CHANGE_EVENT = 'netraksh-auth-change';
 
 // Derived from the page's own origin, not hardcoded to localhost. The
 // backend serves this built frontend directly (single port, same origin —
@@ -30,6 +40,10 @@ export function getToken() {
 
 export function getRole() {
   return localStorage.getItem(ROLE_KEY);
+}
+
+export function getUsername() {
+  return localStorage.getItem(USERNAME_KEY);
 }
 
 export function isAuthenticated() {
@@ -62,12 +76,16 @@ export async function login(username, password) {
   const data = await res.json();
   localStorage.setItem(TOKEN_KEY, data.access_token);
   localStorage.setItem(ROLE_KEY, data.role);
+  localStorage.setItem(USERNAME_KEY, data.username);
+  window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   return data;
 }
 
 export function logout() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ROLE_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
 }
 
 // fetch() against the backend with the stored token attached, if any.

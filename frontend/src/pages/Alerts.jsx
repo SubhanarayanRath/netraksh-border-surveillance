@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle } from 'lucide-react';
+import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle, Eye } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
+import useAuth from '../hooks/useAuth';
 import LoginPrompt from '../components/LoginPrompt';
 import TacticalMap from '../components/TacticalMap';
 import { parseUtc } from '../utils/time';
@@ -26,6 +27,12 @@ function alertTitle(alert) {
 
 export default function Alerts() {
   const { alerts: wsAlerts } = useWebSocket(WS_URL);
+  const { role } = useAuth();
+  // Backend's real RBAC (require_operator_or_admin, backend/api/alerts.py)
+  // already rejects AUDITOR's acknowledge attempt with a 403 — this just
+  // reflects that real permission in the UI instead of letting an AUDITOR
+  // click a button that was always going to fail.
+  const canAcknowledge = role === 'ADMIN' || role === 'OPERATOR';
   const [restAlerts, setRestAlerts] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | auth-required | error
   const [ackingId, setAckingId] = useState(null);
@@ -155,7 +162,7 @@ export default function Alerts() {
                   {!alert.isMock && (
                     alert.acknowledged_at ? (
                       <span className="flex items-center gap-1 text-ok"><CheckCircle size={14}/> Acknowledged{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}</span>
-                    ) : (
+                    ) : canAcknowledge ? (
                       <button
                         onClick={() => handleAcknowledge(alert.alert_id)}
                         disabled={ackingId === alert.alert_id}
@@ -163,6 +170,14 @@ export default function Alerts() {
                       >
                         {ackingId === alert.alert_id ? 'Acknowledging…' : 'Acknowledge'}
                       </button>
+                    ) : (
+                      // Real backend RBAC (require_operator_or_admin) would
+                      // reject an AUDITOR's acknowledge attempt with a 403 —
+                      // shown here as a real, honest read-only indicator
+                      // instead of a button that was always going to fail.
+                      <span className="ml-auto flex items-center gap-1 text-muted" title="AUDITOR role is read-only for acknowledgements">
+                        <Eye size={14}/> View only
+                      </span>
                     )
                   )}
                 </div>

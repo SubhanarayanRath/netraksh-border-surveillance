@@ -1,12 +1,22 @@
-import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck, ShieldAlert, LogOut } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Logo from './Logo';
-import { authFetch } from '../services/auth';
+import { authFetch, logout } from '../services/auth';
+import useAuth from '../hooks/useAuth';
+import LoginPrompt from './LoginPrompt';
+
+const ROLE_COLORS = {
+  ADMIN: 'text-danger border-danger',
+  OPERATOR: 'text-ok border-ok',
+  AUDITOR: 'text-warning border-warning',
+};
 
 export default function Header() {
+  const { isAuthenticated, role, username } = useAuth();
   const [timeStr, setTimeStr] = useState('');
   const [showSyncPanel, setShowSyncPanel] = useState(false);
+  const [showAccountPanel, setShowAccountPanel] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ queued: 0, synced: 0, failed: 0 });
   const [pendingAlerts, setPendingAlerts] = useState(null); // null = not yet known
   const [chainStatus, setChainStatus] = useState(null); // null = not yet checked
@@ -109,11 +119,42 @@ export default function Header() {
             <AlertTriangle size={14} /> {pendingAlerts != null ? String(pendingAlerts).padStart(2, '0') : '--'}
           </Link>
           
-          <div className="w-8 h-8 rounded-full bg-elevated flex items-center justify-center border text-ok">
+          {/* Was a purely decorative circle — no click handler, no real
+              session info, no way to sign out anywhere in the app. Every
+              login this whole project does (Evidence/Health/Alerts/
+              Performance's LoginPrompt) had nowhere to show who was
+              actually signed in or let them sign out again. */}
+          <button
+            onClick={() => setShowAccountPanel((v) => !v)}
+            className={`w-8 h-8 rounded-full bg-elevated flex items-center justify-center border transition-colors ${isAuthenticated ? (ROLE_COLORS[role] || 'text-ok') : 'text-muted'}`}
+            title={isAuthenticated ? `${username} (${role})` : 'Not signed in'}
+          >
             <User size={16} />
-          </div>
+          </button>
         </div>
       </div>
+
+      {showAccountPanel && (
+        <div className="absolute top-[60px] right-4 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3">
+          {isAuthenticated ? (
+            <>
+              <div className="flex justify-between items-center border-b border-color pb-2">
+                <span className="text-xs font-display text-muted uppercase">Signed In</span>
+                <span className={`text-[10px] font-display border rounded px-1.5 py-0.5 ${ROLE_COLORS[role] || 'text-ok border-ok'}`}>{role}</span>
+              </div>
+              <div className="text-sm font-body text-main">{username}</div>
+              <button
+                onClick={() => { logout(); setShowAccountPanel(false); }}
+                className="flex items-center justify-center gap-2 text-xs font-display text-danger border border-danger rounded py-1.5 hover:bg-[rgba(248,113,113,0.1)] transition-colors"
+              >
+                <LogOut size={14} /> Sign Out
+              </button>
+            </>
+          ) : (
+            <LoginPrompt message="Sign in" onSuccess={() => setShowAccountPanel(false)} />
+          )}
+        </div>
+      )}
 
       {/* Expandable Sync Panel */}
       {showSyncPanel && (

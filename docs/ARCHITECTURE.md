@@ -1560,6 +1560,62 @@ pre-existing warning patterns throughout, no new class introduced by any of the 
 
 ---
 
+## Role-Differentiated UI
+
+Prompted by "Start on the role-differentiated UI." RBAC (ADMIN/OPERATOR/AUDITOR) has been
+fully real on the backend since early in this project — every write endpoint already
+enforces it server-side — but the frontend showed every logged-in viewer an identical
+screen regardless of role, never displayed who was signed in, and had no logout anywhere.
+The real `/auth/token` response has always included `username` (`backend/api/auth.py`,
+`TokenResponse.username`) — the frontend was silently discarding it.
+
+**What changed:**
+- `frontend/src/services/auth.js`: now stores `username` (was discarded), and `login()`/
+  `logout()` dispatch a new `AUTH_CHANGE_EVENT` so any mounted component reacts live —
+  plain `localStorage` reads aren't reactive on their own.
+- `frontend/src/hooks/useAuth.js` (new): subscribes to that event plus the browser's own
+  `storage` event (cross-tab sync), giving any component a live `{ isAuthenticated, role,
+  username }`.
+- `Header.jsx`: the user icon was purely decorative (no click handler, no session info,
+  nowhere to sign out in the entire app). Now a real account panel — shows the actual
+  signed-in username and role (color-coded), or `LoginPrompt` when signed out, with a
+  working Sign Out button. The icon's border color itself reflects the real role at a
+  glance (red=ADMIN, green=OPERATOR, amber=AUDITOR).
+- `Alerts.jsx`: the Acknowledge button now only renders for ADMIN/OPERATOR — AUDITOR sees
+  a real "View only" indicator instead of a button that would always 403. Confirmed the
+  backend still rejects the real request directly (not just hidden in the UI): `POST
+  /alerts/{id}/acknowledge` as `auditor` → real `403`, exact message
+  `"Role 'AUDITOR' is not permitted for this action. Required: ['ADMIN', 'OPERATOR']"`.
+- `frontend/src/pages/CameraManagement.jsx` (new), `/camera-management` route, new
+  ADMIN-only sidebar icon: the first genuinely role-exclusive page in this app. Exposes
+  `PUT /cameras/{id}/location` and `POST /cameras` — both real, ADMIN-gated endpoints that
+  existed since the geospatial map work but were only ever reachable via a script or curl.
+  Lists every camera with inline coordinate editing and a camera-registration form. The
+  sidebar icon itself only renders when `role === 'ADMIN'`; the page's own content still
+  checks the real role too (not just the nav-icon visibility) and shows an honest "ADMIN
+  only" message otherwise — confirmed the real backend still rejects a non-admin's request
+  directly: `PUT /cameras/{id}/location` as `auditor` → real `403`.
+
+**Verified live, every role, not just one:** cleared all session state, logged in as
+`auditor` (real seeded account, `bootstrap_users` — same for `operator`), confirmed the
+account panel showed the real username/role, confirmed the Camera Management sidebar icon
+was absent, confirmed Alerts showed "View only" on unacknowledged alerts. Logged in as
+`admin`, confirmed the Camera Management icon appeared, opened it, set a real camera's
+coordinates through the real UI form, confirmed the change round-tripped to the real
+database and the Alerts page's map picked it up immediately. Logged out through the real
+Sign Out button and confirmed the header reverted to "Not signed in" and the Camera
+Management link disappeared instantly — no page reload, `AUTH_CHANGE_EVENT` doing its job.
+
+**What did NOT change:** no backend RBAC logic — every permission boundary described above
+was already real and enforced before this pass; this is purely a "show it, don't hide it"
+frontend change; the client-side role checks are conveniences for the UI, never the actual
+enforcement.
+
+**Tests:** 207/207 passing (no backend changes). `vite build` clean, `oxlint` clean (same
+pre-existing warning patterns, no new class introduced).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
