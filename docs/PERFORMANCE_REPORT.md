@@ -385,6 +385,40 @@ Two real, useful findings from the contrast between them:
    show the same moderate `D`/`T` pattern as every other residual this session — genuine
    evidence-based uncertainty, no new bug.
 
+## A third compound condition: all of night, fog, AND glare stacked together
+
+`--synthetic-condition night_fog_glare` composes `night_fog`'s darken+haze-blend with `night_glare`'s
+localized glow, plus a final blur — and surfaced a different, more severe, and honestly
+self-inflicted finding: stacking two Gaussian blurs, a flat haze blend, and a fully static
+(frame-invariant) glow overlay cumulatively suppresses real frame-to-frame pixel differences far more
+than any pairwise combination did.
+
+**Directly instrumented, not inferred:** over the first 260 frames, `CameraHealthMonitor`'s real
+frame-differencing check (`variance = np.var(absdiff(prev, cur))`) measured `frozen_stream` on 250 of
+them (96%) — genuinely below the real `FROZEN_FRAME_VARIANCE_THRESHOLD` (5.0) — correctly triggering
+Gate 1's hard ABSTAIN override BEFORE detection even runs. Candidate yield collapsed to just **3**
+(even lower than `night_fog`'s 7).
+
+**This is an honest limitation of over-compounding synthetic degradations in a test script, not a
+defect in `CameraHealthMonitor` or the Reliability Engine.** The health check is doing exactly what
+it's designed to do — correctly detecting that this specific synthetic composition drowns out real
+motion below what a real, working camera would ever produce. A real border camera under real
+triple-degraded conditions would not have a perfectly static overlay baked into every single frame
+the way this test's glow mask does.
+
+**A secondary, smaller real observation:** `excessive_blur` fired on 10 of those 260 frames, and since
+the classifier's real priority order makes this scene `GLARE` (not `FOG_RAIN`/`LOW_LIGHT_NIGHT`), the
+existing blur exemption (fixes 1/6) does not cover it — `EXCESSIVE_BLUR` during `GLARE` still fully
+penalizes `H`, even though the blur's real cause here is genuinely the co-occurring fog component, not
+glare itself. **Left open, not force-fixed**: blindly adding `GLARE` to the blur exemption set would
+incorrectly exempt a genuinely dirty/defocused lens during real glare with no fog involved — a real
+structural consequence of a single categorical label only ever reporting one of several genuinely
+co-occurring conditions, worth documenting honestly rather than papering over with a fix justified by
+one small, synthetically-constructed case.
+
+Of the 3 real candidates that survived Gate 1 at all, 1/3 DETECTED — `n=3` is too small to treat as
+anything beyond an anecdotal observation, unlike every other figure in this report.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

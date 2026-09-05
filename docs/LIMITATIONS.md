@@ -278,6 +278,37 @@ limitation — an out-of-date limitations file is worse than none.
      result on its own. The 7 remaining residuals show the same moderate `D`/`T` pattern (no floor, no
      single dominant factor, `S`≈0.666-0.667, `H`=1.0 for all) as every other residual this session —
      genuine evidence-based uncertainty, no new bug.
+  **A third compound condition — all of night, fog, AND glare stacked together
+  (`--synthetic-condition night_fog_glare`) — surfaced a real, different, more severe finding than
+  either compound above, and it is honestly a limitation of the SYNTHETIC TRANSFORM's own
+  composition, not the pipeline.** Composing `night_fog`'s darken+haze-blend with `night_glare`'s
+  localized glow, then a final blur, produced a real, measured side effect: stacking two separate
+  Gaussian blurs, a flat haze blend, AND a fully static (frame-invariant) glow overlay cumulatively
+  suppresses real frame-to-frame pixel differences far more than any pairwise combination did.
+  Directly instrumented (not inferred): over the first 260 frames, `CameraHealthMonitor`'s real
+  frame-differencing check (`edge/health/camera_health.py`, `variance = np.var(absdiff(prev, cur))`)
+  measured `frozen_stream` on 250 of them (96%) — genuinely below the real
+  `FROZEN_FRAME_VARIANCE_THRESHOLD` (5.0) — correctly triggering Gate 1's hard ABSTAIN override
+  BEFORE detection even runs. This is why candidate yield collapsed to just **3** (even lower than
+  `night_fog`'s 7): the health check is doing exactly what it is designed to do, correctly detecting
+  that this specific synthetic composition drowns out real motion below what a real, working camera
+  would ever produce. This is an honest limitation of over-compounding synthetic degradations in a
+  test script, not a defect in `CameraHealthMonitor` or the Reliability Engine — a real border camera
+  under real triple-degraded conditions would not have a perfectly static overlay baked into every
+  frame the way this test's glow mask does.
+  A secondary, smaller real observation from the same instrumentation: `excessive_blur` fired on 10 of
+  those 260 frames, and — since the classifier's real priority order makes this scene `GLARE` (not
+  `FOG_RAIN`/`LOW_LIGHT_NIGHT`) — the existing blur exemption (`_WEATHER_EXPLAINED_DEGRADED_REASONS`,
+  fixes 1/6) does NOT cover it, so `EXCESSIVE_BLUR` during `GLARE` still fully penalizes `H`, even
+  though in this specific compound scene the blur's real cause is genuinely the co-occurring fog
+  component, not glare itself. This is a real, structural consequence of a single categorical label
+  only ever reporting ONE of several genuinely co-occurring conditions — but it is NOT fixed here:
+  blindly adding `GLARE` to the blur exemption set would incorrectly exempt a genuinely dirty/defocused
+  lens during real glare with no fog involved, which has nothing to do with this specific compound
+  scenario. Left open as a documented, real limitation of the categorical design, not force-fixed on
+  the strength of one small, synthetically-constructed case.
+  Of the 3 real candidates that survived Gate 1 at all, 1/3 DETECTED — `n=3` is far too small to treat
+  as anything beyond an anecdotal observation, unlike every other figure in this document.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not

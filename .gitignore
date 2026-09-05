@@ -33,6 +33,7 @@ scripts/calibration_data_glare_mild/snapshots/
 scripts/calibration_data_night_mild/snapshots/
 scripts/calibration_data_night_fog/snapshots/
 scripts/calibration_data_night_glare/snapshots/
+scripts/calibration_data_night_fog_glare/snapshots/
 
 # Frontend
 frontend/node_modules/
