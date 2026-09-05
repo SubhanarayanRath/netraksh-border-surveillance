@@ -285,6 +285,25 @@ specific synthetic transform's measured severity (~0.43) simply sits well past t
 transform-intensity limitation — the same honestly-disclosed category as fog/night's transform
 intensity — not a formula defect calling for a seventh fix. No further change applied.
 
+**That conclusion was then actually tested with a milder glare transform, the same way as fog's.**
+`--synthetic-condition glare_mild` (×1.3+10, vs the original ×1.8+20) was empirically tuned against 5
+frames spanning the whole video to measure `glare_fraction≈0.21` — still reliably `GLARE` (comfortably
+above the real 0.15 cutoff throughout) but much closer to the boundary than the original's ~0.43. All
+52 candidates again reviewed — zero false positives.
+
+| Glare intensity | Genuine candidates | DETECTED | UNCERTAIN |
+|---|---|---|---|
+| Original (`glare_fraction≈0.43`) | 55 | 33 (60%) | 22 (40%) |
+| Milder (`glare_fraction≈0.21`) | 52 | 46 (88%) | 6 (12%) |
+
+An even larger confirmation than fog's: 60% → 88%. This makes sense given the ORIGINAL glare
+transform's severity relative to its own threshold was proportionally much larger than fog's
+(~2.9x the 0.15 cutoff, vs fog's transform, which was always below its 30 cutoff by construction, not
+several multiples past it) — so there was correspondingly more room for a milder version to recover.
+The 6 remaining `glare_mild` residuals show moderate, plausible `D`/`T` combinations (no floor, no
+single dominant factor, `S`≈0.63-0.68 for all, `H`=1.0) — genuine evidence-based uncertainty, not a
+further bug.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated

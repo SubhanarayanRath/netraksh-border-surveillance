@@ -146,6 +146,20 @@ def apply_synthetic_condition(frame: np.ndarray, condition_sim: str, rng: np.ran
         # specifically, not by accident of both paths firing at once.
         brightened = frame.astype(np.float32) * 1.8 + 20
         return np.clip(brightened, 0, 255).astype(np.uint8)
+    if condition_sim == "glare_mild":
+        # A DELIBERATELY MILDER glare, added to test a real hypothesis the
+        # same way fog_mild did for fog's residual (docs/LIMITATIONS.md):
+        # is glare's 40% residual (after the H-exemption fix) driven partly
+        # by this specific transform's severity, or purely by genuine
+        # evidence-based caution? "glare" above measures glare_fraction≈0.43
+        # — nearly 3x the real 0.15 classification cutoff. This variant
+        # (x1.3 + 10) was empirically tuned against 5 frames spanning the
+        # whole real video (not just one) to measure glare_fraction≈0.21 —
+        # still reliably classified GLARE (comfortably above 0.15
+        # throughout) but much closer to the boundary, mirroring "barely
+        # still glary" rather than "severely glary."
+        brightened = frame.astype(np.float32) * 1.3 + 10
+        return np.clip(brightened, 0, 255).astype(np.uint8)
     raise ValueError(f"unknown --synthetic-condition: {condition_sim}")
 
 
@@ -167,7 +181,7 @@ def main() -> None:
     parser.add_argument("--zone-y2", type=float, required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--synthetic-condition", choices=["none", "night", "fog", "fog_mild", "glare"], default="none",
+        "--synthetic-condition", choices=["none", "night", "fog", "fog_mild", "glare", "glare_mild"], default="none",
         help="Apply an honest, disclosed lighting transform to real frames "
              "before the real pipeline runs on them (see module docstring). "
              "Default 'none' reproduces the original real-daytime collection.",

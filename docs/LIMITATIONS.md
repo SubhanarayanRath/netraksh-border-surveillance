@@ -197,6 +197,18 @@ limitation — an out-of-date limitations file is worse than none.
   transform's measured severity (~0.43) simply sits well past that point — a transform-intensity
   limitation, the same honestly-disclosed category as fog/night's transform intensity, not a formula
   defect to fix. No further change applied.
+  **This "transform severity, not a bug" conclusion was then actually tested, the same way as fog's**
+  (see `docs/PERFORMANCE_REPORT.md`'s milder-fog result above): a second, deliberately milder glare
+  transform (`--synthetic-condition glare_mild`: ×1.3+10, vs the original ×1.8+20) was empirically
+  tuned against 5 frames spanning the whole real video to measure `glare_fraction≈0.21` — still
+  reliably classified `GLARE` (comfortably above the real 0.15 cutoff throughout) but much closer to
+  the boundary than the original's ~0.43. All 52 real candidates again manually reviewed — zero false
+  positives. Re-measured: DETECTED rose from 60% (33/55, original glare intensity) to **88% (46/52)**
+  — an even larger confirmation than fog's, since the original glare transform was proportionally
+  far more severe relative to its own classification threshold (~2.9x vs fog's transform, which was
+  always below its threshold by construction). The 6 remaining `glare_mild` residuals show moderate,
+  plausible `D`/`T` combinations (no floor, no single dominant factor, `S`≈0.63-0.68 for all,
+  `H`=1.0) — genuine evidence-based uncertainty, not a further bug.
 - **Temporal Evidence Intelligence (Mode A) implements 3 of the 5 originally-specified features.**
   `edge/temporal/track_features.py` computes track age, path smoothness, and speed consistency.
   Dwell-time-in-zone and revisit-count (the other two features named in architecture v4 §7) are not
