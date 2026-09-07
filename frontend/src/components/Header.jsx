@@ -31,13 +31,14 @@ export default function Header() {
 
   // Fetch sync status periodically
   useEffect(() => {
+    // /sync/status requires require_any_role (backend/api/system.py) — an
+    // anonymous viewer will never get anything but 401 from it. Polling it
+    // anyway every 5s regardless of auth state meant every unauthenticated
+    // visit spammed the console with a 401 every 5 seconds forever, for a
+    // request that was never going to succeed. Only poll once signed in.
+    if (!isAuthenticated) return undefined;
     const fetchSync = async () => {
       try {
-        // /sync/status requires require_any_role (backend/api/system.py) — this
-        // was a bare fetch() with no auth header, so it 401'd on every poll for
-        // anyone not logged in (silently swallowed by the catch below). Using
-        // authFetch means it actually succeeds once a viewer has signed in
-        // (e.g. via the Evidence page's login form) instead of always failing.
         const res = await authFetch('/sync/status');
         if (res.ok) {
           const data = await res.json();
@@ -48,13 +49,17 @@ export default function Header() {
     fetchSync();
     const timer = setInterval(fetchSync, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isAuthenticated]);
 
   // The "⚠ 04" badge used to be a hardcoded literal "04" — never reflected
   // anything real. /system/status already returns a real
   // pending_acknowledgements count (backend/api/system.py); it just wasn't
   // being read anywhere in the frontend.
   useEffect(() => {
+    // Same reasoning as the sync-status poll above: /system/status also
+    // requires require_any_role, so this is a guaranteed 401 for anyone not
+    // signed in — only poll once authenticated.
+    if (!isAuthenticated) return undefined;
     const fetchAlertCount = async () => {
       try {
         const res = await authFetch('/system/status');
@@ -67,7 +72,7 @@ export default function Header() {
     fetchAlertCount();
     const timer = setInterval(fetchAlertCount, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isAuthenticated]);
 
   // The sync panel's "Chain Integrity OK" line was a hardcoded literal,
   // never actually checked — but GET /system/verify-chain (public, no auth
