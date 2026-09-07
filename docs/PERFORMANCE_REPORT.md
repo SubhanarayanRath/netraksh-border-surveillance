@@ -686,6 +686,71 @@ residual (`D` alone cleanly separated DETECTED/UNCERTAIN), this milder triple-co
 jointly explained by `D` AND `T`: real evidence, correctly and conservatively weighed, not a bug in
 either factor alone.
 
+## UI fixes, cross-camera corroboration, a real external dataset, and a real production incident
+
+A later pass covered five distinct pieces of work, summarized here for the report; the full
+technical account of each is in `docs/ARCHITECTURE.md`'s changelog and `docs/LIMITATIONS.md`.
+
+**1. UI bug sweep (all 7 dashboard pages checked).** Five real, fabricated/incorrect values found
+and fixed — most notably the Architecture page, which stated things as fact that directly
+contradicted this report: "TensorRT Optimized" (never true — plain CPU YOLOv8n, exactly as this
+report's own Test run metadata says), a fixed "FPS 30.0 / RESOLUTION 4K UHD" (fabricated), a
+reliability-gate description of "DETECTED ≥85% / UNCERTAIN 50-84% / ABSTAIN <50%" (not the real
+gate — the real formula is `R = 0.40D+0.20T+0.20S+0.20H` banded at 0.75, ABSTAIN is Gate 1's
+camera-health override), a hardcoded SHA-256 value that was specifically the well-known hash of
+the *empty string*, and "Hyperledger Fabric consensus network" stated as fact when the real
+runtime label is MOCK mode. Also fixed: a fake "PERSON #184 | 91% CONF" detection box shown on
+every dashboard load before any real event occurred, a header CSS clipping bug (confirmed via the
+rendered `<h1>`'s own bounding box, not a guess), unauthenticated polling spamming 401s forever,
+and the Evidence page fabricating "DETECTION TYPE: Human" / "EDGE NODE: edge-001 (Active)" for
+every event regardless of what was real.
+
+**2. Cross-camera corroboration (poster §12B/§13) — first real implementation.** Confirmed by
+grepping the whole repo that nothing implemented camera topology, ETA, or the temporal-consistency
+formula `Tc = e^(-|Δt-t_expected|/σ)` before this. Built in `backend/services/cross_camera.py`:
+real haversine distance from each camera's real admin-entered coordinates, a real expected-travel-
+time range from a disclosed walking-speed heuristic, and the exact `Tc` formula. Explicitly
+**not** person re-identification (no face/appearance matching exists anywhere in this codebase) —
+disclosed everywhere as temporal+spatial plausibility only. Never rewrites an already-signed
+event's decision — stored as separate columns instead, to protect the tamper-evident
+chain-of-custody this report's own evidence pipeline depends on.
+
+**3. A real external dataset (MOT16), and the first real calibration fit this project has ever
+had.** Every calibration attempt in this report and in `docs/LIMITATIONS.md` was correctly
+REFUSED because this report's own video (`demo/videos/vtest.avi`, per Test run metadata above) has
+zero real false positives once reviewed — no negative examples anywhere to calibrate against.
+MOT16 (Milan et al., CC BY-NC-SA 3.0, non-commercial research use) ships real, human-annotated
+ground truth, so raw YOLO candidates could finally be checked against a real, independent answer
+instead of a human review. Real result: MOT16-04 (marketplace) → 712 real false positives of 3834
+candidates; MOT16-02 (street) → 1417 of 3268. Both produced a real, non-degenerate
+`CalibrationModule.fit()` — MOT16-04 → threshold 0.410; MOT16-02 → threshold 0.100. **The honest
+headline is that these two real numbers disagree** — reported as-is, not reconciled, and neither
+is applied to this project's own runtime defaults (a threshold fitted on one real camera doesn't
+obviously transfer to a camera neither sequence was even filmed on).
+
+**4. Cross-camera corroboration wired into escalation, on explicit request.** A MEDIUM-severity
+event with strong real corroboration (`Tc ≥ 0.6`) is now also escalation-eligible, alongside the
+existing HIGH-severity condition. LOW is never boosted. The original, signed `Event.severity`
+field is never mutated; every alert created this way is transparently marked
+(`Alert.escalated_via_corroboration`), never a silent change in behavior.
+
+**5. A real production incident, found and fixed.** The escalation change above shipped a DB
+migration as `BOOLEAN DEFAULT 0` — passed the full local test suite (298/298) and crashed the live
+Render deployment on startup, because Postgres enforces `BOOLEAN`'s real type and rejects an
+integer literal default, while SQLite (all this project's local testing runs against) accepts it
+silently. Found by directly polling the live deployment for ~15 minutes until it was clear the
+build wasn't just slow, then reading the real Render deploy log. Fixed (`DEFAULT FALSE`), and a
+regression test was added and *verified to actually catch the original bug* (reverted the fix,
+watched the test fail, restored it) before being trusted. **This revealed a real, structural gap**:
+this project's test suite runs against SQLite only — there is no Postgres available in this dev
+environment — so any other SQLite-lenient/Postgres-strict divergence has the same blind spot. Not
+fixed by more tests alone; disclosed as a standing limitation in `docs/LIMITATIONS.md`.
+
+Verified end-to-end on the live deployment after the fix: `/health` → 200, `/system/verify-chain`
+→ real chain integrity confirmed, `/events` schema carries the new corroboration fields, `/alerts`
+and `/cameras` correctly 401 for unauthenticated requests, and all 7 dashboard pages render
+correctly with no fabricated data. Full local suite: 302/302.
+
 ## Honesty checklist before this goes in the PPT
 
 - [x] Every number above came from a JSON file this run actually produced (`docs/PERFORMANCE_REPORT_MEASURED.json`), not estimated
@@ -693,4 +758,7 @@ either factor alone.
 - [x] The false-positive-reduction claim is NOT asserted — the honest result (no measured reduction on this clip) is reported instead of a more convenient-sounding number
 - [x] The video source is disclosed as a generic public test clip, not the team's actual demo footage — do not imply otherwise in the deck
 - [x] Verified directly (not assumed) that no crossing in this report's real-data calibration work is an actual intrusion — every DETECTED/UNCERTAIN number measures reliability-scoring behavior on real object detections, not intrusion-detection accuracy — see "None of this report's real crossings are actual intrusions" above
+- [x] The Architecture page's prior false claims (TensorRT, fabricated FPS/resolution, wrong reliability-gate bands, a fake SHA-256, "Hyperledger Fabric" stated as fact) are fixed and now match this report — do not let a stale screenshot of that page back into the deck
+- [x] MOT16's two real fitted thresholds (0.410 vs 0.100) are reported as disagreeing, not averaged or cherry-picked into a single "the calibrated threshold" claim
+- [x] The Postgres production incident is disclosed, including the structural gap it revealed (no Postgres available in this dev environment) — not glossed over as "found and fixed" alone
 - [ ] Re-run against real staged demo footage before final submission, and update this file from that run
