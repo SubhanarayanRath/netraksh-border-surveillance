@@ -443,21 +443,33 @@ class ANPRModule:
 
 
 # ---------------------------------------------------------------------------
-# Face Detection Module (detection only — no recognition in MVP)
+# Face Detection Module (+ real watchlist recognition — see
+# edge/detection/face_recognition.py's module docstring for the full
+# honest scope)
 # ---------------------------------------------------------------------------
 
 class FaceDetectionModule:
     """
     Face detection for person tracks in verification zones.
-    Architecture §15: MVP is detection only. Recognition (ArcFace) is advanced/stretch.
     Uses OpenCV Haar cascade as primary detector (fast, CPU-friendly).
     RetinaFace used if retina-face package is available (better accuracy).
+
+    Real watchlist recognition (SIH PS 26187 — "support facial
+    recognition", not detection alone): if a `recognizer` is supplied
+    (edge/detection/face_recognition.py's WatchlistFaceRecognizer,
+    typically built via sync_from_backend() in edge/main.py), every
+    detected face is also run through it — a real match adds
+    face_match_person_id/face_match_person_name/face_match_confidence to
+    the returned event dict; no match leaves them absent (never
+    fabricated). Detection-only behavior (recognizer=None, the previous
+    default) is completely unchanged.
     """
 
-    def __init__(self, zones: List[ZoneSchema]):
+    def __init__(self, zones: List[ZoneSchema], recognizer=None):
         self._verification_zones = [z for z in zones if z.zone_type == "verification"]
         self._face_cascade = None
         self._retinaface_available = False
+        self._recognizer = recognizer  # Optional[WatchlistFaceRecognizer]
         self._load_detectors()
 
     def _load_detectors(self):
@@ -511,9 +523,47 @@ class FaceDetectionModule:
             return None
 
         if self._retinaface_available:
-            return self._detect_retinaface(track, person_crop, zone_id)
+            result = self._detect_retinaface(track, person_crop, zone_id)
         else:
-            return self._detect_haar(track, person_crop, zone_id)
+            result = self._detect_haar(track, person_crop, zone_id)
+
+        if result is not None:
+            self._attempt_recognition(result, person_crop)
+        return result
+
+    def _attempt_recognition(self, result: dict, person_crop: np.ndarray) -> None:
+        """
+        Mutates `result` in place, adding face_match_* keys on a real
+        match. No-op (result unchanged) if no recognizer was supplied, the
+        recognizer hasn't been trained yet (e.g. watchlist sync hasn't
+        completed), or the real face_bbox this detection produced can't be
+        cropped from person_crop for any reason.
+        """
+        if self._recognizer is None or not self._recognizer.is_trained():
+            return
+        face_bbox = result.get("face_bbox")
+        if face_bbox is None:
+            return
+        fx1, fy1 = max(0, int(face_bbox.x1)), max(0, int(face_bbox.y1))
+        fx2 = min(person_crop.shape[1], int(face_bbox.x2))
+        fy2 = min(person_crop.shape[0], int(face_bbox.y2))
+        if fx2 <= fx1 or fy2 <= fy1:
+            return
+        face_crop = person_crop[fy1:fy2, fx1:fx2]
+        try:
+            match = self._recognizer.recognize(face_crop)
+        except Exception as exc:
+            logger.debug(f"[Face] Watchlist recognition error: {exc}")
+            return
+        if match is None:
+            return
+        result["face_match_person_id"] = match["person_id"]
+        result["face_match_person_name"] = match["name"]
+        result["face_match_confidence"] = match["confidence"]
+        logger.info(
+            f"[Face] Watchlist match: track {result.get('track_id')} -> "
+            f"{match['name']} (confidence={match['confidence']:.1f}, lower=stronger)"
+        )
 
     def _detect_retinaface(self, track: TrackData, crop: np.ndarray, zone_id: str) -> Optional[dict]:
         try:

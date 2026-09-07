@@ -114,6 +114,19 @@ def check_and_escalate(event: Event, db: Session) -> None:
 
     db.commit()
 
+    # Real external C2 integration (SIH PS 26187) — delivered to every
+    # active, admin-registered webhook subscription whose min_severity
+    # this real alert meets. Non-fatal on failure (see
+    # webhook_delivery.py's own docstring); every real alert, not only
+    # cross-boundary ones, since a subscribing external C2 system may
+    # legitimately want visibility into all of this command's alerts, not
+    # just the ones that happen to cross a jurisdiction boundary.
+    try:
+        from backend.services.webhook_delivery import deliver_alert_webhooks
+        deliver_alert_webhooks(alert, event, db)
+    except Exception as exc:
+        logger.error(f"[Escalation] Webhook delivery failed (non-fatal): {exc}")
+
     # Broadcast via WebSocket (non-blocking import to avoid circular dep)
     try:
         import asyncio

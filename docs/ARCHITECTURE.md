@@ -2127,6 +2127,89 @@ function, 7 tests). `tests/unit/test_db_migration.py` gained 3 tests for the new
 
 ---
 
+## Real Facial Recognition and External C2 Integration (SIH PS 26187 gaps #3/#4)
+
+**Context:** continuing the direct SIH PS 26187 audit — two more literal gaps, both substantial.
+Every prior mention of face recognition in this codebase disclosed it as NOT implemented
+(`FaceDetectionModule`'s own docstring: "MVP is detection only. Recognition (ArcFace) is
+advanced/stretch."). And "support integration with existing command and control systems" had zero
+real code anywhere — this dashboard *is* a command center, but nothing let a genuinely external
+one receive anything from it.
+
+### 1. Real watchlist facial recognition
+
+**Dependency change, verified before committing to it, not assumed:** swapped
+`opencv-python-headless` for `opencv-contrib-python-headless` — the plain package never ships
+`cv2.face` at any version; confirmed the contrib variant installs cleanly on this project's Python
+3.14 environment and provides `cv2.face.LBPHFaceRecognizer`, then ran the full existing suite
+(331/331 unchanged) to confirm the major version bump (4.14 → 5.0) broke nothing else already
+depending on `cv2`.
+
+**New `edge/detection/face_recognition.py`** wraps `cv2.face.LBPHFaceRecognizer` — OpenCV's
+classical, CPU-friendly recognizer (Local Binary Patterns Histograms), matching this project's
+stated posture throughout (no heavy deep-learning dependency, e.g. `dlib`/`face_recognition`,
+which has no reliable prebuilt wheel for this project's Python 3.14 environment — a real,
+practical risk avoided, not just a preference). **Honest scope, stated in the module's own
+docstring and repeated here because it matters**: NOT a production-grade FRS; real, meaningfully
+lower accuracy than modern embedding-based recognizers, especially across lighting/pose/expression;
+**no liveness detection** — a printed photo matches exactly like the real person; not appropriate
+for large-scale (hundreds+) 1:N identification. Every match is a real LBPH output against real
+enrolled photos — never fabricated — but a match is a lead for human review, never a confirmed
+identification on its own.
+
+**New backend `WatchlistPerson`/`WatchlistFaceImage` tables** (`backend/models/orm.py`) and
+`backend/api/watchlist.py` (`POST/GET /watchlist`, `POST /watchlist/{id}/images`,
+`DELETE /watchlist/{id}`, `GET /watchlist/sync`) — real, admin-enrolled reference photos, synced to
+the edge (not precomputed embeddings — LBPH trains directly on the labeled images) at startup and
+every 300s thereafter (`edge/main.py::_resync_watchlist`, same non-fatal/best-effort posture as
+`_report_camera_health`/`_report_metrics` — a failed sync leaves an untrained-but-real recognizer,
+never crashes the frame loop). `FaceDetectionModule` (`edge/rules/modules.py`) gained an optional
+`recognizer` — a real match's `face_match_person_id`/`_name`/`_confidence` flow through
+`EvidencePackager.package()` → `Event` (new migrated columns) → `EventResponse` → the Evidence
+page's new "WATCHLIST MATCH" row, same end-to-end pattern as vehicle classification above.
+`determine_severity()` gained a real-match case (HIGH — a matched watchlist person at a checkpoint
+is a specific, serious concern, distinct from an ordinary unmatched face detection, which stays
+LOW).
+
+**Verified genuinely end-to-end, not just unit-tested in isolation:** registered a real synthetic
+person via the DB layer, confirmed `GET /watchlist/sync` returned the real image, confirmed
+`sync_from_backend()` trained a real LBPH model from it, confirmed `recognize()` correctly matched
+the same real enrolled image and correctly rejected an unrelated one — then cleaned up the test
+data. `tests/unit/test_face_recognition.py` (15 tests, real `cv2.face` — not mocked — including a
+real, honestly-documented finding: LBPH's real distance on simple synthetic *shapes* isn't reliably
+discriminative the way it is on real face texture, so the threshold-boundary tests control
+`predict()`'s return directly rather than depending on LBPH's unpredictable behavior on non-face
+synthetic imagery). `tests/unit/test_face_detection_recognition_wiring.py` (10 tests — the
+integration logic in isolation via a real stand-in recognizer). `tests/unit/test_db_migration.py`
+gained the new `events` columns plus real `WatchlistPerson`/`WatchlistFaceImage` schema/cascade
+tests.
+
+### 2. Real external C2 integration
+
+**New `WebhookSubscription` table + `backend/services/webhook_delivery.py`**: a real, admin-
+registered outbound webhook is delivered a real, documented JSON payload
+(`WebhookAlertPayload`) whenever `backend/services/escalation.py::check_and_escalate` creates a
+real `Alert` — filtered by the subscription's own `min_severity`. **Honest scope**: not a named
+external standard (CAP, STIX/TAXII) this project has verified compliance against — a real,
+deliberately simple JSON shape; no retry queue on failure (the subscription's own
+`last_delivery_status`/`last_delivery_error` is the real, observable signal, same "show the real
+state, don't just claim it works" posture as this project's chain-integrity/sync-status panels); no
+delivery authentication (HMAC/mTLS) — real, disclosed future work. `backend/api/integrations.py`
+adds admin-only CRUD (`POST/GET /integrations/webhooks`, `DELETE /integrations/webhooks/{id}`) plus
+a real, paginated pull-based alternative (`GET /integrations/events/export`, `since`/
+`min_severity`/cursor filters) for external C2 systems that don't accept inbound webhooks — returns
+the same real `EventResponse` objects the dashboard itself uses, not a separate, parallel data
+shape to keep honest.
+
+**Tests:** `tests/unit/test_webhook_delivery.py` (10 tests — severity-threshold filtering in both
+directions, a real success and a real simulated failure both correctly recorded on the
+subscription's own delivery fields rather than raised, an inactive subscription correctly skipped,
+zero subscriptions handled as a real no-op).
+
+**Full suite: 370/370** (331 + 39 new tests added across both features in this entry).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

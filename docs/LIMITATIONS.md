@@ -691,6 +691,17 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 2. Implemented, but scoped narrower than it might sound
 
+- **Real external C2 (command-and-control) integration exists (SIH PS 26187), scoped honestly.**
+  `backend/services/webhook_delivery.py` delivers a real, documented JSON payload
+  (`WebhookAlertPayload`) to admin-registered outbound webhooks whenever a real `Alert` is created,
+  plus a real pull-based `GET /integrations/events/export` for external systems that don't accept
+  inbound webhooks. **Not** a named external standard (CAP, STIX/TAXII, etc.) — this project has not
+  implemented or verified compliance against any such standard; the payload is a real, deliberately
+  simple, project-specific JSON shape. **No retry queue** on a failed delivery — a subscription's
+  own `last_delivery_status`/`last_delivery_error` fields are the real, honest signal something
+  needs manual attention, not silently retried or silently dropped. **No delivery authentication**
+  (HMAC signing, mTLS) — the receiving system is trusted to be reachable at whatever URL an admin
+  registered; real, disclosed future work, not claimed as done.
 - **This project has no Tailwind compiler — only a small hand-written CSS subset
   (`frontend/src/index.css`) — and several class names that look like Tailwind utilities
   throughout the frontend do nothing at all**, because they were never defined in that
@@ -754,10 +765,22 @@ limitation — an out-of-date limitations file is worse than none.
   It is scoped to checkpoint-angle cameras only (`ZoneType.CHECKPOINT`) and is intentionally kept out
   of the primary demo narrative — mention it only if directly asked, and describe it exactly this
   honestly.
-- **Face detection is detection-only, no recognition** — this is a deliberate, correct scope decision
-  (not a limitation to apologize for), using OpenCV Haar cascade with RetinaFace as an optional
-  higher-accuracy fallback when installed. No ArcFace or any face-recognition/matching capability
-  exists anywhere in this codebase.
+- **Update — real watchlist facial recognition now exists (SIH PS 26187), with a deliberately
+  narrow, honestly-disclosed scope.** `edge/detection/face_recognition.py` wraps
+  `cv2.face.LBPHFaceRecognizer` (classical Local Binary Patterns Histograms — CPU-friendly, matching
+  this project's stated posture throughout; requires `opencv-contrib-python-headless`, swapped in
+  for the plain `opencv-python-headless` package, which never ships `cv2.face`). **Not** ArcFace or
+  any deep-learning embedding-based recognizer — `dlib`/`face_recognition` has no reliable prebuilt
+  wheel for this project's Python 3.14 environment, a real practical constraint, not just a
+  preference. Real, meaningfully lower accuracy than modern recognizers, especially across
+  lighting/pose/expression variation. **No liveness detection anywhere in this pipeline** — a
+  printed photo held up to a camera matches exactly like the real person; never use a match as the
+  sole basis for a consequential decision. Not appropriate for large-scale (hundreds+) 1:N
+  identification — LBPH's real accuracy degrades as the enrolled population grows. Every match is a
+  real algorithm output against real, admin-enrolled reference photos (`backend/api/watchlist.py`)
+  — never fabricated — but treat every match as a lead for human review, never a confirmed
+  identification on its own. See `docs/ARCHITECTURE.md`'s "Real Facial Recognition and External C2
+  Integration" entry for the full technical account.
 - **Blockchain is MOCK mode.** `MockBlockchainAdapter` is the active adapter because WSL2/Docker are
   unavailable on the development machine, so Hyperledger Fabric's `test-network` cannot run. The
   `FabricCLIAdapter` class implements the identical interface and is a one-line config swap

@@ -3,7 +3,15 @@
 
 # --- Computer Vision & AI ---
 ultralytics>=8.3.0          # YOLOv8n/v11n detector
-opencv-python-headless>=4.10.0  # Camera ingestion, health/condition checks
+# Was opencv-python-headless — swapped to the -contrib- variant (superset
+# API, same "headless"/no-GUI-deps build) specifically for cv2.face
+# (LBPHFaceRecognizer), needed for real watchlist face recognition
+# (SIH PS 26187 — "support facial recognition", not detection alone).
+# Confirmed real and working: >=5.0.0 ships cv2.face; the plain
+# opencv-python-headless package never has, at any version. Only one of
+# {opencv-python,-headless,-contrib-*} may be installed at once — do not
+# add opencv-python-headless back alongside this.
+opencv-contrib-python-headless>=5.0.0  # Camera ingestion, health/condition checks, face recognition
 easyocr>=1.7.2              # ANPR OCR step (after plate crop)
 retina-face>=0.0.17         # Face detection (MVP: detection only, no recognition)
 

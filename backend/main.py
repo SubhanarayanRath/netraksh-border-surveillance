@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api import alerts, auth, cameras, events, system, websocket
+from backend.api import alerts, auth, cameras, events, integrations, system, watchlist, websocket
 from backend.config import settings
 from backend.database.session import SessionLocal, init_db
 from backend.security.auth import bootstrap_users
@@ -142,6 +142,8 @@ app.include_router(auth.router)
 app.include_router(cameras.router)
 app.include_router(events.router)
 app.include_router(alerts.router)
+app.include_router(watchlist.router)
+app.include_router(integrations.router)
 app.include_router(websocket.router)
 
 from fastapi.staticfiles import StaticFiles

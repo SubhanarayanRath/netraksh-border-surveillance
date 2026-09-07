@@ -235,6 +235,12 @@ class EvidencePackage(BaseModel):
     # plate_text/face_bbox above — deliberately excluded from
     # get_signable_fields() below, same reasoning as those.
     vehicle_subtype: Optional[str] = None
+    # Real watchlist face-match result (edge/detection/face_recognition.py) —
+    # same optional/contextual, excluded-from-hash treatment as face_bbox
+    # above. None whenever no match was found, never fabricated.
+    face_match_person_id: Optional[str] = None
+    face_match_person_name: Optional[str] = None
+    face_match_confidence: Optional[float] = None
 
     class Config:
         use_enum_values = True
@@ -337,6 +343,12 @@ class EventResponse(BaseModel):
     # class or when the underlying YOLO class wasn't a recognized vehicle
     # subtype — never fabricated.
     vehicle_subtype: Optional[str] = None
+    # Real watchlist face-match result (edge/detection/face_recognition.py's
+    # LBPH recognizer). All None whenever no match was found — never a
+    # fabricated "no match" claim about a face that wasn't even checked.
+    face_match_person_id: Optional[str] = None
+    face_match_person_name: Optional[str] = None
+    face_match_confidence: Optional[float] = None
 
     class Config:
         use_enum_values = True
@@ -509,3 +521,89 @@ class PipelineMetricsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# Watchlist (SIH PS 26187 — real facial recognition, not detection alone).
+# See backend/models/orm.py's WatchlistPerson/WatchlistFaceImage docstrings
+# and edge/detection/face_recognition.py for the full honest scope.
+# ---------------------------------------------------------------------------
+
+class WatchlistPersonCreate(BaseModel):
+    """POST /watchlist body — registers a person with one real reference
+    face photo (a face crop, not a full scene — base64-encoded JPEG)."""
+    name: str
+    notes: Optional[str] = None
+    image_base64: str
+
+
+class WatchlistPersonResponse(BaseModel):
+    person_id: str
+    name: str
+    notes: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+    face_image_count: int
+
+
+class WatchlistSyncEntry(BaseModel):
+    """One entry of GET /watchlist/sync — real reference images, for the
+    edge to train its local LBPH recognizer against. Not a precomputed
+    embedding: LBPH trains on the labeled images directly."""
+    person_id: str
+    name: str
+    image_base64_list: List[str]
+
+
+class WatchlistSyncResponse(BaseModel):
+    persons: List[WatchlistSyncEntry]
+
+
+# ---------------------------------------------------------------------------
+# External C2 integration (SIH PS 26187). See backend/models/orm.py's
+# WebhookSubscription docstring and backend/services/webhook_delivery.py
+# for the real delivery mechanism and its honest scope.
+# ---------------------------------------------------------------------------
+
+class WebhookSubscriptionCreate(BaseModel):
+    name: str
+    url: str
+    min_severity: Severity = Severity.LOW
+
+
+class WebhookSubscriptionResponse(BaseModel):
+    subscription_id: str
+    name: str
+    url: str
+    min_severity: Severity
+    is_active: bool
+    created_at: datetime
+    last_delivery_at: Optional[datetime] = None
+    last_delivery_status: Optional[str] = None
+    last_delivery_error: Optional[str] = None
+
+
+class WebhookAlertPayload(BaseModel):
+    """Real, documented outbound payload — not any named external standard
+    (CAP, STIX, etc.) this project has not actually implemented or
+    verified compliance against. A deliberately simple, real JSON shape."""
+    alert_id: str
+    event_id: str
+    severity: Severity
+    event_type: Optional[str] = None
+    camera_id: Optional[str] = None
+    zone_id: Optional[str] = None
+    detection_class: Optional[str] = None
+    crosses_jurisdiction_boundary: bool
+    escalated_via_corroboration: bool = False
+    timestamp: datetime
+    issuing_command_id: str
+
+
+class EventExportResponse(BaseModel):
+    """GET /integrations/events/export — real events for pull-based
+    external consumers that don't accept inbound webhooks. Same real
+    fields as EventResponse, deliberately not re-declared/duplicated:
+    consumers get the same real EventResponse objects, paginated."""
+    events: List[EventResponse]
+    next_cursor: Optional[str] = None

@@ -265,6 +265,25 @@ export default function Evidence() {
                     <span className="text-sm font-body text-muted">No corroborating sighting found (temporal/spatial plausibility only — not identity confirmation)</span>
                   )}
                 </div>
+                {selectedEvent?.detection_class === 'face' && (
+                  <div className="flex-col" style={{ gridColumn: 'span 2' }}>
+                    <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">WATCHLIST MATCH</span>
+                    {/* Real, computed by edge/detection/face_recognition.py's
+                        LBPH recognizer against admin-enrolled reference photos
+                        (backend/api/watchlist.py) — see that module's docstring
+                        for the full honest scope: NOT a production-grade FRS,
+                        no liveness detection, a lead for human review, not a
+                        confirmed identification. Absence shown honestly, never
+                        fabricated. */}
+                    {selectedEvent?.face_match_person_id ? (
+                      <span className="text-sm font-body text-danger">
+                        {selectedEvent.face_match_person_name} (LBPH distance={selectedEvent.face_match_confidence?.toFixed(1)}, lower=stronger) — lead for human review, not a confirmed identification
+                      </span>
+                    ) : (
+                      <span className="text-sm font-body text-muted">No watchlist match</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <button 

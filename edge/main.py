@@ -31,6 +31,7 @@ from edge.condition.scene_condition import SceneConditionClassifier
 from edge.detection.adaptive_gate import AdaptiveComputeGate
 from edge.detection.calibration import CalibrationModule
 from edge.detection.detector import DetectionTracker, NightMotionFallback
+from edge.detection.face_recognition import sync_from_backend
 from edge.evidence.packager import EdgeKeyManager, EvidenceChainStore, EvidencePackager
 from edge.health.camera_health import CameraHealthMonitor
 from edge.ingestion.camera_adapter import CameraAdapter
@@ -105,6 +106,14 @@ def determine_severity(event: dict, reliability) -> Severity:
     if "ANPR" in et:
         return Severity.MEDIUM
     if "FACE" in et:
+        # A real watchlist match (edge/detection/face_recognition.py) is a
+        # materially different, more serious event than an ordinary,
+        # unmatched face detection — HIGH, same tier as abandoned object /
+        # wrong-direction. See that module's docstring for the honest
+        # scope of what a "match" does and doesn't mean (never treat it as
+        # a confirmed identification on its own).
+        if event.get("face_match_person_id"):
+            return Severity.HIGH
         return Severity.LOW
     if "MOVEMENT_UNCLASSIFIED" in et:
         # Night-motion fallback (architecture v4 §3): honestly LOW — this is
@@ -172,7 +181,18 @@ class EdgePipeline:
         self.line_module = LineCrossingModule(self.zones)
         self.behavior_module = BehaviorModule(self.zones)
         self.anpr_module = ANPRModule(self.zones)
-        self.face_module = FaceDetectionModule(self.zones)
+
+        # Real watchlist face recognition (SIH PS 26187 -- "support facial
+        # recognition", not detection alone; see edge/detection/
+        # face_recognition.py for the full honest scope). Synced from the
+        # backend at startup and periodically thereafter (see
+        # _resync_watchlist below, same cadence pattern as
+        # _report_metrics). A failed sync leaves an untrained-but-real
+        # recognizer -- FaceDetectionModule still runs real detection, just
+        # with zero real matches possible until a later sync succeeds.
+        self._backend_url = config.get("backend_url", os.environ.get("BACKEND_URL", "http://localhost:8443"))
+        self.face_recognizer = sync_from_backend(self._backend_url)
+        self.face_module = FaceDetectionModule(self.zones, recognizer=self.face_recognizer)
 
         # Layer 6: Evidence
         key_dir = config.get("key_dir", "certs/edge")
@@ -232,6 +252,11 @@ class EdgePipeline:
         self._metrics_json_path = config.get(
             "metrics_json_path", os.path.join("edge", "data", f"metrics_{self.camera_id}.json")
         )
+        # Real watchlist re-sync cadence (SIH PS 26187) -- 300s default:
+        # frequent enough that a newly-enrolled/removed watchlist person
+        # takes effect within a few minutes without a restart, infrequent
+        # enough not to hammer the backend every frame loop tick.
+        self._watchlist_sync_interval = config.get("watchlist_sync_interval_seconds", 300.0)
 
     def start(self) -> None:
         """
@@ -267,6 +292,7 @@ class EdgePipeline:
         frame_count = 0
         last_health_report_time = 0.0
         last_metrics_report_time = 0.0
+        last_watchlist_sync_time = time.time()  # already synced once in __init__
 
         with self.adapter:
             for frame, meta in self.adapter.frames():
@@ -284,6 +310,9 @@ class EdgePipeline:
                 if time.time() - last_metrics_report_time > self._metrics_report_interval:
                     last_metrics_report_time = time.time()
                     self._report_metrics()
+                if time.time() - last_watchlist_sync_time > self._watchlist_sync_interval:
+                    last_watchlist_sync_time = time.time()
+                    self._resync_watchlist()
 
     def _report_camera_health(self) -> None:
         """
@@ -696,6 +725,25 @@ class EdgePipeline:
             )
         except Exception as exc:
             logger.error(f"[Pipeline] Failed to emit event: {exc}")
+
+    def _resync_watchlist(self) -> None:
+        """
+        Real periodic re-sync (SIH PS 26187) — re-trains the watchlist face
+        recognizer from the backend's current, real enrolled photos, so a
+        person added/removed from the watchlist takes effect without an
+        edge restart. sync_from_backend() itself is non-fatal on failure
+        (returns an untrained-but-real recognizer) — this call is
+        best-effort, never interrupts the frame loop, same posture as
+        _report_camera_health/_report_metrics.
+        """
+        try:
+            self.face_recognizer = sync_from_backend(self._backend_url)
+            self.face_module._recognizer = self.face_recognizer
+            logger.info(
+                f"[Pipeline] Watchlist re-synced (trained={self.face_recognizer.is_trained()})"
+            )
+        except Exception as exc:
+            logger.error(f"[Pipeline] Watchlist re-sync failed (non-fatal): {exc}")
 
     def _report_metrics(self) -> None:
         """

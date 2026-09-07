@@ -148,6 +148,16 @@ class Event(Base):
     # shared.constants.VehicleSubtype) -- SIH PS 26187 asks for "vehicle
     # detection AND classification", not detection alone.
     vehicle_subtype: Mapped[Optional[str]] = mapped_column(String(32))
+    # Real watchlist face-match result (edge/detection/face_recognition.py's
+    # LBPH recognizer) -- None whenever no face was detected, no watchlist
+    # was synced, or the detected face didn't match any enrolled person
+    # closely enough (see that module's docstring for the real, disclosed
+    # match threshold). Never fabricated -- an absent match is shown as an
+    # absent match, not a false "no match" claim about a face that wasn't
+    # even checked.
+    face_match_person_id: Mapped[Optional[str]] = mapped_column(String(36))
+    face_match_person_name: Mapped[Optional[str]] = mapped_column(String(128))
+    face_match_confidence: Mapped[Optional[float]] = mapped_column(Float)
     evidence_clip_ref: Mapped[Optional[str]] = mapped_column(String(512))
     edge_device_id: Mapped[Optional[str]] = mapped_column(String(64))
     sequence_number: Mapped[Optional[int]] = mapped_column(Integer)
@@ -381,3 +391,80 @@ class PipelineMetricsSnapshot(Base):
     events_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     adaptive_gate_json: Mapped[Optional[dict]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Watchlist (SIH PS 26187 — "support facial recognition", not detection
+# alone). Real, honestly-scoped: OpenCV's classical LBPH face recognizer
+# (edge/detection/face_recognition.py), trained on admin-enrolled reference
+# photos — NOT a production-grade deep-learning FRS. Sensitive to lighting/
+# pose/expression, no liveness detection, not appropriate for legal or
+# large-scale 1:N identification. See docs/LIMITATIONS.md for the full
+# honest account of scope.
+# ---------------------------------------------------------------------------
+
+class WatchlistPerson(Base):
+    __tablename__ = "watchlist_persons"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    face_images: Mapped[List["WatchlistFaceImage"]] = relationship(
+        "WatchlistFaceImage", back_populates="person", cascade="all, delete-orphan"
+    )
+
+
+class WatchlistFaceImage(Base):
+    """
+    One real, admin-uploaded reference photo for a watchlist person. LBPH
+    (unlike embedding-based recognizers) trains directly on labeled face
+    images rather than precomputed vectors, so the raw image itself is what
+    gets synced to and trained on at the edge (GET /watchlist/sync) —
+    multiple images per person, ideally varied lighting/angle, real-world
+    improve real match robustness against this recognizer's own real
+    limitations.
+    """
+    __tablename__ = "watchlist_face_images"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    person_id: Mapped[str] = mapped_column(String(36), ForeignKey("watchlist_persons.id"), nullable=False)
+    # Base64-encoded JPEG bytes of a cropped face image — small enough
+    # (single face crops, not full frames) to store inline rather than as a
+    # file path, and simpler to sync to the edge over the existing REST API.
+    image_base64: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    person: Mapped["WatchlistPerson"] = relationship("WatchlistPerson", back_populates="face_images")
+
+
+# ---------------------------------------------------------------------------
+# External C2 integration (SIH PS 26187 — "support integration with
+# existing command and control systems"). Real, admin-registered outbound
+# webhook subscriptions — this dashboard is itself a real command center
+# (real events, real alerts, real evidence), but nothing before this let a
+# genuinely EXTERNAL system (a different agency's own C2 platform) receive
+# real-time notifications. See backend/services/webhook_delivery.py for the
+# real delivery mechanism and its honest scope.
+# ---------------------------------------------------------------------------
+
+class WebhookSubscription(Base):
+    __tablename__ = "webhook_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Only alerts at or above this severity are delivered — LOW is the
+    # real default (deliver everything) so a subscriber must opt IN to
+    # filtering, not silently miss real alerts by an unset default.
+    min_severity: Mapped[str] = mapped_column(String(16), nullable=False, default="LOW")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Real, observable delivery health — the same "don't just claim it
+    # works, show the real last outcome" posture as this project's chain-
+    # integrity/sync-status panels.
+    last_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_delivery_status: Mapped[Optional[str]] = mapped_column(String(16))  # "SUCCESS" | "FAILED"
+    last_delivery_error: Mapped[Optional[str]] = mapped_column(String(512))

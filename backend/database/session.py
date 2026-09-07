@@ -98,6 +98,20 @@ def _migrate_add_missing_columns() -> None:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE events ADD COLUMN vehicle_subtype VARCHAR(32)"))
 
+    # Watchlist face recognition (SIH PS 26187) -- same guard pattern,
+    # applied to the events table. WatchlistPerson/WatchlistFaceImage
+    # themselves are brand-new tables, already handled by
+    # Base.metadata.create_all() above; only these new columns on the
+    # pre-existing events table need an explicit migration.
+    if "events" in inspector.get_table_names():
+        existing_event_columns = {col["name"] for col in inspector.get_columns("events")}
+        if "face_match_person_id" not in existing_event_columns:
+            logger.info("[DB] Migrating events table: adding face-match columns")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE events ADD COLUMN face_match_person_id VARCHAR(36)"))
+                conn.execute(text("ALTER TABLE events ADD COLUMN face_match_person_name VARCHAR(128)"))
+                conn.execute(text("ALTER TABLE events ADD COLUMN face_match_confidence FLOAT"))
+
 
 def init_db() -> None:
     """Create all tables if they don't exist. Used for dev/test without migrations."""

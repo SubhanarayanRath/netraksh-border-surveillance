@@ -186,6 +186,9 @@ async def ingest_event(
         plate_text=ep.plate_text,
         plate_confidence=ep.plate_confidence,
         vehicle_subtype=str(ep.vehicle_subtype) if ep.vehicle_subtype else None,
+        face_match_person_id=ep.face_match_person_id,
+        face_match_person_name=ep.face_match_person_name,
+        face_match_confidence=ep.face_match_confidence,
         evidence_clip_ref=ep.evidence_clip_ref,
         edge_device_id=payload.edge_device_id,
         sequence_number=payload.sequence_number,
@@ -296,4 +299,7 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         corroboration_distance_m=event.corroboration_distance_m,
         corroboration_delta_t_s=event.corroboration_delta_t_s,
         vehicle_subtype=event.vehicle_subtype,
+        face_match_person_id=event.face_match_person_id,
+        face_match_person_name=event.face_match_person_name,
+        face_match_confidence=event.face_match_confidence,
     )

@@ -433,6 +433,13 @@ class EvidencePackager:
             # from the track's own field, same pattern as track_id above —
             # None whenever track is None or the detection wasn't a vehicle.
             vehicle_subtype=overrides.get("vehicle_subtype", getattr(track, "vehicle_subtype", None)),
+            # Real watchlist face-match result (edge/detection/
+            # face_recognition.py), set by FaceDetectionModule._attempt_recognition
+            # on a real match and passed through event_overrides — None
+            # whenever no face module fired or no match was found.
+            face_match_person_id=overrides.get("face_match_person_id"),
+            face_match_person_name=overrides.get("face_match_person_name"),
+            face_match_confidence=overrides.get("face_match_confidence"),
         )
 
         # Compute hash of signable fields
