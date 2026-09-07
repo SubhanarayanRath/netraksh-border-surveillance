@@ -84,6 +84,31 @@ class TestAttemptRecognitionNoOp:
         assert len(fake.calls) == 1  # did genuinely attempt recognition
 
 
+class TestHaarCascadeRealLoad:
+    """The actual fix: a real cascade XML is bundled in the repo
+    (edge/detection/cascades/haarcascade_frontalface_default.xml) as a
+    fallback for OpenCV builds (like this project's
+    opencv-contrib-python-headless) that ship no cascade data files at all.
+    Confirms real detection is actually possible in this environment now,
+    not just that a missing one no longer crashes."""
+
+    def test_face_detection_module_loads_a_real_non_empty_cascade(self):
+        module = FaceDetectionModule(zones=[_verification_zone()], recognizer=None)
+        assert module._face_cascade.empty() is False
+
+    def test_bundled_cascade_file_loads_directly(self):
+        import cv2
+        from pathlib import Path
+
+        bundled_path = (
+            Path(__file__).resolve().parents[2] / "edge" / "detection" / "cascades" /
+            "haarcascade_frontalface_default.xml"
+        )
+        assert bundled_path.exists()
+        cascade = cv2.CascadeClassifier(str(bundled_path))
+        assert cascade.empty() is False
+
+
 class TestHaarCascadeEmptyClassifierDoesNotCrash:
     """Regression test for a real, previously-uncaught crash: on an OpenCV
     build whose data files don't include the bundled Haar cascade XML (e.g.

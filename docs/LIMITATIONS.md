@@ -655,9 +655,15 @@ limitation — an out-of-date limitations file is worse than none.
   the first 200 real frames of `demo/videos/vtest.avi` (no vehicles yet visible) run at a steady
   ~175ms/frame — already ~4x the original figure — and a full-clip run was observed taking several
   times longer still once real vehicles enter frame and ANPR's EasyOCR call (CPU-heavy) starts
-  firing. Neither the new steady-state per-frame cost nor which stage(s) beyond ANPR now dominate
-  it were fully characterized this pass — re-running `docs/PERFORMANCE_REPORT.md`'s benchmark
-  script end to end and updating its numbers is real, disclosed future work, not done here.
+  firing. **Update — the benchmark script was re-run afterward, confirming this precisely**: it
+  still reproduces the original 44.6ms/21.8-FPS figure almost exactly (43.5-46.7ms, 52→23
+  unchanged under both confirmation policies) because it only ever wires up a subset of the real
+  pipeline — it has never included `AdaptiveComputeGate`, `TrackContinuityGuard`,
+  `TrackFeatureTracker`, `LineCrossingModule`, `BehaviorModule`, `ANPRModule`, or
+  `FaceDetectionModule`. See `docs/PERFORMANCE_REPORT.md`'s "Re-measurement (2026-09-07)" entry for
+  the full comparison table and honest conclusion: do not cite 44.6ms/21.8 FPS as the current
+  full-pipeline number anywhere. Extending the benchmark script itself to cover every real stage
+  remains real, disclosed future work, not done this pass.
 - **AES-256 evidence encryption key is stored on the edge device's local disk**
   (`certs/edge/<camera_id>.aes`), not in a TPM/HSM. It protects evidence at rest from casual disk
   access or exfiltration of the storage medium, but **not** from an attacker who has already
