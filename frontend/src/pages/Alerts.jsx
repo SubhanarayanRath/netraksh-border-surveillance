@@ -192,7 +192,7 @@ export default function Alerts() {
             ))}
           </div>
 
-          <div className="bg-panel border rounded p-2 relative h-full min-h-[400px]" style={{ flex: '1 1 0%', minWidth: 0 }}>
+          <div className="bg-panel border rounded p-2 relative h-full" style={{ flex: '1 1 0%', minWidth: 0, minHeight: '400px' }}>
             {/* Real geospatial map — replaces what used to be a fully
                 decorative <div> (static background image, 3 hardcoded pixel
                 positions named "SECTOR 7"/"HQ"/"NODE C", tied to nothing

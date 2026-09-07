@@ -143,10 +143,14 @@ export default function Evidence() {
         <h2 className="text-xl font-display text-main tracking-widest uppercase">Tamper-Evident Evidence Unit</h2>
       </div>
 
-      <div className="flex gap-4 h-[calc(100%-40px)]">
-        
+      {/* h-[calc(100%-40px)] and w-[300px] (here and below) were bracket-
+          notation classes that never applied any real CSS — see
+          index.css's "looks like Tailwind, isn't real" entry. Converted to
+          real inline styles. */}
+      <div className="flex gap-4" style={{ height: 'calc(100% - 40px)' }}>
+
         {/* Left List */}
-        <div className="w-[300px] flex flex-col bg-panel border rounded p-4 h-full">
+        <div className="flex flex-col bg-panel border rounded p-4 h-full" style={{ width: '300px' }}>
           <div className="flex items-center gap-2 mb-4">
             <Shield size={20} className="text-ok" />
             <span className="font-display">Evidence Vault</span>
@@ -268,7 +272,7 @@ export default function Evidence() {
             </div>
 
             {/* Media Card */}
-            <div className="w-[300px] flex-shrink-0 bg-panel border rounded p-2 relative">
+            <div className="flex-shrink-0 bg-panel border rounded p-2 relative" style={{ width: '300px' }}>
               <div
                 className="w-full h-full bg-black rounded relative overflow-hidden"
                 style={{
@@ -317,7 +321,7 @@ export default function Evidence() {
 
                 {/* Mock bbox overlay — only shown over the placeholder, never over real decrypted evidence */}
                 {evidenceImageStatus !== 'ready' && evidenceImageStatus !== 'auth-required' && (
-                  <div className="absolute top-[20%] left-[30%] w-[20%] h-[60%] border-2 border-ok bg-[rgba(74,222,128,0.1)]">
+                  <div className="absolute border-2 border-ok" style={{ top: '20%', left: '30%', width: '20%', height: '60%', backgroundColor: 'rgba(74,222,128,0.1)' }}>
                     <div className="absolute top-0 left-0 -translate-y-full bg-ok text-black text-xs font-display px-1 whitespace-nowrap">
                       [PERSON 98%]
                     </div>
@@ -336,7 +340,7 @@ export default function Evidence() {
 
             <div className="flex justify-between relative px-8">
               {/* Connecting line */}
-              <div className="absolute top-6 left-[10%] right-[10%] h-[1px] bg-color border-b border-color -z-10"></div>
+              <div className="absolute top-6 bg-color border-b border-color -z-10" style={{ left: '10%', right: '10%', height: '1px' }}></div>
               
               <VerificationStep
                 icon={Database} title="Event Data Extracted"

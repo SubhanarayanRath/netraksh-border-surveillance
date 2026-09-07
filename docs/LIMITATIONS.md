@@ -701,12 +701,29 @@ limitation — an out-of-date limitations file is worse than none.
   and fixed everywhere an exhaustive grep found it: `Alerts.jsx`, `Health.jsx` (twice),
   `Evidence.jsx`, `Dashboard.jsx` (twice), `Performance.jsx` — 7 total, all now real CSS
   Grid via inline `style`. The identical root cause as the earlier `text-center` bug
-  (`Sidebar.jsx`, see the "Sidebar Logo Label Overflow Fix" entry). **Not investigated**:
-  whether other class families beyond `grid`/`grid-cols-*`/breakpoint prefixes and the one
-  `text-center` case have the same "looks real, isn't" problem — `gap-*` was checked and
-  confirmed genuinely defined, but the rest of the class list in this codebase has not been
-  systematically audited against `index.css`. Treat any layout that looks visually "off" as
-  worth checking this way before assuming it's a different bug.
+  (`Sidebar.jsx`, see the "Sidebar Logo Label Overflow Fix" entry). **Update — this WAS
+  eventually investigated systematically, and the answer was far worse than "maybe a few
+  more":** every `className` string used anywhere in the app was audited against what's
+  actually defined in `index.css`. Over 100 classes were in real, active use — `.absolute`,
+  `.relative`, `flex-grow`, `flex-1`, `flex-shrink-0`, `overflow-hidden`, `overflow-y-auto`,
+  every `top-*`/`left-*`/`right-*`/`bottom-*` offset, every `mt-*`/`mb-*`/`pt-*`/`pb-*`/
+  `px-*`/`py-*` spacing value, `z-10`/`z-20`/`z-50`, `text-center`, `uppercase`, `truncate`,
+  `shadow-lg`, several `hover:*`/`disabled:*`/`last:*` pseudo-class variants, and more — with
+  **no matching CSS rule anywhere**. `.absolute`/`.relative` alone affected 54 occurrences
+  across 9+8 files. Found the same way as before: `getComputedStyle()` on a real, reported UI
+  bug (the header's Sync Status dropdown rendering overlapping the header instead of below
+  it) showed `position: static` where the `className` said `absolute`. Fixed with a
+  comprehensive real utility layer in `index.css` matching Tailwind's actual semantics (same
+  0.25rem-per-unit scale this file's own `.gap-*` classes already used), plus 12 remaining
+  bracket/arbitrary-value classes (which a flat rule can't cover) converted to real inline
+  styles, same pattern as the `grid`/`grid-cols-*` fix above. One real regression surfaced and
+  fixed in the same pass: `VideoFeed`'s container collapsed to 1.6px tall once `.absolute`
+  started working and stopped accidentally masking `min-h-[400px]`'s own identical bug — see
+  `docs/ARCHITECTURE.md`'s "The Real Root Cause" entry for the full account, including what's
+  still honestly unconverted (a handful of purely cosmetic `text-[10px]`/hover-tint classes,
+  layout-safe, deliberately deprioritized). Treat any layout that looks visually "off" as
+  worth checking this way — `getComputedStyle`, not eyeballing a screenshot — before assuming
+  it's a different bug; screenshots alone missed this for the entire session until now.
 - **The header's Sync Status panel now honestly calls the real `GET /system/verify-chain`
   for its "Chain Integrity" line** (previously a hardcoded "Chain Integrity OK" regardless
   of any real state) — this means it shows "N block(s) failed integrity verification. Chain

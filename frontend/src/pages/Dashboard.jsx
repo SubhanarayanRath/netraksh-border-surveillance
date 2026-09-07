@@ -125,8 +125,11 @@ export default function Dashboard() {
         </div>
       </div>
       
-      {/* Connecting line */}
-      {num < 3 && <div className="absolute left-6 top-8 w-[2px] h-12 bg-border-color -z-10"></div>}
+      {/* Connecting line. w-[2px] was a bracket-notation class (see
+          index.css's "looks like Tailwind, isn't real" entry) — never
+          applied any real width, same as every other arbitrary-value class
+          in this file until converted to a real inline style like this. */}
+      {num < 3 && <div className="absolute left-6 top-8 h-12 bg-border-color -z-10" style={{ width: '2px' }}></div>}
     </div>
   );
 
@@ -137,11 +140,19 @@ export default function Dashboard() {
         <span className="text-sm text-muted font-display tracking-widest uppercase">Active Monitoring Zone: Sector Alpha</span>
       </div>
 
-      <div className="flex gap-6 h-[calc(100%-80px)]">
-        
+      {/* h-[calc(100%-80px)], flex-[3]/flex-[2] (below), and min-h-[400px]
+          (below) were all bracket-notation classes that never applied any
+          real CSS — the video feed column in particular used to collapse
+          to ~2px tall as a result (confirmed via getComputedStyle, not
+          guessed) since nothing was left to give it real height once
+          .absolute/.relative were fixed and stopped accidentally
+          contributing document-flow height. Converted to real inline
+          styles. */}
+      <div className="flex gap-6" style={{ height: 'calc(100% - 80px)' }}>
+
         {/* Left Column */}
-        <div className="flex-col flex-[3] gap-4 h-full">
-          <div className="flex-grow min-h-[400px]">
+        <div className="flex-col gap-4 h-full" style={{ flex: 3 }}>
+          <div className="flex-grow" style={{ minHeight: '400px' }}>
             <VideoFeed eventData={latestEvent} isConnected={true} demoScenario={demoScenario} />
           </div>
 
@@ -178,7 +189,7 @@ export default function Dashboard() {
         </div>
 
         {/* Right Column */}
-        <div className="flex-col flex-[2] gap-4 h-full">
+        <div className="flex-col gap-4 h-full" style={{ flex: 2 }}>
           <div className="bg-panel border rounded p-6 flex flex-col gap-6 flex-grow">
             <div className="flex justify-between items-start">
               <div className="flex-col">

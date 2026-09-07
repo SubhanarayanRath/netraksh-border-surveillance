@@ -104,7 +104,7 @@ export default function Architecture() {
         </div>
 
         <div className="flex gap-4 relative z-10 justify-center">
-          <div className="w-[30%]">
+          <div style={{ width: '30%' }}>
             <ArchNode title="Evidence Chain" subtitle="Local Ledger" icon={Database}>
               <div className="mt-2 text-xs">Cryptographic Hashing</div>
               {/* Was a hardcoded literal SHA-256 hash shown for every visit —
@@ -119,7 +119,7 @@ export default function Architecture() {
             </ArchNode>
           </div>
 
-          <div className="w-[40%] ml-8">
+          <div className="ml-8" style={{ width: '40%' }}>
             <div className="bg-[rgba(239,68,68,0.05)] border border-danger rounded p-4 flex flex-col glow-danger h-full">
               <div className="flex justify-between items-center mb-4 text-danger border-b border-[rgba(239,68,68,0.2)] pb-2">
                 <div className="flex items-center gap-2">

@@ -151,7 +151,15 @@ export default function Header() {
       </div>
 
       {showAccountPanel && (
-        <div className="absolute top-[60px] right-4 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3">
+        // Was a hardcoded "top-[60px]" — assumed the header row is always
+        // exactly 60px tall. It isn't anymore: .header-top's grid row is
+        // "minmax(60px, auto)" (fixed earlier this session specifically so
+        // a wrapped subtitle doesn't clip), so on a real header taller than
+        // 60px this dropdown rendered overlapping the header's own lower
+        // content instead of appearing below it. top: '100%' sticks to the
+        // bottom of the relatively-positioned <header> regardless of its
+        // real height.
+        <div className="absolute right-4 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3" style={{ top: 'calc(100% + 8px)' }}>
           {isAuthenticated ? (
             <>
               <div className="flex justify-between items-center border-b border-color pb-2">
@@ -172,9 +180,10 @@ export default function Header() {
         </div>
       )}
 
-      {/* Expandable Sync Panel */}
+      {/* Expandable Sync Panel — same top-[60px] -> top:100% fix as the
+          account panel above; see that comment for why. */}
       {showSyncPanel && (
-        <div className="absolute top-[60px] right-24 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3">
+        <div className="absolute right-24 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3" style={{ top: 'calc(100% + 8px)' }}>
           <div className="flex justify-between items-center border-b border-color pb-2">
             <span className="text-xs font-display text-muted uppercase">Sync Status</span>
             <div className={`w-2 h-2 rounded-full ${syncStatus.queued > 0 ? 'bg-warning animate-pulse' : 'bg-ok'}`}></div>

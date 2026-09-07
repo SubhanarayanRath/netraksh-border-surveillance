@@ -2013,6 +2013,67 @@ this" deserves evidence, not reassurance):
 
 ---
 
+## The Real Root Cause: `.absolute`/`.relative` (and ~100 More) Were Never Defined
+
+**Found via:** user reported the Sync Status dropdown rendering overlapping the header instead of
+appearing below it, with a screenshot. That specific bug traced to the header's own dropdown
+panels using a hardcoded `top-[60px]` that assumed the header row is always exactly 60px tall (it
+isn't — see the earlier "Sidebar Logo Label Overflow Fix" / grid-row entries). Fixing that
+surfaced something far bigger: `getComputedStyle()` on the panel showed `position: static`, not
+`absolute`, even though its `className` literally contained `absolute`. **`.absolute` was never
+defined anywhere in `index.css`.** Neither was `.relative`.
+
+**Scope, confirmed by auditing every `className` string used anywhere in the app against what's
+actually defined in `index.css`, not guessed:** over 100 classes were in real, active use —
+`flex-grow`, `flex-1`, `flex-shrink-0`, `overflow-hidden`, `overflow-y-auto`, every `top-*`/
+`left-*`/`right-*`/`bottom-*` offset, every `mt-*`/`mb-*`/`pt-*`/`pb-*`/`px-*`/`py-*` spacing
+value, `z-10`/`z-20`/`z-50`, `text-center`, `uppercase`, `truncate`, `shadow-lg`, several
+`hover:*`/`disabled:*`/`last:*` pseudo-class variants, and more — with **no matching CSS rule
+anywhere**, silently doing nothing. This is the exact same class of bug `docs/LIMITATIONS.md`
+already documented for `.grid`/`.grid-cols-N`/`text-center` (found while building the geospatial
+map, months before this session) — but that entry explicitly said "not investigated: whether other
+class families... have the same problem." They did, far more extensively than anyone had checked.
+
+**Why this looked "fine" for so long:** most of these classes' absence was invisible by pure
+coincidence — an un-absolutely-positioned badge still often landed near the right place because it
+was early in normal document flow anyway; a missing `flex-grow` still often looked plausible
+because a sibling element's own real height propagated close enough. The coincidence only visibly
+broke down in specific cases — exactly why a header 60px assumption (real, specific, checkable) is
+what finally surfaced it, and exactly why `demo/videos/vtest.avi`-style manual visual review kept
+missing it in every earlier pass this session, including several of this session's own.
+`getComputedStyle()` caught it in one call; eyeballing screenshots never did.
+
+**Fix:** `frontend/src/index.css` gained a real, comprehensive utility layer for every non-bracket
+class actually used in the app, matching the exact Tailwind semantics the JSX was clearly written
+against — the same 0.25rem-per-unit spacing scale this file's own pre-existing `.gap-*` classes
+already used, not invented. Separately, every bracket/arbitrary-value class that a flat rule can't
+cover (`h-[calc(100%-80px)]`, `flex-[3]`, `min-h-[400px]`, `w-[300px]`, `w-[30%]`, `top-[20%]`,
+etc. — 12 total, across `Dashboard.jsx`, `Evidence.jsx`, `Alerts.jsx`, `Architecture.jsx`) was
+converted to a real inline `style={{...}}`, the same pattern already established for the earlier
+`grid`/`grid-cols-N` fix.
+
+**One real regression this surfaced and fixed in the same pass:** once `.absolute` started
+actually working, `VideoFeed`'s container — previously kept a real ~400px tall only by badges
+accidentally contributing real document-flow height while broken — collapsed to **1.6px**
+(confirmed via `getComputedStyle`, not guessed) the moment those badges correctly left the flow,
+because `min-h-[400px]` had *also* never been real. Fixed as part of the same inline-style
+conversion pass above, not a separate follow-up.
+
+**Verified, not assumed:** `getComputedStyle()` before/after on both the fixed dropdown panel and
+the `VideoFeed` container; a full visual sweep of all 7 dashboard pages after rebuilding, looking
+specifically for anything now mispositioned or collapsed by the newly-real CSS rather than only
+confirming the one reported bug. Full suite: 308/308 (Python-side unaffected — this is entirely a
+frontend CSS/JSX change).
+
+**Honestly still open:** a smaller number of purely cosmetic bracket-value classes remain
+unconverted — mostly `text-[10px]` (renders at the browser's default font-size instead of 10px)
+and several `hover:bg-[rgba(...)]` tint states (renders with no hover-color change at all). None of
+these affect layout or functionality, only visual polish, which is why they were deliberately
+deprioritized behind the layout-breaking ones above rather than left unmentioned — see
+`docs/LIMITATIONS.md`.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
