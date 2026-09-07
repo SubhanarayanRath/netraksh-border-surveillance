@@ -8,6 +8,21 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 1. Fundamental limitations (not fixable by more engineering time alone)
 
+- **This project's entire test suite runs against SQLite only — there is no Postgres available in
+  this dev environment — and this already caused one real production incident.** The
+  `escalated_via_corroboration` DB migration (`backend/database/session.py`, added when wiring
+  cross-camera corroboration into escalation) shipped as `BOOLEAN DEFAULT 0`, passed the full local
+  suite (298/298), and crashed the live Render deployment on startup: Postgres enforces `BOOLEAN`'s
+  real type and rejects an integer literal default (`psycopg2.errors.DatatypeMismatch`); SQLite has
+  no real `BOOLEAN` type and accepts `0`/`1` silently, so nothing local could have caught it. Fixed
+  (`DEFAULT FALSE`, valid in both) and a direct regression test added
+  (`tests/unit/test_db_migration.py::TestMigrationSqlIsPostgresCompatible`, verified to actually
+  fail against the original buggy line before trusting it) — but that test only catches this one
+  specific pattern (an integer literal on a BOOLEAN column). Any other SQLite-lenient/Postgres-strict
+  divergence in a future migration (or elsewhere) has the same structural blind spot: local
+  testing, however thorough, cannot substitute for testing against the real production database
+  engine, and this project cannot do that in its current dev environment. See
+  `docs/ARCHITECTURE.md`'s "Real Production Incident" entry for the full account.
 - **Detection model is COCO-pretrained YOLOv8n, not fine-tuned on a border-surveillance dataset.**
   Night, fog, rain, and unusual terrain/viewpoint accuracy is a *data* problem, not an architecture
   problem — no amount of pipeline engineering around it changes what the underlying detector was

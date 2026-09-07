@@ -4,6 +4,7 @@ NETRAKSH — Unit tests for backend/database/session.py's migration guard
 cameras table that Base.metadata.create_all() cannot alter).
 """
 import sqlite3
+from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 
@@ -163,3 +164,100 @@ class TestMigrationAddsCrossCameraColumns:
 
         cols = [c["name"] for c in inspect(engine).get_columns("events")]
         assert cols.count("corroboration_score") == 1
+
+
+def _make_legacy_engine_with_alerts(db_path: str):
+    """cameras + events + alerts tables matching the schema from before
+    the cross-camera-corroboration escalation boost
+    (backend/services/escalation.py) — no escalated_via_corroboration
+    column on alerts."""
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE cameras (id TEXT PRIMARY KEY, name TEXT NOT NULL, location TEXT NOT NULL);
+        CREATE TABLE events (id TEXT PRIMARY KEY, camera_id TEXT NOT NULL, timestamp TEXT NOT NULL);
+        CREATE TABLE alerts (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            crosses_jurisdiction_boundary BOOLEAN,
+            command_id_issuing TEXT NOT NULL,
+            blockchain_status TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO alerts (id, event_id, severity, crosses_jurisdiction_boundary, "
+        "command_id_issuing, blockchain_status) "
+        "VALUES ('alert-legacy', 'ev-legacy', 'HIGH', 0, 'COMMAND_A', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+    return create_engine(f"sqlite:///{db_path}")
+
+
+class TestMigrationAddsEscalationCorroborationColumn:
+    def test_adds_escalated_via_corroboration_to_legacy_alerts_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        cols = {c["name"] for c in inspect(engine).get_columns("alerts")}
+        assert "escalated_via_corroboration" in cols
+
+    def test_preserves_existing_alert_rows(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT id, severity FROM alerts WHERE id = 'alert-legacy'")).fetchone()
+        assert row is not None
+        assert row[1] == "HIGH"
+
+    def test_idempotent_on_an_already_migrated_alerts_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+        _migrate_add_missing_columns()  # must not raise (no duplicate ALTER TABLE)
+
+        cols = [c["name"] for c in inspect(engine).get_columns("alerts")]
+        assert cols.count("escalated_via_corroboration") == 1
+
+
+class TestMigrationSqlIsPostgresCompatible:
+    """
+    Real production incident, not a hypothetical: the first version of the
+    escalated_via_corroboration migration used
+    "BOOLEAN DEFAULT 0" — SQLite accepts this silently (it has no real
+    BOOLEAN type; 0/1 are just INTEGER), which is exactly why every test
+    above passed even with the bug in place, and why this project's local
+    SQLite-only testing never caught it. The real Postgres deployment
+    (render.yaml) enforces BOOLEAN's real type and crashed on startup:
+    "column ... is of type boolean but default expression is of type
+    integer" — a real production outage, confirmed from the live Render
+    deploy logs. This project has no Postgres available in this dev
+    environment to test against directly (same class of honest limitation
+    as the WSL2/Docker gap documented for blockchain), so this is a direct,
+    cheap regression guard against the exact broken pattern recurring:
+    every BOOLEAN column this migration guard adds must use a real boolean
+    literal (TRUE/FALSE), never an integer literal, which is valid in both
+    SQLite and Postgres.
+    """
+
+    def test_no_boolean_column_migration_uses_an_integer_default_literal(self):
+        session_py = Path(__file__).resolve().parent.parent.parent / "backend" / "database" / "session.py"
+        source = session_py.read_text()
+        for line in source.splitlines():
+            if "BOOLEAN" in line.upper() and "ALTER TABLE" in line.upper():
+                assert "DEFAULT 0" not in line.upper() and "DEFAULT 1" not in line.upper(), (
+                    f"Found an integer literal DEFAULT on a BOOLEAN column migration — this is the "
+                    f"exact real bug that crashed the Postgres deployment. Use DEFAULT FALSE/TRUE "
+                    f"instead: {line.strip()}"
+                )

@@ -77,7 +77,16 @@ def _migrate_add_missing_columns() -> None:
         if "escalated_via_corroboration" not in existing_alert_columns:
             logger.info("[DB] Migrating alerts table: adding escalated_via_corroboration column")
             with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT 0"))
+                # "DEFAULT 0" (an integer literal) is real, honest evidence of
+                # this project's SQLite-only local testing: SQLite has no
+                # real BOOLEAN type (it stores 0/1 as INTEGER and accepts
+                # this silently), so it never caught the bug. The real
+                # Postgres deployment (render.yaml) does enforce BOOLEAN's
+                # real type and rejected it outright on startup:
+                # "column ... is of type boolean but default expression is
+                # of type integer" — a genuine production crash, not
+                # hypothetical. FALSE is valid in both SQLite and Postgres.
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT FALSE"))
 
 
 def init_db() -> None:

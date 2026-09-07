@@ -1865,7 +1865,54 @@ reach the blockchain via a real boundary zone; idempotency). Full suite: 298/298
 
 ---
 
-## Assumptions and Limitations
+## Real Production Incident: Postgres Deploy Crash From a SQLite-Only-Tested Migration
+
+**What happened:** the `escalated_via_corroboration` migration above shipped as
+`ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT 0` — passed the full
+local test suite (298/298) and was pushed. The live Render deployment (Postgres, per
+`render.yaml`) crashed on startup:
+
+```
+sqlalchemy.exc.ProgrammingError: (psycopg2.errors.DatatypeMismatch) column
+"escalated_via_corroboration" is of type boolean but default expression is of type integer
+ERROR:    Application startup failed. Exiting.
+==> Exited with status 3
+```
+
+**Root cause, stated plainly:** SQLite has no real `BOOLEAN` type — it stores `0`/`1` as plain
+`INTEGER` and accepts `DEFAULT 0` on a column declared `BOOLEAN` without complaint. Postgres
+enforces the real type and correctly rejects an integer literal as a boolean column's default.
+Every local test in this project's suite runs against SQLite (`sqlite:///:memory:` or a temp
+file) — there is no Postgres available in this dev environment to test against directly (the same
+class of honest gap as the WSL2/Docker unavailability documented for the blockchain mock). So
+298/298 passing locally was real and honest, and still shipped a real production-crashing bug —
+this project's test suite structurally cannot catch a SQLite/Postgres divergence, and this is the
+first time that gap actually mattered.
+
+**Found via:** the user asked to verify the live Render deployment reflected the latest push.
+Polling the live site's served JS bundle hash for ~15 minutes showed zero change — long enough to
+rule out "just a slow build" — then the user pasted the real Render deploy log, which contained
+the exact stack trace above.
+
+**Fix:** `DEFAULT FALSE` (a real boolean literal, valid in both SQLite and Postgres) instead of
+`DEFAULT 0`. Since the failed deploy's `ALTER TABLE` ran inside a transaction
+(`engine.begin()`) that rolled back on the exception, the live Postgres database was never left in
+a partially-migrated state — the next deploy runs the (now-fixed) migration cleanly from scratch.
+
+**What was added so this doesn't recur:**
+- `tests/unit/test_db_migration.py::TestMigrationAddsEscalationCorroborationColumn` (3 tests) — the
+  same SQLite-based coverage every other migration in this guard already had (this column simply
+  didn't have any before the incident).
+- `tests/unit/test_db_migration.py::TestMigrationSqlIsPostgresCompatible` (1 test) — a direct,
+  cheap regression guard: greps `backend/database/session.py`'s own source for any
+  `ALTER TABLE ... BOOLEAN ...` migration using an integer `DEFAULT 0`/`DEFAULT 1` literal instead
+  of `TRUE`/`FALSE`. Verified this test actually fails against the original buggy line (reverted
+  it, watched the test fail with a clear message, restored the fix) before trusting it — not just
+  assumed. This does not replace real Postgres testing (still not available in this dev
+  environment) but catches this exact real bug pattern, and any future BOOLEAN migration written
+  the same way, going forward.
+
+Full suite: 302/302 (298 + 4 new).
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
 2. Demo runs on CPU (laptop), not Jetson-class edge hardware
