@@ -76,6 +76,16 @@ class ZoneSchema(BaseModel):
     polygon: Polygon
     owning_command_id: str
     adjacent_command_id: Optional[str] = None  # Non-null → boundary zone → escalation eligible
+    # Wrong-way vehicle/movement detection (SIH PS 26187's "suspicious
+    # activity detection") on a boundary-line zone (zone_type == "boundary",
+    # exactly 2 polygon points — see LineCrossingModule). Value is a real
+    # LineCrossingDirection string ("A_TO_B" or "B_TO_A"): a crossing in
+    # THIS direction is flagged EventType.WRONG_DIRECTION instead of the
+    # ordinary LINE_CROSSING. None (the default) means no restriction —
+    # every existing zone without this configured behaves exactly as
+    # before. Meaningless on fence-type zones; LineCrossingModule only
+    # reads this on boundary-line zones.
+    restricted_direction: Optional[str] = None
 
     class Config:
         use_enum_values = True
@@ -146,6 +156,10 @@ class TrackData(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     trajectory: List[Point] = Field(default_factory=list)
+    # Real sub-classification when detection_class == VEHICLE (see
+    # shared.constants.VehicleSubtype) — None for every other detection
+    # class, never fabricated when the underlying YOLO class is unknown.
+    vehicle_subtype: Optional[str] = None
 
     class Config:
         use_enum_values = True
@@ -216,6 +230,11 @@ class EvidencePackage(BaseModel):
     plate_confidence: Optional[float] = None
     face_bbox: Optional[BoundingBox] = None
     face_confidence: Optional[float] = None
+    # Real sub-classification when detection_class == VEHICLE (see
+    # shared.constants.VehicleSubtype). Optional/contextual, same as
+    # plate_text/face_bbox above — deliberately excluded from
+    # get_signable_fields() below, same reasoning as those.
+    vehicle_subtype: Optional[str] = None
 
     class Config:
         use_enum_values = True
@@ -313,6 +332,11 @@ class EventResponse(BaseModel):
     corroborated_by_event_id: Optional[str] = None
     corroboration_distance_m: Optional[float] = None
     corroboration_delta_t_s: Optional[float] = None
+    # Real sub-classification when detection_class == "vehicle" (see
+    # shared.constants.VehicleSubtype). None for every other detection
+    # class or when the underlying YOLO class wasn't a recognized vehicle
+    # subtype — never fabricated.
+    vehicle_subtype: Optional[str] = None
 
     class Config:
         use_enum_values = True

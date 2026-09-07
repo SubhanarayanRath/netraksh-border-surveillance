@@ -8,7 +8,7 @@ from shared.constants import DetectionClass, EventType, LineCrossingDirection
 from shared.schemas import BoundingBox, Point, Polygon, TrackData, ZoneSchema
 
 
-def _line_zone(zone_id="line-1", a=(0.0, 0.0), b=(10.0, 0.0)) -> ZoneSchema:
+def _line_zone(zone_id="line-1", a=(0.0, 0.0), b=(10.0, 0.0), restricted_direction=None) -> ZoneSchema:
     return ZoneSchema(
         zone_id=zone_id,
         camera_id="cam-1",
@@ -16,6 +16,7 @@ def _line_zone(zone_id="line-1", a=(0.0, 0.0), b=(10.0, 0.0)) -> ZoneSchema:
         zone_type="boundary",
         polygon=Polygon(points=[Point(x=a[0], y=a[1]), Point(x=b[0], y=b[1])]),
         owning_command_id="COMMAND_A",
+        restricted_direction=restricted_direction,
     )
 
 
@@ -131,3 +132,63 @@ class TestMultipleLines:
         result = module.check(_track(1, 5.0, 105.0))  # side_a=+1 (unchanged), side_b=+1 (crossed!)
         assert result is not None
         assert result["zone_id"] == "line-b"
+
+
+class TestWrongDirection:
+    """
+    SIH PS 26187's "suspicious activity detection": ZoneSchema.restricted_direction
+    (new) lets a boundary-line zone flag one specific crossing direction as
+    wrong-way, real vehicle/person movement instead of an ordinary crossing.
+    EventType.WRONG_DIRECTION previously existed only as a defined-but-unused
+    enum value with zero real producer anywhere in the codebase.
+
+    Geometry established by the existing tests above: for a=(0,0), b=(10,0),
+    crossing from y>0 (side +1) to y<0 (side -1) reports A_TO_B; the reverse
+    reports B_TO_A.
+    """
+
+    def test_no_restricted_direction_configured_always_reports_line_crossing(self):
+        """Regression: every zone without this new field configured (i.e.
+        every zone that existed before this feature) must behave exactly as
+        before — restricted_direction defaults to None."""
+        module = LineCrossingModule(zones=[_line_zone(a=(0, 0), b=(10, 0))])
+        module.check(_track(1, 5.0, 5.0))
+        result = module.check(_track(1, 5.0, -5.0))
+        assert result["event_type"] == EventType.LINE_CROSSING
+
+    def test_crossing_in_the_restricted_direction_fires_wrong_direction(self):
+        zone = _line_zone(a=(0, 0), b=(10, 0), restricted_direction=LineCrossingDirection.A_TO_B)
+        module = LineCrossingModule(zones=[zone])
+        module.check(_track(1, 5.0, 5.0))     # above
+        result = module.check(_track(1, 5.0, -5.0))  # crosses to below -> A_TO_B
+        assert result["direction"] == LineCrossingDirection.A_TO_B
+        assert result["event_type"] == EventType.WRONG_DIRECTION
+
+    def test_crossing_the_other_direction_still_reports_ordinary_line_crossing(self):
+        """Only the configured direction is flagged -- the reverse crossing on
+        the SAME zone is still an ordinary, non-wrong-way LINE_CROSSING."""
+        zone = _line_zone(a=(0, 0), b=(10, 0), restricted_direction=LineCrossingDirection.A_TO_B)
+        module = LineCrossingModule(zones=[zone])
+        module.check(_track(1, 5.0, -5.0))    # below
+        result = module.check(_track(1, 5.0, 5.0))   # crosses to above -> B_TO_A
+        assert result["direction"] == LineCrossingDirection.B_TO_A
+        assert result["event_type"] == EventType.LINE_CROSSING
+
+    def test_restricted_direction_set_to_the_other_value_flags_the_reverse_crossing(self):
+        zone = _line_zone(a=(0, 0), b=(10, 0), restricted_direction=LineCrossingDirection.B_TO_A)
+        module = LineCrossingModule(zones=[zone])
+        module.check(_track(1, 5.0, -5.0))
+        result = module.check(_track(1, 5.0, 5.0))   # -> B_TO_A, matches restriction
+        assert result["event_type"] == EventType.WRONG_DIRECTION
+
+    def test_wrong_direction_event_still_carries_the_real_track_and_zone_fields(self):
+        """The event dict shape is unchanged -- only event_type differs from
+        an ordinary LINE_CROSSING."""
+        zone = _line_zone(zone_id="checkpoint-road", a=(0, 0), b=(10, 0), restricted_direction=LineCrossingDirection.A_TO_B)
+        module = LineCrossingModule(zones=[zone])
+        module.check(_track(1, 5.0, 5.0))
+        result = module.check(_track(1, 5.0, -5.0))
+        assert result["zone_id"] == "checkpoint-road"
+        assert result["track_id"] == 1
+        assert result["detection_class"] == DetectionClass.PERSON
+        assert "confidence" in result

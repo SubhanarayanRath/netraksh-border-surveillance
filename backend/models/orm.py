@@ -144,6 +144,10 @@ class Event(Base):
     rule_value: Mapped[Optional[float]] = mapped_column(Float)
     plate_text: Mapped[Optional[str]] = mapped_column(String(32))
     plate_confidence: Mapped[Optional[float]] = mapped_column(Float)
+    # Real sub-classification when detection_class == "vehicle" (see
+    # shared.constants.VehicleSubtype) -- SIH PS 26187 asks for "vehicle
+    # detection AND classification", not detection alone.
+    vehicle_subtype: Mapped[Optional[str]] = mapped_column(String(32))
     evidence_clip_ref: Mapped[Optional[str]] = mapped_column(String(512))
     edge_device_id: Mapped[Optional[str]] = mapped_column(String(64))
     sequence_number: Mapped[Optional[int]] = mapped_column(Integer)

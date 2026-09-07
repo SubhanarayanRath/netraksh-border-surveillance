@@ -2074,6 +2074,59 @@ deprioritized behind the layout-breaking ones above rather than left unmentioned
 
 ---
 
+## Vehicle Classification and Wrong-Direction Detection (SIH PS 26187 gaps)
+
+**Context:** a direct audit against the official SIH problem statement text (26187 — "AI-Based
+Intelligent Video Analytics Platform for Border Surveillance") found two literal, real gaps: the
+PS asks for "vehicle detection **and classification**", but every YOLO vehicle class (car,
+motorcycle, bus, truck) collapsed into one generic `DetectionClass.VEHICLE` everywhere; and
+`EventType.WRONG_DIRECTION` — a real enum value, directly relevant to the PS's "suspicious activity
+detection" — existed with **zero real producer** anywhere in the codebase, referenced only by its
+own definition and a literal string in `scripts/seed_demo_events.py`'s mock data.
+
+**1. Vehicle classification.** New `shared.constants.VehicleSubtype` (CAR/MOTORCYCLE/BUS/TRUCK) and
+a parallel `_YOLO_VEHICLE_SUBTYPE_MAP` in `edge/detection/detector.py`, alongside the existing
+`_YOLO_CLASS_MAP` — additive, not a replacement: every class id with a real subtype also still maps
+to `DetectionClass.VEHICLE` in the original map (tested directly), so every existing piece of
+gating logic keyed on `detection_class == VEHICLE` (`ANPRModule`, cross-camera corroboration class
+matching, etc.) is completely unaffected. Threaded through the real pipeline end to end:
+`TrackData` → `EvidencePackager.package()` → `EvidencePackage` (a new optional field, deliberately
+excluded from `get_signable_fields()` — same treatment as `plate_text`/`face_bbox`, doesn't touch
+the tamper-evident hash) → `POST /events` ingest → `Event` ORM column (new migration, same
+guard pattern as every other column added this session) → `EventResponse` → the Evidence page's
+metadata card (`Evidence.jsx`, e.g. "VEHICLE (BUS)" instead of just "VEHICLE").
+
+**2. Wrong-direction detection.** New `ZoneSchema.restricted_direction` (optional — `None` for
+every zone that existed before this, so old zone configs behave identically) lets an admin mark one
+specific direction on a boundary-line zone (`LineCrossingModule`, e.g. a one-way checkpoint road) as
+wrong-way. A crossing in that direction now fires `EventType.WRONG_DIRECTION` instead of an
+ordinary `LINE_CROSSING`. `edge/main.py::determine_severity()` gained a dedicated `WRONG_DIRECTION`
+→ HIGH case (checked before the generic `LINE_CROSSING` → MEDIUM case, so it doesn't silently fall
+through) — a vehicle going the wrong way at a border checkpoint is a specific, real security
+concern, not just "a crossing happened."
+
+**A real bug found and fixed by this feature's own tests, not shipped silently:** the first version
+of the wrong-direction comparison used `str(direction) == str(line.restricted_direction)` — but
+`direction` is a real `(str, Enum)` member, and `str()` on an Enum member returns
+`"LineCrossingDirection.A_TO_B"`, not the bare `"A_TO_B"` value `ZoneSchema.restricted_direction`
+actually holds (`Config.use_enum_values=True` stores the bare string). The two never matched, so
+`WRONG_DIRECTION` would never have fired despite everything else being wired correctly. Caught
+because two of the five new tests failed immediately on the first run — fixed to `direction.value
+== line.restricted_direction` and re-verified before trusting it.
+
+**Tests:** `tests/unit/test_vehicle_classification.py` (new, 9 tests — the YOLO class-id map's own
+internal consistency, `TrackData` round-trip, and `EvidencePackager.package()` carrying the real
+value through for a vehicle track, `None` for a person track, `None` when `track` itself is
+`None`). `tests/unit/test_line_crossing.py` gained `TestWrongDirection` (5 tests — the regression
+that an unconfigured zone still always reports plain `LINE_CROSSING`, the restricted direction
+firing `WRONG_DIRECTION`, the *other* direction on the same zone still reporting an ordinary
+crossing, the restriction working with either direction value, and the event dict's shape staying
+otherwise unchanged). `tests/unit/test_determine_severity.py` (new, first-ever coverage for this
+function, 7 tests). `tests/unit/test_db_migration.py` gained 3 tests for the new
+`vehicle_subtype` column. Full suite: 331/331 (308 + 23 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

@@ -429,6 +429,10 @@ class EvidencePackager:
             plate_confidence=overrides.get("plate_confidence"),
             face_bbox=overrides.get("face_bbox"),
             face_confidence=overrides.get("face_confidence"),
+            # Real vehicle sub-classification (shared.constants.VehicleSubtype)
+            # from the track's own field, same pattern as track_id above —
+            # None whenever track is None or the detection wasn't a vehicle.
+            vehicle_subtype=overrides.get("vehicle_subtype", getattr(track, "vehicle_subtype", None)),
         )
 
         # Compute hash of signable fields

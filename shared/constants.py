@@ -60,6 +60,25 @@ class DetectionClass(str, Enum):
     UNKNOWN = "unknown"
 
 
+class VehicleSubtype(str, Enum):
+    """
+    Real sub-classification within DetectionClass.VEHICLE — SIH problem
+    statement 26187 asks for "vehicle detection AND classification", not
+    detection alone. YOLOv8n's own COCO classes already distinguish these
+    (edge/detection/detector.py's _YOLO_CLASS_MAP previously discarded that
+    distinction, collapsing car/motorcycle/bus/truck into one generic
+    "vehicle" DetectionClass everywhere). This is a real, additive field
+    alongside detection_class, not a replacement for it — every existing
+    piece of gating logic that checks `detection_class == VEHICLE`
+    (ANPRModule, cross-camera corroboration class matching, etc.) is
+    unaffected; this only adds a real answer to "what kind of vehicle".
+    """
+    CAR = "car"
+    MOTORCYCLE = "motorcycle"
+    BUS = "bus"
+    TRUCK = "truck"
+
+
 class Severity(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"

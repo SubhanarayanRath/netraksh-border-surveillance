@@ -82,12 +82,20 @@ def determine_severity(event: dict, reliability) -> Severity:
         if "OUTSIDE_TO_RESTRICTED" in direction:
             return Severity.HIGH
         return Severity.MEDIUM
+    if "WRONG_DIRECTION" in et:
+        # A real, admin-configured restricted_direction (ZoneSchema) fired —
+        # a vehicle/person moving the wrong way past a one-way border
+        # checkpoint or road is a genuine, specific security concern, not
+        # just "a crossing happened" — HIGH, same tier as abandoned object.
+        return Severity.HIGH
     if "LINE_CROSSING" in et:
         # Unlike a fence polygon, a line has no inherent inside/outside, so
         # neither A_TO_B nor B_TO_A can be assumed to be "the bad direction"
-        # without zone-specific configuration this module doesn't have —
-        # MEDIUM reflects "a real crossing happened," not "a specific
-        # direction is confirmed dangerous."
+        # without zone-specific configuration — that configuration now
+        # exists (ZoneSchema.restricted_direction, LineCrossingModule), but
+        # a crossing this module didn't flag as wrong-way is still just an
+        # ordinary crossing — MEDIUM reflects "a real crossing happened,"
+        # not "a specific direction is confirmed dangerous."
         return Severity.MEDIUM
     if "LOITERING" in et:
         dwell = event.get("rule_value", 0)

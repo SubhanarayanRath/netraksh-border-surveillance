@@ -191,8 +191,28 @@ class LineCrossingModule:
 
             direction = LineCrossingDirection.A_TO_B if prev_side == 1 else LineCrossingDirection.B_TO_A
 
+            # Wrong-way detection (SIH PS 26187's "suspicious activity
+            # detection"): a real, configured restricted_direction on this
+            # zone (see ZoneSchema) turns a crossing in that specific
+            # direction into WRONG_DIRECTION instead of an ordinary
+            # LINE_CROSSING. EventType.WRONG_DIRECTION previously existed
+            # only as a defined-but-unused enum value (shared/constants.py)
+            # and a literal in scripts/seed_demo_events.py's mock data —
+            # no real module ever produced it before this.
+            # .value, not str() -- direction is a real (str, Enum) member, and
+            # str(Enum member) returns "LineCrossingDirection.A_TO_B", not the
+            # plain "A_TO_B" value ZoneSchema.restricted_direction actually
+            # holds (ZoneSchema's Config.use_enum_values=True stores the bare
+            # string). A real bug caught by this feature's own tests, not
+            # theoretical -- str()-comparing these two never matched.
+            is_wrong_way = (
+                line.restricted_direction is not None
+                and direction.value == line.restricted_direction
+            )
+            event_type = EventType.WRONG_DIRECTION if is_wrong_way else EventType.LINE_CROSSING
+
             return {
-                "event_type": EventType.LINE_CROSSING,
+                "event_type": event_type,
                 "zone_id": line.zone_id,
                 "direction": direction,
                 "track_id": track.track_id,

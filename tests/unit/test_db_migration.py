@@ -261,3 +261,42 @@ class TestMigrationSqlIsPostgresCompatible:
                     f"exact real bug that crashed the Postgres deployment. Use DEFAULT FALSE/TRUE "
                     f"instead: {line.strip()}"
                 )
+
+
+class TestMigrationAddsVehicleSubtypeColumn:
+    """SIH PS 26187 vehicle classification (backend/api/events.py,
+    edge/detection/detector.py) — same guard pattern, applied to the
+    events table's new vehicle_subtype column."""
+
+    def test_adds_vehicle_subtype_to_legacy_events_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_events.db")
+        engine = _make_legacy_engine_with_events(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        cols = {c["name"] for c in inspect(engine).get_columns("events")}
+        assert "vehicle_subtype" in cols
+
+    def test_preserves_existing_event_rows(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_events.db")
+        engine = _make_legacy_engine_with_events(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT id, camera_id FROM events WHERE id = 'ev-legacy'")).fetchone()
+        assert row is not None
+        assert row[1] == "cam-legacy"
+
+    def test_idempotent_on_an_already_migrated_events_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_events.db")
+        engine = _make_legacy_engine_with_events(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+        _migrate_add_missing_columns()  # must not raise (no duplicate ALTER TABLE)
+
+        cols = [c["name"] for c in inspect(engine).get_columns("events")]
+        assert cols.count("vehicle_subtype") == 1

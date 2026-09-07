@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from shared.constants import DecisionState, DetectionClass, SceneCondition
+from shared.constants import DecisionState, DetectionClass, SceneCondition, VehicleSubtype
 from shared.schemas import BoundingBox, Point, TrackData
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,20 @@ _YOLO_CLASS_MAP: Dict[int, DetectionClass] = {
     3: DetectionClass.VEHICLE,  # motorcycle
     5: DetectionClass.VEHICLE,  # bus
     7: DetectionClass.VEHICLE,  # truck
+}
+
+# Real vehicle sub-classification (SIH PS 26187: "vehicle detection AND
+# classification", not detection alone) — YOLO/COCO already distinguishes
+# these class IDs; _YOLO_CLASS_MAP above previously discarded that
+# distinction by collapsing all four into one generic VEHICLE. This is a
+# parallel map, not a replacement — every class id here also appears in
+# _YOLO_CLASS_MAP mapped to DetectionClass.VEHICLE, so existing gating
+# logic keyed on detection_class is completely unaffected.
+_YOLO_VEHICLE_SUBTYPE_MAP: Dict[int, VehicleSubtype] = {
+    2: VehicleSubtype.CAR,
+    3: VehicleSubtype.MOTORCYCLE,
+    5: VehicleSubtype.BUS,
+    7: VehicleSubtype.TRUCK,
 }
 
 # Border-tuned ByteTrack config (architecture v4 §4 — Track Continuity Guard):
@@ -147,6 +161,7 @@ class DetectionTracker:
                         bbox=bbox,
                         confidence=conf,
                         trajectory=traj,
+                        vehicle_subtype=_YOLO_VEHICLE_SUBTYPE_MAP.get(cls_id),
                     ))
                 except Exception as exc:
                     logger.debug(f"[Detector] Error parsing detection {i}: {exc}")

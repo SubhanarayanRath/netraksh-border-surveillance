@@ -88,6 +88,16 @@ def _migrate_add_missing_columns() -> None:
                 # hypothetical. FALSE is valid in both SQLite and Postgres.
                 conn.execute(text("ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT FALSE"))
 
+    # Vehicle classification (SIH PS 26187) -- same guard pattern, applied
+    # to the events table. VARCHAR default, so no risk of the
+    # SQLite/Postgres BOOLEAN-literal bug immediately above.
+    if "events" in inspector.get_table_names():
+        existing_event_columns = {col["name"] for col in inspector.get_columns("events")}
+        if "vehicle_subtype" not in existing_event_columns:
+            logger.info("[DB] Migrating events table: adding vehicle_subtype column")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE events ADD COLUMN vehicle_subtype VARCHAR(32)"))
+
 
 def init_db() -> None:
     """Create all tables if they don't exist. Used for dev/test without migrations."""

@@ -230,7 +230,13 @@ export default function Evidence() {
                       something else (e.g. vehicle). detection_class
                       (EventResponse, shared/schemas.py) is the real field for
                       "what was detected". */}
-                  <span className="text-sm font-body">{selectedEvent?.detection_class ? String(selectedEvent.detection_class).toUpperCase() : 'N/A'}</span>
+                  {/* vehicle_subtype (shared.constants.VehicleSubtype) is real,
+                      YOLO-derived car/motorcycle/bus/truck sub-classification —
+                      only ever present when detection_class is "vehicle". */}
+                  <span className="text-sm font-body">
+                    {selectedEvent?.detection_class ? String(selectedEvent.detection_class).toUpperCase() : 'N/A'}
+                    {selectedEvent?.vehicle_subtype && ` (${String(selectedEvent.vehicle_subtype).toUpperCase()})`}
+                  </span>
                 </div>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">EDGE NODE</span>

@@ -185,6 +185,7 @@ async def ingest_event(
         rule_value=ep.rule_value,
         plate_text=ep.plate_text,
         plate_confidence=ep.plate_confidence,
+        vehicle_subtype=str(ep.vehicle_subtype) if ep.vehicle_subtype else None,
         evidence_clip_ref=ep.evidence_clip_ref,
         edge_device_id=payload.edge_device_id,
         sequence_number=payload.sequence_number,
@@ -294,4 +295,5 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         corroborated_by_event_id=event.corroborated_by_event_id,
         corroboration_distance_m=event.corroboration_distance_m,
         corroboration_delta_t_s=event.corroboration_delta_t_s,
+        vehicle_subtype=event.vehicle_subtype,
     )
