@@ -27,3 +27,12 @@ cryptography>=42.0.0
 pydantic>=2.9.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.0
+# backend/services/webhook_delivery.py (real external C2 integration, SIH
+# PS 26187) makes a real outbound HTTP POST to admin-registered webhooks.
+# The import is inside a try/except (non-fatal by design if missing), so
+# omitting this wouldn't crash the app -- but it WOULD silently make every
+# real webhook delivery fail on the deployed backend, defeating the whole
+# feature. Caught by re-checking this file's own "verified by grepping
+# every top-level import" claim above after adding a new backend service,
+# not assumed still true.
+httpx>=0.27.0
