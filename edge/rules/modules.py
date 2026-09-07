@@ -474,10 +474,33 @@ class FaceDetectionModule:
 
     def _load_detectors(self):
         import cv2
-        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        self._face_cascade = cv2.CascadeClassifier(cascade_path)
-        if self._face_cascade.empty():
-            logger.warning("[Face] Haar cascade not loaded — face detection may fail")
+        from pathlib import Path
+
+        # Prefer the OpenCV-bundled path when this build actually ships it
+        # (plain opencv-python does); some builds don't (confirmed:
+        # opencv-contrib-python-headless, installed in this project for
+        # cv2.face/LBPH watchlist recognition, ships an empty data/
+        # directory -- see docs/LIMITATIONS.md). Fall back to a real cascade
+        # file bundled directly in this repo so face detection actually
+        # works regardless of which OpenCV build is installed, rather than
+        # silently detecting nothing forever on a build without one.
+        bundled_path = Path(__file__).resolve().parent.parent / "detection" / "cascades" / "haarcascade_frontalface_default.xml"
+        candidate_paths = [cv2.data.haarcascades + "haarcascade_frontalface_default.xml", str(bundled_path)]
+
+        self._face_cascade = None
+        for path in candidate_paths:
+            cascade = cv2.CascadeClassifier(path)
+            if not cascade.empty():
+                self._face_cascade = cascade
+                logger.info(f"[Face] Haar cascade loaded from {path}")
+                break
+
+        if self._face_cascade is None:
+            self._face_cascade = cv2.CascadeClassifier()  # real, empty -- _detect_haar() guards this
+            logger.warning(
+                "[Face] Haar cascade not loaded from any candidate path "
+                f"({candidate_paths}) — face detection will find nothing"
+            )
 
         try:
             import retina_face

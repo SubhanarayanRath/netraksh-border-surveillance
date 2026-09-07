@@ -796,3 +796,52 @@ correctly with no fabricated data. Full local suite: 302/302.
   Event Verifier, closing the "needs footage with real jitter" gap the original run flagged. Still
   **not** the team's own staged demo footage (doesn't exist, can't be fabricated — see
   `docs/LIMITATIONS.md`); state that distinction if this number goes in the PPT.
+
+## Re-measurement (2026-09-07): the 44.6ms/21.8-FPS figure is stale for the full pipeline
+
+**Context:** a fresh audit pass found and fixed two real crashes (`docs/ARCHITECTURE.md`'s "Real
+Environment Audit" entry) and, separately, fixed face detection actually finding faces at all in
+this environment (bundled a real cascade XML — see that entry too). Re-running
+`scripts/run_false_positive_benchmark.py` afterward to check whether the original latency figure
+still held surfaced a real, previously-undisclosed measurement gap, not a regression in the
+underlying pipeline.
+
+**The benchmark script itself reproduces the original numbers closely — nothing in what it
+measures has regressed:**
+
+| | frames | raw candidates | alerts | mean frame (ms) | FPS |
+|---|---|---|---|---|---|
+| Original (`PERFORMANCE_REPORT_MEASURED.json`) | 795 | 52 | 23 | 44.6 | 21.8 |
+| Re-run, `required_confirmations=1` | 795 | 52 | 23 | 43.5 | 22.3 |
+| Re-run, `required_confirmations=3` (shipped default) | 795 | 52 | 23 | 46.7 | 20.8 |
+
+The false-positive result (52→23, identical under both confirmation policies) reproduced exactly.
+Full JSON: `docs/PERFORMANCE_REPORT_REMEASURED_2026-09-07.json`.
+
+**But `run_false_positive_benchmark.py` only ever wired up a SUBSET of what the real, deployed
+`edge.main.EdgePipeline` runs per frame** — `CameraHealthMonitor`, `SceneConditionClassifier`,
+`CalibrationModule`, `DetectionTracker`/YOLO, `VirtualFenceModule`, `make_reliability_decision`,
+`EventVerifier`, `PipelineMetrics` (confirmed by reading the script directly, not assumed). It has
+never included the `AdaptiveComputeGate`, `TrackContinuityGuard`, `TrackFeatureTracker`,
+`LineCrossingModule`, `BehaviorModule`, `ANPRModule`, or `FaceDetectionModule` — all real, all
+added to `edge/main.py` after this script (and the original benchmark) were written, and all run
+on every relevant track, every frame, in the actual deployed pipeline.
+
+**Measuring the real, full `EdgePipeline` directly** (`tests/integration/test_edge_pipeline_real_video_e2e.py`,
+and a standalone timing script run before writing that test) on the same clip shows **~165-175ms
+mean per frame (≈5.7-6 FPS) across the first 200 real frames — before any vehicle enters frame and
+before ANPR's EasyOCR call ever fires** (which is slower again once it does, see
+`docs/ARCHITECTURE.md`'s audit entry). The most likely real contributor, not fully isolated this
+pass: face detection now genuinely runs real Haar-cascade inference on every person track inside
+the verification zone every frame (previously it crashed the instant that happened — see the audit
+entry — so it never actually ran to completion before now), on top of the Track Continuity Guard's
+per-track histogram work, `BehaviorModule`'s dwell tracking, and `TrackFeatureTracker`'s trajectory
+math, none of which the narrower benchmark script ever exercised.
+
+**Honest conclusion: do not cite 44.6ms/21.8 FPS as the current full-pipeline number.** It remains
+an accurate, reproducible measurement of the narrower detection+reliability+verifier stack the
+benchmark script exercises, but it materially understates the real, currently-deployed
+`EdgePipeline`'s actual per-frame cost. **Not done this pass** (real, disclosed follow-up work, not
+silently deferred): extending `run_false_positive_benchmark.py` (or a new script) to wire up every
+stage `edge/main.py` actually runs, so a single, honest, full-pipeline number can replace this
+report's original figure everywhere it's cited.

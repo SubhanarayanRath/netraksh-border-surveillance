@@ -2341,10 +2341,16 @@ integration/` and `tests/e2e/` are empty for every endpoint in this codebase"):*
   finding from writing this test: the full clip now runs far slower per frame than
   `docs/PERFORMANCE_REPORT.md`'s original 44.6ms/frame figure once real vehicles enter frame later
   in the clip and ANPR's EasyOCR call (CPU-heavy, added after that benchmark) starts firing —
-  measured directly at a steady ~175ms/frame with no vehicles yet visible in the first 200. Neither
-  the exact new full-clip per-frame latency nor which stage(s) besides ANPR now dominate it were
-  fully characterized this pass — re-running `docs/PERFORMANCE_REPORT.md`'s benchmark end to end
-  is real, disclosed future work (`docs/LIMITATIONS.md`), not silently assumed unchanged.
+  measured directly at a steady ~165-175ms/frame with no vehicles yet visible in the first 200.
+  **Update — re-measured properly afterward**: `docs/PERFORMANCE_REPORT.md`'s "Re-measurement
+  (2026-09-07)" entry confirms `scripts/run_false_positive_benchmark.py` itself still reproduces
+  the original 44.6ms/21.8-FPS figure almost exactly (43.5-46.7ms, 52→23 unchanged) — because that
+  script only ever wires up a subset of the real pipeline, never including `AdaptiveComputeGate`,
+  `TrackContinuityGuard`, `TrackFeatureTracker`, `LineCrossingModule`, `BehaviorModule`,
+  `ANPRModule`, or `FaceDetectionModule`. The real, full `EdgePipeline` genuinely costs
+  ~165-175ms/frame even before ANPR fires — do not cite 44.6ms/21.8 FPS as a full-pipeline number
+  anywhere it's still written. Extending the benchmark script itself to cover every real stage
+  remains open (not done this pass).
 
 **Full suite: 406/406** (376 existing + 9 evidence/health integration + 9 camera-health unit +
 9 backend E2E + 2 Haar-cascade regression + 1 real bounded-frame E2E — see `docs/LIMITATIONS.md` for
