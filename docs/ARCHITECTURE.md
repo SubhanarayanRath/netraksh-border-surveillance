@@ -1690,6 +1690,92 @@ pre-existing warning patterns, no new class introduced).
 
 ---
 
+## UI Bug Sweep + Cross-Camera Corroboration (§12B/§13) — First Real Implementation
+
+**Context:** a full pass across every dashboard page looking for the same class of bug this
+whole project has repeatedly found and fixed all session — a hardcoded/fabricated value shown
+regardless of real state — plus building the one piece of the architecture poster that grepping
+the entire repo confirmed did not exist anywhere: cross-camera corroboration and the temporal
+consistency formula `Tc = e^(-|Δt-t_expected|/σ)`.
+
+**UI bugs found and fixed (all frontend-only, Python side unaffected):**
+1. `VideoFeed.jsx` drew a hardcoded "PERSON #184 | 91% CONF" bounding box on every page load,
+   before any real event ever happened — the only guard was `!isConnected && !eventData`, and
+   Dashboard always passes `isConnected={true}`. Now the box (and its label) render only when a
+   real `eventData` exists; idle state shows an honest "Monitoring — no active event".
+2. `.app-container`'s grid header row was a hard `60px 1fr`. Confirmed via the rendered `<h1>`'s
+   own bounding box (`top: -6.4px` — genuinely above the header, not a screenshot artifact) that
+   on any viewport narrow enough for the subtitle to wrap past one line, the header's real
+   content height exceeded 60px and the title clipped. Changed to `minmax(60px, auto) 1fr`.
+3. `Header.jsx` polled `GET /sync/status` and `GET /system/status` every 5s unconditionally, even
+   signed out — both require `require_any_role`, so every anonymous visit 401'd forever. Both
+   polls now gated on `isAuthenticated`.
+4. `Evidence.jsx`'s metadata card showed `selectedEvent?.event_type || 'Human'` for "DETECTION
+   TYPE" (wrong field — `event_type` is the rule that fired, not what was detected — plus a
+   hardcoded fallback) and a hardcoded `"edge-001 (Active)"` for "EDGE NODE" regardless of which
+   real device produced the event. Fixed to use the real `detection_class` field, and to show the
+   real `edge_device_id` (see below — it was always stored on ingest, just never returned to the
+   frontend).
+5. `Architecture.jsx` — the worst offender — stated several things as fact that directly
+   contradict the real running system: "TensorRT Optimized" (never true; plain CPU YOLOv8n per
+   `docs/PERFORMANCE_REPORT.md`'s own measured run), a fabricated fixed "FPS 30.0 / RESOLUTION 4K
+   UHD", reliability-gate bands of "DETECTED ≥85% / UNCERTAIN 50-84% / ABSTAIN <50%" (not the real
+   gate at all — the real engine is `R = 0.40D+0.20T+0.20S+0.20H` banded at 0.75, and ABSTAIN is
+   Gate 1's camera-health hard override, not a low-R band), a hardcoded SHA-256 value that is
+   specifically the well-known hash of the *empty string* (looks like a real captured value but
+   isn't), and "Hyperledger Fabric consensus network" stated as settled fact when
+   `backend/services/blockchain.py`'s own honest runtime label is MOCK mode. All corrected to say
+   what the running system actually says about itself.
+
+**Cross-camera corroboration — `backend/services/cross_camera.py` (new):** the poster's §12B/§13
+box ("cross-camera detection is checked against neighbouring cameras using topology, timestamps
+and ETA") and its `Tc` formula had zero implementation anywhere before this — confirmed by
+grepping the whole repo for "corrobora", "topology", "ETA", "Tc =" and finding nothing outside
+poster/doc text. Honest scope, in full in that module's docstring:
+- No hand-entered topology graph (the poster's own "80m / ETA 8-30s" is illustrative demo data,
+  not something honestly assertable about hardware never deployed). Instead, real distance is
+  computed via haversine from each camera's real, admin-entered `latitude`/`longitude`
+  (`backend/models/orm.py`'s `Camera` — already collected for the geospatial map). Expected
+  travel time is a real range derived from that real distance and a disclosed walking-speed
+  heuristic (`ASSUMED_MIN_SPEED_MPS`/`ASSUMED_MAX_SPEED_MPS` = 0.8–2.2 m/s) — same category as
+  this project's other hand-picked-but-justified constants, not a fabricated measurement.
+- **Not person re-identification.** No face/appearance embedding exists anywhere in this
+  codebase. "Corroboration" means temporal+spatial *plausibility* only: a same-`detection_class`
+  sighting at a geographically nearby camera within a physically-plausible travel time. Stated
+  everywhere this score is surfaced (docs, API field names, UI labels — all say "corroboration",
+  never "identity").
+- **Never retroactively rewrites an already-signed event.** The edge that made the original
+  DETECTED/UNCERTAIN/ABSTAIN decision has no visibility into other cameras and signs its evidence
+  package before any cross-camera information could exist; mutating a signed event afterward
+  would break the tamper-evident chain-of-custody the rest of the system depends on. Instead, the
+  backend computes and stores corroboration as separate, additional columns
+  (`corroboration_score`, `corroborated_by_event_id`, `corroboration_distance_m`,
+  `corroboration_delta_t_s`) on the `Event` row, immediately after ingest
+  (`backend/api/events.py::ingest_event`, non-fatal on failure — same posture as
+  escalation/blockchain). Symmetric: the matched event is back-filled too, so either event's
+  record shows the corroboration.
+- Deliberately conservative: `MAX_CORROBORATION_DISTANCE_M` (2km) and `MIN_TC_TO_RECORD` (0.15)
+  mean most events will have no corroboration at all — and that absence is shown honestly on the
+  Evidence page ("No corroborating sighting found") rather than a fabricated score.
+
+New DB columns via the existing migration-guard pattern (`backend/database/session.py`, same
+`ALTER TABLE ... ADD COLUMN` approach as `cameras.evidence_key_wrapped`/`latitude`/`longitude`) —
+safe on the real, already-populated `netraksh.db`. `EventResponse` (`shared/schemas.py`) gained
+the four corroboration fields plus `edge_device_id` (a field that was always stored on ingest but
+never exposed — the direct cause of Evidence.jsx bug #4 above). Surfaced on the Evidence page's
+metadata card.
+
+**Tests:** `tests/unit/test_cross_camera.py` (new, 20 tests) — pure-formula tests (haversine
+correctness against an independently-known real distance, expected-travel-time bounds, `Tc`
+formula behavior including the zero-width-range/division-by-~0 guard) and DB-backed matching
+tests (an in-memory SQLite with real `Camera`/`Event` rows: finds a genuinely plausible match,
+picks the best of several candidates, honestly returns `None` for missing coordinates, an
+implausible real distance, a class mismatch, or implausible timing — never fabricates a match).
+`tests/unit/test_db_migration.py` gained 3 tests for the new events-table columns (adds them,
+preserves existing rows, idempotent). Full suite: 277/277 (254 + 23 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
@@ -1698,3 +1784,5 @@ See `docs/LIMITATIONS.md` for the full list. Key items:
 4. Face recognition is NOT attempted in MVP — detection only
 5. ANPR scoped to checkpoint-angle cameras only
 6. Clock drift check uses NTP-synchronized system clock (opportunistic)
+7. Cross-camera corroboration is temporal/spatial plausibility only, not person
+   re-identification — see `backend/services/cross_camera.py`

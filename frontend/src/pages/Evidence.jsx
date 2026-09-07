@@ -230,15 +230,30 @@ export default function Evidence() {
                 </div>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">EDGE NODE</span>
-                  {/* EventResponse (shared/schemas.py) has no device/edge-node
-                      id field at all — "edge-001 (Active)" was a hardcoded
-                      literal with nothing real behind it, shown identically
-                      for every event regardless of which edge device actually
-                      produced it. No endpoint currently returns this, so
-                      showing the honest absence rather than a fabricated
-                      value (same pattern as the header's "Last Sync: Not
-                      tracked"). */}
-                  <span className="text-sm font-body text-muted">Not tracked per event</span>
+                  {/* EventResponse now exposes the real edge_device_id (it was
+                      always stored on ingest — backend/api/events.py — just
+                      never returned to the frontend). Falls back to an honest
+                      "Not tracked" only when a synced event genuinely has
+                      none, never to a fabricated literal. */}
+                  <span className="text-sm font-body">{selectedEvent?.edge_device_id ? `${selectedEvent.edge_device_id} (Active)` : <span className="text-muted">Not tracked</span>}</span>
+                </div>
+                <div className="flex-col" style={{ gridColumn: 'span 2' }}>
+                  <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">CROSS-CAMERA CORROBORATION</span>
+                  {/* Real, computed by backend/services/cross_camera.py after
+                      ingest — see that module's docstring for exact scope
+                      (temporal + real-distance plausibility, NOT person
+                      re-identification). Absence is honestly shown as
+                      "No corroborating sighting found", never as a
+                      fabricated score. */}
+                  {selectedEvent?.corroboration_score != null ? (
+                    <span className="text-sm font-body text-ok">
+                      Tc={selectedEvent.corroboration_score.toFixed(2)} · camera event {selectedEvent.corroborated_by_event_id?.split('-')[0]}
+                      {selectedEvent.corroboration_distance_m != null && ` · ${selectedEvent.corroboration_distance_m.toFixed(0)}m away`}
+                      {selectedEvent.corroboration_delta_t_s != null && ` · seen ${selectedEvent.corroboration_delta_t_s.toFixed(0)}s apart`}
+                    </span>
+                  ) : (
+                    <span className="text-sm font-body text-muted">No corroborating sighting found (temporal/spatial plausibility only — not identity confirmation)</span>
+                  )}
                 </div>
               </div>
 

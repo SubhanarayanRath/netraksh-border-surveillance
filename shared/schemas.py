@@ -301,6 +301,18 @@ class EventResponse(BaseModel):
     hash: Optional[str]
     signature: Optional[str]
     verified_ok: Optional[bool]
+    # Real field, always stored on ingest (backend/api/events.py) but never
+    # previously exposed here — the frontend's Evidence page used to show a
+    # hardcoded "edge-001 (Active)" for every event because this field
+    # simply didn't reach it. None when genuinely absent (never fabricated).
+    edge_device_id: Optional[str] = None
+    # Cross-camera corroboration (backend/services/cross_camera.py) — see
+    # that module's docstring for exact meaning and scope. All None when no
+    # plausible corroborating sighting was found; never fabricated.
+    corroboration_score: Optional[float] = None
+    corroborated_by_event_id: Optional[str] = None
+    corroboration_distance_m: Optional[float] = None
+    corroboration_delta_t_s: Optional[float] = None
 
     class Config:
         use_enum_values = True

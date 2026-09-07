@@ -150,6 +150,18 @@ class Event(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     synced_from_edge: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Cross-camera corroboration (backend/services/cross_camera.py) — real,
+    # computed post-ingest from real camera coordinates and real event
+    # timestamps. Never retroactively changes decision_state/confidence on
+    # this (already tamper-evident-signed) row; see that module's docstring
+    # for why. All nullable: most events will have no plausible corroborating
+    # sighting, and that absence is itself real information, not a gap to
+    # fill with a fabricated 0.
+    corroboration_score: Mapped[Optional[float]] = mapped_column(Float)
+    corroborated_by_event_id: Mapped[Optional[str]] = mapped_column(String(36))
+    corroboration_distance_m: Mapped[Optional[float]] = mapped_column(Float)
+    corroboration_delta_t_s: Mapped[Optional[float]] = mapped_column(Float)
+
     camera: Mapped["Camera"] = relationship("Camera", back_populates="events")
     zone: Mapped[Optional["Zone"]] = relationship("Zone", back_populates="events")
     evidence_package: Mapped[Optional["EvidencePackage"]] = relationship(

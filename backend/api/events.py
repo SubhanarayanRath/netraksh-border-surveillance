@@ -216,6 +216,17 @@ async def ingest_event(
     db.commit()
     logger.info(f"Event {ep.event_id} ingested. Verified: {evidence.verified_ok}")
 
+    # Cross-camera corroboration (backend/services/cross_camera.py) — real,
+    # computed now because it needs other cameras' already-committed events,
+    # which only exist backend-side, never on the edge. Failure here must
+    # never block ingest of the actual event; same non-fatal posture as
+    # escalation/blockchain below.
+    try:
+        from backend.services.cross_camera import apply_corroboration
+        apply_corroboration(event, db)
+    except Exception as exc:
+        logger.error(f"Cross-camera corroboration failed for event {ep.event_id} (non-fatal): {exc}")
+
     # Check escalation eligibility
     check_and_escalate(event, db)
 
@@ -278,4 +289,9 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         hash=ep.sha256 if ep else None,
         signature=ep.digital_signature if ep else None,
         verified_ok=ep.verified_ok if ep else None,
+        edge_device_id=event.edge_device_id,
+        corroboration_score=event.corroboration_score,
+        corroborated_by_event_id=event.corroborated_by_event_id,
+        corroboration_distance_m=event.corroboration_distance_m,
+        corroboration_delta_t_s=event.corroboration_delta_t_s,
     )

@@ -58,6 +58,18 @@ def _migrate_add_missing_columns() -> None:
             conn.execute(text("ALTER TABLE cameras ADD COLUMN latitude FLOAT"))
             conn.execute(text("ALTER TABLE cameras ADD COLUMN longitude FLOAT"))
 
+    # Cross-camera corroboration (backend/services/cross_camera.py) — same
+    # guard pattern, applied to the events table.
+    if "events" in inspector.get_table_names():
+        existing_event_columns = {col["name"] for col in inspector.get_columns("events")}
+        if "corroboration_score" not in existing_event_columns:
+            logger.info("[DB] Migrating events table: adding cross-camera corroboration columns")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE events ADD COLUMN corroboration_score FLOAT"))
+                conn.execute(text("ALTER TABLE events ADD COLUMN corroborated_by_event_id VARCHAR(36)"))
+                conn.execute(text("ALTER TABLE events ADD COLUMN corroboration_distance_m FLOAT"))
+                conn.execute(text("ALTER TABLE events ADD COLUMN corroboration_delta_t_s FLOAT"))
+
 
 def init_db() -> None:
     """Create all tables if they don't exist. Used for dev/test without migrations."""

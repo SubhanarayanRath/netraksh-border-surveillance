@@ -789,6 +789,24 @@ limitation — an out-of-date limitations file is worse than none.
   but the HTTP wiring itself (auth enforcement, status codes, request/response shape) is not covered
   by an automated test yet.
 
+- **Cross-camera corroboration (`backend/services/cross_camera.py`, new) is temporal + real-distance
+  plausibility only — it is NOT person re-identification.** No face/appearance embedding exists
+  anywhere in this codebase that could confirm two sightings at different cameras are the same
+  physical person. Two different people of the same `detection_class`, at geographically nearby
+  cameras, within a physically-plausible travel-time window, WILL corroborate each other under
+  this definition — this is why every place this score is surfaced (API field names, UI labels,
+  this doc) says "corroboration", never "identity" or "same person". There is also no hand-entered
+  camera topology graph with real measured ETAs (the poster's own "80m / ETA 8-30s" is
+  illustrative demo data, not something honestly assertable about hardware never deployed);
+  instead, distance comes from real haversine on each camera's real, admin-entered
+  latitude/longitude, and the expected-travel-time range comes from that real distance and a
+  disclosed, hand-picked walking-speed heuristic (0.8–2.2 m/s), not a measured one. The
+  corroboration score is also deliberately never used to retroactively change an already-signed
+  event's `decision_state`/confidence — see `docs/ARCHITECTURE.md`'s entry for why (tamper-evident
+  chain-of-custody). It is currently display-only (Evidence page); it is not yet wired into
+  `backend/services/escalation.py`'s severity/escalation decision — a deliberate scoping choice
+  to avoid changing real alerting behavior without an explicit product decision, not an oversight.
+
 ## 3. Designed in architecture v4, not yet implemented in code
 
 These are real, open gaps — tracked here so nothing is silently assumed to exist. Each links to the
