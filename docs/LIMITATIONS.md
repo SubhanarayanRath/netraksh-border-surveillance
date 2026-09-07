@@ -8,6 +8,26 @@ limitation — an out-of-date limitations file is worse than none.
 
 ## 1. Fundamental limitations (not fixable by more engineering time alone)
 
+- **Face detection currently finds zero faces on this dev machine, regardless of input.**
+  `edge/rules/modules.py::FaceDetectionModule` tries RetinaFace first, Haar cascade second — both
+  are currently non-functional in this environment. `retina-face` requires `tensorflow`, which has
+  no published wheel for Python 3.14 (`pip install` fails with a dependency-resolution error); the
+  Phase-0 environment-spike table at the top of `docs/ARCHITECTURE.md` marking `retina_face` as
+  "⚠️ PARTIAL... installed" no longer reflects reality and should be re-verified, not trusted, before
+  citing it. The Haar cascade fallback fails for a different, also environment-specific reason:
+  this project's OpenCV build is `opencv-contrib-python-headless` (swapped from plain
+  `opencv-python` for `cv2.face`/LBPH watchlist recognition), and that build's `cv2/data/` directory
+  ships no `.xml` cascade files at all (confirmed by listing it directly). Before this audit pass,
+  `_detect_haar()` called `detectMultiScale()` on the resulting empty classifier unconditionally,
+  which raised a real `cv2.error` and **crashed the entire real-time edge frame loop** the moment a
+  real person track entered a "verification"-type zone — confirmed directly against
+  `demo/videos/vtest.avi` (crashed on frame 1). That crash is now fixed (`_detect_haar()` returns
+  `None` instead of calling into an empty classifier — see `docs/ARCHITECTURE.md`'s "Real
+  Environment Audit" entry), but face detection genuinely detects nothing until either dependency
+  is restored (a working `tensorflow` wheel, or a cascade XML file added to the repo/certs and
+  pointed at explicitly instead of `cv2.data.haarcascades`). Watchlist matching
+  (`edge/detection/face_recognition.py`) is real and independently tested, but has no real face
+  crops to run against in this environment as a direct consequence.
 - **This project's entire test suite runs against SQLite only — there is no Postgres available in
   this dev environment — and this already caused one real production incident.** The
   `escalated_via_corroboration` DB migration (`backend/database/session.py`, added when wiring
@@ -627,6 +647,17 @@ limitation — an out-of-date limitations file is worse than none.
   specific hardware (Jetson or otherwise) is claimed because the team has not benchmarked on one.
   Every FPS/latency number in `docs/PERFORMANCE_REPORT.md` is only valid for the machine it was
   actually measured on — see that file's metadata section.
+  **Update — that number is now also stale relative to the pipeline's current feature set, not
+  just the machine it ran on.** `docs/PERFORMANCE_REPORT.md`'s 44.6ms-mean/21.8-FPS figure predates
+  several features added later in this project (ANPR, the Track Continuity Guard, Track Feature
+  Tracker, real face detection/recognition, vehicle classification) that all run inside the same
+  per-frame loop. Measured directly while building `tests/integration/test_edge_pipeline_real_video_e2e.py`:
+  the first 200 real frames of `demo/videos/vtest.avi` (no vehicles yet visible) run at a steady
+  ~175ms/frame — already ~4x the original figure — and a full-clip run was observed taking several
+  times longer still once real vehicles enter frame and ANPR's EasyOCR call (CPU-heavy) starts
+  firing. Neither the new steady-state per-frame cost nor which stage(s) beyond ANPR now dominate
+  it were fully characterized this pass — re-running `docs/PERFORMANCE_REPORT.md`'s benchmark
+  script end to end and updating its numbers is real, disclosed future work, not done here.
 - **AES-256 evidence encryption key is stored on the edge device's local disk**
   (`certs/edge/<camera_id>.aes`), not in a TPM/HSM. It protects evidence at rest from casual disk
   access or exfiltration of the storage medium, but **not** from an attacker who has already
@@ -866,11 +897,24 @@ limitation — an out-of-date limitations file is worse than none.
   - This repository is not a git repository at all (`git status` fails with "not a git repository") —
     there is no version history and nothing to push to a platform that deploys from a git remote.
   - No `Dockerfile` exists yet for a containerized deploy target.
-- **Endpoint-level HTTP tests for the two new evidence-image/evidence-key routes do not exist.**
-  `tests/integration/` and `tests/e2e/` are empty for every endpoint in this codebase already, not
-  just these two — the crypto/wrapping/migration logic each endpoint depends on is fully unit-tested,
-  but the HTTP wiring itself (auth enforcement, status codes, request/response shape) is not covered
-  by an automated test yet.
+- **Endpoint-level HTTP tests for the two evidence-image/evidence-key routes still do not exist.**
+  **Update — `tests/integration/` and `tests/e2e/` are no longer empty for every endpoint**: a real
+  integration/E2E layer was added (`tests/integration/test_backend_e2e.py`,
+  `test_evidence_pipeline_e2e.py`, `test_edge_pipeline_real_video_e2e.py`) using FastAPI's real
+  `TestClient` against `backend.main:app` (real routers, real RBAC, an isolated per-test SQLite DB)
+  and the real `edge.main.EdgePipeline` against the real `demo/videos/vtest.avi` clip — covering
+  real signed-event ingest + `POST /events/{id}/verify` (hash/signature/chain-continuity, including a
+  forged signature and a broken chain link), RBAC enforcement (`ADMIN`/`OPERATOR`/`AUDITOR`) on
+  `POST /cameras`, `POST /alerts/{id}/acknowledge`, and the auth-required routes, a real offline-
+  outbox → real running backend sync round trip (`edge/sync/sync_client.py`'s `SyncClient` against a
+  real `uvicorn` server on a loopback port, not a stub), the real hash-chain and AES-256-GCM
+  snapshot-tamper detection paths (`EvidencePackager`/`EvidenceChainStore`/`EvidenceEncryptor`
+  composed together, not just unit-tested in isolation), the real camera-health-FAILED → ABSTAIN →
+  tiered-snapshot-capture path, and one full-clip run of the real `EdgePipeline` end to end. **Still
+  not covered**: `GET /events/{event_id}/evidence-image` and `PUT /cameras/{id}/evidence-key`
+  specifically (the decrypt-on-view HTTP path itself), and the WebSocket broadcast endpoints — the
+  crypto/wrapping/migration logic each depends on remains fully unit-tested, but their HTTP wiring is
+  not yet exercised by an automated test.
 
 - **Cross-camera corroboration (`backend/services/cross_camera.py`, new) is temporal + real-distance
   plausibility only — it is NOT person re-identification.** No face/appearance embedding exists

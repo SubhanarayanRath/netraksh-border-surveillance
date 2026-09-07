@@ -113,10 +113,18 @@ class CameraHealthMonitor:
         # --- Check 4: Exposure (histogram clipping) ---
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
         total_pixels = gray.size
+        # cv2.calcHist's returned array shape is (256, 1) on some OpenCV
+        # builds and (256,) on others (confirmed different between the
+        # opencv-python and opencv-contrib-python-headless builds this
+        # project has used at different points — see docs/LIMITATIONS.md).
+        # float(hist[i]) works for both: a size-1 (256,1) row or a bare
+        # scalar from a (256,) array. The previous hist[i][0] form crashed
+        # with "IndexError: invalid index to scalar variable" on any build
+        # returning the 1-D shape, on the very first real frame processed.
         # Over-exposed: too many pixels at 255
-        overexposed_fraction = float(hist[255][0]) / total_pixels
+        overexposed_fraction = float(hist[255]) / total_pixels
         # Under-exposed: too many pixels at 0
-        underexposed_fraction = float(hist[0][0]) / total_pixels
+        underexposed_fraction = float(hist[0]) / total_pixels
         clip_fraction = max(overexposed_fraction, underexposed_fraction)
         metrics["exposure_clip_fraction"] = clip_fraction
         if clip_fraction > EXPOSURE_CLIPPING_THRESHOLD:
