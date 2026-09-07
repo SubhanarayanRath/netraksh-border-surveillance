@@ -84,6 +84,41 @@ class TestAttemptRecognitionNoOp:
         assert len(fake.calls) == 1  # did genuinely attempt recognition
 
 
+class TestHaarCascadeEmptyClassifierDoesNotCrash:
+    """Regression test for a real, previously-uncaught crash: on an OpenCV
+    build whose data files don't include the bundled Haar cascade XML (e.g.
+    opencv-contrib-python-headless, installed in this project for
+    cv2.face/LBPH watchlist recognition -- see docs/LIMITATIONS.md),
+    cv2.CascadeClassifier(...) silently constructs an EMPTY classifier.
+    Calling detectMultiScale() on it raises a real cv2.error that, before
+    this fix, crashed edge/main.py's entire real-time frame loop on the
+    first person track inside a verification zone -- confirmed directly
+    against demo/videos/vtest.avi, not hypothesized."""
+
+    def test_empty_cascade_returns_none_instead_of_raising(self):
+        module = FaceDetectionModule(zones=[_verification_zone()], recognizer=None)
+        module._face_cascade = _EmptyCascade()  # force the real failure mode
+        result = module._detect_haar(track=None, crop=_person_crop(), zone_id="verify-1")
+        assert result is None
+
+    def test_none_cascade_returns_none_instead_of_raising(self):
+        module = FaceDetectionModule(zones=[_verification_zone()], recognizer=None)
+        module._face_cascade = None
+        result = module._detect_haar(track=None, crop=_person_crop(), zone_id="verify-1")
+        assert result is None
+
+
+class _EmptyCascade:
+    """Stands in for a real cv2.CascadeClassifier that failed to load its
+    XML file -- .empty() is the real, documented way OpenCV signals this."""
+
+    def empty(self):
+        return True
+
+    def detectMultiScale(self, *args, **kwargs):
+        raise AssertionError("must not be called on an empty cascade")
+
+
 class TestAttemptRecognitionRealMatch:
     def test_a_real_match_is_merged_into_the_result_dict(self):
         fake = _FakeRecognizer(trained=True, match={"person_id": "p-42", "name": "Alice", "confidence": 12.5})

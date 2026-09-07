@@ -2250,6 +2250,108 @@ arbitrary placeholder, existing rows preserved, idempotent). Full suite: 376/376
 
 ---
 
+## Real Environment Audit: Two Live Crashes Found and Fixed, Real Integration/E2E Layer Added
+
+**Context:** a fresh audit pass of the actual repository state (per the standing engineering
+brief: "Do NOT rebuild from scratch — inspect, verify, then complete/harden"), starting from
+running the full existing suite (confirmed 376/376 passing, matching this document's own last
+entry) and then tracing one event through the real pipeline end to end.
+
+**Two real, previously-undetected crashes were found this way, both load-bearing, both fixed:**
+
+1. **`edge/health/camera_health.py`'s exposure check crashed on the very first real frame.**
+   `hist[255][0]` / `hist[0][0]` assumed `cv2.calcHist(...)` always returns a `(256, 1)`-shaped
+   array. On this project's current OpenCV build (`opencv-contrib-python-headless` 5.0.0,
+   installed earlier this session for `cv2.face`/LBPH watchlist recognition), it returns `(256,)`
+   instead, and `hist[255][0]` raised `IndexError: invalid index to scalar variable` —
+   **confirmed directly against `demo/videos/vtest.avi`: `CameraHealthMonitor.update()` crashed
+   on frame 0, every time, before this fix.** This is Gate 1, the hard camera-health override the
+   entire Hybrid Reliability Engine depends on — a crash here takes down `edge/main.py`'s whole
+   frame loop (`_process_frame` calls it with no surrounding try/except). Fixed to `float(hist[i])`,
+   which works for both the `(256, 1)` and `(256,)` conventions. **Root cause of the gap going
+   unnoticed:** `edge/health/camera_health.py` had **zero dedicated unit tests anywhere in this
+   project's 376-test suite** — `tests/unit/test_reliability.py` constructs `CameraHealthReport`
+   objects directly, bypassing `CameraHealthMonitor.update()`'s real frame-processing code
+   entirely, so this was never actually exercised. New `tests/unit/test_camera_health.py` (9
+   tests) closes that gap: the direct regression case, real over/under-exposure classification,
+   frozen-frame detection, blur detection, and one test running the real monitor against the real
+   video clip.
+2. **`edge/rules/modules.py`'s `FaceDetectionModule._detect_haar()` crashed on the first person
+   track inside a verification zone.** `_load_detectors()` already correctly logs a warning when
+   `cv2.CascadeClassifier(...)` produces an empty classifier, but nothing downstream actually
+   checked for that before calling `detectMultiScale()` on it — which raises a real `cv2.error`
+   (`Assertion failed) !empty()`). **Root cause, also environment-specific and also newly
+   introduced by the same `opencv-contrib-python-headless` swap**: that build's `cv2/data/`
+   directory ships no `.xml` cascade files at all (confirmed by listing it directly — only
+   `__init__.py`), unlike plain `opencv-python`. Since `retina-face` is also unavailable in this
+   environment (it depends on `tensorflow`, which has no wheel for Python 3.14 — the Phase-0
+   "✅ CONFIRMED" note for `retina_face` at the top of this document no longer holds and should not
+   be trusted without re-checking), face detection had NO working detector in this environment at
+   all, and the Haar path crashed the whole pipeline as soon as `demo/scripts/zones_config.json`'s
+   real verification zone (see "Zones Grounded in Real Footage" above) saw a person — which is
+   immediate, real footage of the actual demo clip. Fixed: `_detect_haar()` now checks
+   `self._face_cascade is None or .empty()` and returns `None` (no detection this frame) instead
+   of crashing — the same non-fatal-degradation posture already used for `psutil`, `RetinaFace`,
+   and backend connectivity elsewhere in this codebase. New tests in
+   `tests/unit/test_face_detection_recognition_wiring.py` (`TestHaarCascadeEmptyClassifierDoesNotCrash`,
+   2 tests) lock this in with a real, controllable stand-in classifier — verified to actually
+   crash against the original code before the fix, not just asserted.
+
+**Also confirmed real, not fixed (documented in `docs/LIMITATIONS.md` instead):** `retina-face`'s
+Phase-0 "CONFIRMED" status is stale (tensorflow has no Python 3.14 wheel); the Haar cascade fix
+above means face DETECTION still runs (returns no detections rather than crashing), but with
+neither backend actually working in this environment, face detection currently finds zero faces
+regardless of input — the watchlist-matching code path is real and tested (via a real stand-in
+recognizer, `test_face_detection_recognition_wiring.py`) but has nothing to recognize until either
+dependency is restored.
+
+**A real end-to-end integration/E2E layer was added, closing the gap this document and
+`docs/LIMITATIONS.md` have both disclosed since the evidence-image endpoint was added ("`tests/
+integration/` and `tests/e2e/` are empty for every endpoint in this codebase"):**
+- `tests/integration/test_evidence_pipeline_e2e.py` — real `EvidencePackager` +
+  `EvidenceChainStore` + `EvidenceEncryptor` + `EdgeKeyManager` composed together (not unit-tested
+  in isolation): a clean 3-record chain verifies; a directly-tampered `previous_hash` is detected
+  with the exact broken sequence number; a real Ed25519 signature verifies and a forged one
+  doesn't; a real AES-256-GCM-encrypted snapshot round-trips and a tampered ciphertext file fails
+  decryption; the real `CameraHealthMonitor` classifies a frozen real frame sequence as `FAILED`;
+  a `FAILED`-health event is packaged with a real encrypted snapshot per the tiered-capture fix.
+- `tests/integration/test_backend_e2e.py` — FastAPI's real `TestClient` against the real
+  `backend.main:app` (real routers, real RBAC, an isolated per-test SQLite DB): a genuinely signed
+  event ingests and verifies (`hash_valid`/`signature_valid`/`chain_valid` all `True`); a two-event
+  chain verifies continuity and a forged `previous_hash` on a third event is caught; a forged
+  signature and a tampered hash are each independently caught; RBAC is enforced on
+  `POST /cameras` (`ADMIN` only) and alert acknowledgement (`AUDITOR` blocked, real 403); a real
+  offline outbox (`edge/sync/sync_client.py`'s `SyncClient`) drains fully once synced against a
+  real running `uvicorn` server on a loopback port — not a stub.
+  (**Fixed a real test-isolation bug found while writing this**: `backend/main.py` does
+  `from backend.database.session import SessionLocal`, a name copy at first-import time — patching
+  only `backend.database.session.SessionLocal` is invisible to `lifespan()`'s own `SessionLocal()`
+  calls once `backend.main` has already been imported once in the test process, silently
+  bootstrapping the admin/operator/auditor accounts into a different, stale database than the one
+  `init_db()` — a live attribute lookup — creates tables in. Fixed by also patching
+  `backend.main`'s own copy of the name.)
+- `tests/integration/test_edge_pipeline_real_video_e2e.py` — the real `edge.main.EdgePipeline`
+  class itself (not a re-wiring of its components, unlike `scripts/run_false_positive_
+  benchmark.py`), processing the first 200 real frames of `demo/videos/vtest.avi` end to end:
+  continuity guard, adaptive compute gate, track feature tracking, calibration, the Event
+  Verifier, the Hybrid Reliability Engine, and evidence packaging/chaining all run together in the
+  exact order `edge/main.py` calls them, producing 11 real verified/chained evidence records and
+  asserting a fully-verified hash chain plus real, non-zero performance instrumentation. Marked
+  `slow` (real YOLO inference). **Bounded to 200 frames, not the full ~795, on purpose** — a real
+  finding from writing this test: the full clip now runs far slower per frame than
+  `docs/PERFORMANCE_REPORT.md`'s original 44.6ms/frame figure once real vehicles enter frame later
+  in the clip and ANPR's EasyOCR call (CPU-heavy, added after that benchmark) starts firing —
+  measured directly at a steady ~175ms/frame with no vehicles yet visible in the first 200. Neither
+  the exact new full-clip per-frame latency nor which stage(s) besides ANPR now dominate it were
+  fully characterized this pass — re-running `docs/PERFORMANCE_REPORT.md`'s benchmark end to end
+  is real, disclosed future work (`docs/LIMITATIONS.md`), not silently assumed unchanged.
+
+**Full suite: 406/406** (376 existing + 9 evidence/health integration + 9 camera-health unit +
+9 backend E2E + 2 Haar-cascade regression + 1 real bounded-frame E2E — see `docs/LIMITATIONS.md` for
+exactly what the new integration layer does and does not yet cover).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
@@ -2257,8 +2359,22 @@ See `docs/LIMITATIONS.md` for the full list. Key items:
 3. Detection thresholds are prototype values, not calibrated from labeled data — though MOT16
    ground truth (above) has now produced a real, non-degenerate fit; it is not yet applied to
    runtime defaults, and the two real sequences tried disagree with each other
-4. Face recognition is NOT attempted in MVP — detection only
+4. Face recognition IS implemented (real `cv2.face.LBPHFaceRecognizer` watchlist
+   matching — see "Real Facial Recognition and External C2 Integration" above), but is
+   classical (LBPH, not a modern embedding model), has no liveness detection, and a
+   match is a lead for human review, never a confirmed identification on its own — this
+   item was stale (predated that work) until this pass; do not re-introduce the "NOT
+   attempted" claim without checking `edge/detection/face_recognition.py` first
 5. ANPR scoped to checkpoint-angle cameras only
 6. Clock drift check uses NTP-synchronized system clock (opportunistic)
 7. Cross-camera corroboration is temporal/spatial plausibility only, not person
    re-identification — see `backend/services/cross_camera.py`
+8. Face detection currently finds zero faces on this dev machine, regardless of input —
+   `retina-face` cannot install (needs `tensorflow`, no Python 3.14 wheel) and this
+   environment's OpenCV build (`opencv-contrib-python-headless`, needed for `cv2.face`)
+   ships no Haar cascade XML data files. The crash this used to cause is fixed (see "Real
+   Environment Audit" above); real face detection needs one of those two dependencies
+   restored, or a cascade XML file added to the repo, to actually detect anything
+9. `tests/integration/`/`tests/e2e/` are no longer empty (see "Real Environment Audit"
+   above), but still don't cover the evidence-image/evidence-key HTTP routes or the
+   WebSocket endpoints — see `docs/LIMITATIONS.md`

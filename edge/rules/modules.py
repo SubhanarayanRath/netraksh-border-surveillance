@@ -593,6 +593,22 @@ class FaceDetectionModule:
 
     def _detect_haar(self, track: TrackData, crop: np.ndarray, zone_id: str) -> Optional[dict]:
         import cv2
+        if self._face_cascade is None or self._face_cascade.empty():
+            # Real, environment-specific gap (see docs/LIMITATIONS.md): some
+            # OpenCV builds (e.g. opencv-contrib-python-headless, installed
+            # in this project for cv2.face/LBPH watchlist recognition) do
+            # not ship the bundled Haar cascade XML data files that
+            # opencv-python does, so cv2.CascadeClassifier(...) silently
+            # constructs an empty, unusable classifier -- _load_detectors()
+            # already logs this at startup. Calling detectMultiScale() on an
+            # empty classifier raises cv2.error (a real, previously
+            # uncaught crash that took down the entire real-time frame
+            # loop on the first person track inside a verification zone,
+            # confirmed against demo/videos/vtest.avi). Skip face
+            # detection for this frame rather than crash -- same posture
+            # as every other optional/best-effort real-time dependency in
+            # this codebase (psutil, RetinaFace, backend connectivity).
+            return None
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20))
         if len(faces) == 0:
