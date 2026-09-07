@@ -17,12 +17,16 @@ export default function VideoFeed({ eventData, isConnected }) {
   // actually crosses the WebSocket — has no `bbox` field at all; it exists
   // only on the edge-internal EvidencePackage schema and never reaches the
   // frontend. So `eventData.bbox` was always undefined for every real
-  // event, and this always fell to the hardcoded "PERSON #184 | 91% CONF"
-  // placeholder even while eventData held a real detection_class/
-  // confidence/track_id. Fixed to use the real fields for the label
-  // whenever a real event exists, keeping only the box's on-screen
-  // position as a placeholder (no real pixel coordinates exist to draw it
-  // at without a real video stream, which this project doesn't have).
+  // event, and this always fell to a hardcoded "PERSON #184 | 91% CONF"
+  // placeholder box — drawn even while connected with zero real events yet
+  // (the only guard was `!isConnected && !eventData`), so the very first
+  // thing anyone saw on opening the dashboard was a fake, unconditional
+  // "detection" that never happened. Fixed: the box (and its label) now
+  // render only when a real eventData exists; connected-but-idle renders
+  // no box at all. The box's on-screen position stays a fixed placeholder
+  // region (no real pixel coordinates exist to draw it at without a real
+  // video stream, which this project doesn't have), but it is never shown
+  // without a real underlying event backing it.
   const bboxStyle = {
     position: 'absolute',
     left: '30%',
@@ -35,7 +39,7 @@ export default function VideoFeed({ eventData, isConnected }) {
   };
   const label = eventData
     ? `${eventData.detection_class.toUpperCase()} #${eventData.track_id ?? '---'} | ${(eventData.confidence * 100).toFixed(0)}% CONF`
-    : "PERSON #184 | 91% CONF";
+    : null;
 
   return (
     <div className="w-full h-full relative bg-black border rounded overflow-hidden" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
@@ -62,12 +66,20 @@ export default function VideoFeed({ eventData, isConnected }) {
         <span className="text-[10px] text-muted border rounded px-1 bg-dark">Simulated Feed</span>
       </div>
 
-      {/* Bounding Box */}
-      <div style={bboxStyle}>
-        <div className="absolute top-0 left-0 -translate-y-full bg-ok text-black text-xs font-display px-1 whitespace-nowrap">
-          {label}
+      {/* Bounding Box — only ever drawn for a real event; see label logic above. */}
+      {eventData && (
+        <div style={bboxStyle}>
+          <div className="absolute top-0 left-0 -translate-y-full bg-ok text-black text-xs font-display px-1 whitespace-nowrap">
+            {label}
+          </div>
         </div>
-      </div>
+      )}
+
+      {!eventData && (
+        <div className="absolute bottom-4 left-4 z-20 text-[10px] text-muted font-display uppercase tracking-widest">
+          Monitoring — no active event
+        </div>
+      )}
     </div>
   );
 }
