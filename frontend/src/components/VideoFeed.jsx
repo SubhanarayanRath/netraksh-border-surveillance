@@ -1,13 +1,24 @@
-import { CameraOff } from 'lucide-react';
+import { CameraOff, CloudFog, AlertTriangle } from 'lucide-react';
 
-export default function VideoFeed({ eventData, isConnected }) {
+// demoScenario: 'normal' | 'fog' | 'failure' | 'offline', from the Demo
+// Scenario Control panel (hooks/useDemoScenario.js). Previously that panel's
+// selection reached nothing outside itself — this is the fix for that: an
+// honestly-labeled, client-side-only simulated overlay, never mixed into
+// real eventData/isConnected so it can never be mistaken for a real
+// edge-reported condition.
+export default function VideoFeed({ eventData, isConnected, demoScenario = 'normal' }) {
   // eventData shape: { detection_class: 'person', confidence: 0.91, bbox: [x,y,w,h], track_id: '184', ... }
-  
-  if (!isConnected && !eventData) {
+
+  if ((!isConnected && !eventData) || demoScenario === 'offline') {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-black border rounded relative overflow-hidden">
         <CameraOff size={48} className="text-muted mb-4 z-10" />
         <span className="text-muted font-display z-10">Simulated Feed (Disconnected)</span>
+        {demoScenario === 'offline' && (
+          <span className="text-[10px] text-danger border border-danger rounded px-1 mt-2 z-10">
+            SIMULATED — Demo Scenario Control: Offline State
+          </span>
+        )}
         <div className="scanline"></div>
       </div>
     );
@@ -52,6 +63,17 @@ export default function VideoFeed({ eventData, isConnected }) {
 
       <div className="scanline"></div>
 
+      {/* Demo Scenario Control overlays — client-side-only simulation, never
+          derived from or mixed into real eventData. Distinct visual
+          treatment per scenario so it reads as "simulated", not a real
+          camera-health/scene-condition report. */}
+      {demoScenario === 'fog' && (
+        <div className="absolute inset-0 z-10" style={{ backgroundColor: 'rgba(200, 210, 220, 0.35)', backdropFilter: 'blur(2px)' }}></div>
+      )}
+      {demoScenario === 'failure' && (
+        <div className="absolute inset-0 z-10 border-4 border-danger" style={{ boxShadow: 'inset 0 0 40px rgba(248,113,113,0.4)' }}></div>
+      )}
+
       {/* Top badges */}
       <div className="absolute top-4 left-4 z-20 flex gap-2">
         <div className="bg-danger text-white text-xs px-2 py-1 rounded font-display flex items-center gap-1">
@@ -60,6 +82,16 @@ export default function VideoFeed({ eventData, isConnected }) {
         <div className="bg-panel text-main text-xs px-2 py-1 rounded font-display border">
           CAM-07 | NORTH FENCE
         </div>
+        {demoScenario === 'fog' && (
+          <div className="bg-panel text-warning text-xs px-2 py-1 rounded font-display border border-warning flex items-center gap-1">
+            <CloudFog size={12} /> SIMULATED: FOG_RAIN — IR fallback engaged
+          </div>
+        )}
+        {demoScenario === 'failure' && (
+          <div className="bg-panel text-danger text-xs px-2 py-1 rounded font-display border border-danger flex items-center gap-1">
+            <AlertTriangle size={12} /> SIMULATED: SENSOR FAILURE
+          </div>
+        )}
       </div>
 
       <div className="absolute top-4 right-4 z-20">

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import Logo from './Logo';
 import { authFetch, logout } from '../services/auth';
 import useAuth from '../hooks/useAuth';
+import useDemoScenario from '../hooks/useDemoScenario';
 import LoginPrompt from './LoginPrompt';
 
 const ROLE_COLORS = {
@@ -14,6 +15,7 @@ const ROLE_COLORS = {
 
 export default function Header() {
   const { isAuthenticated, role, username } = useAuth();
+  const { scenario } = useDemoScenario();
   const [timeStr, setTimeStr] = useState('');
   const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [showAccountPanel, setShowAccountPanel] = useState(false);
@@ -109,7 +111,16 @@ export default function Header() {
 
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-xs font-display">
-            <span className="flex items-center gap-1"><Cpu size={12} className="text-ok" /> EDGE: ONLINE</span>
+            {/* Was a hardcoded "EDGE: ONLINE" regardless of any real state.
+                Still not tied to a real edge heartbeat (no such endpoint
+                exists yet — see docs/LIMITATIONS.md), but it now at least
+                honestly reflects the Demo Scenario Control panel's
+                "Offline State" selection instead of always claiming ONLINE
+                no matter what the demo panel next to it says. */}
+            <span className="flex items-center gap-1">
+              <Cpu size={12} className={scenario === 'offline' ? 'text-danger' : 'text-ok'} />
+              EDGE: {scenario === 'offline' ? 'OFFLINE' : 'ONLINE'}
+            </span>
             <button 
               onClick={() => setShowSyncPanel(!showSyncPanel)}
               className="flex items-center gap-1 hover:text-white transition-colors relative"

@@ -1913,6 +1913,47 @@ a partially-migrated state — the next deploy runs the (now-fixed) migration cl
   the same way, going forward.
 
 Full suite: 302/302 (298 + 4 new).
+
+---
+
+## Demo Scenario Control Panel — Fixed to Actually Do Something
+
+**Found via:** user reported "Demo Scenario Control not working". Confirmed real: clicking any of
+the 4 buttons (Normal Ops/Dense Fog/Sensor Failure/Offline State) toggled only that button's own
+highlight — `activeSim` was local `useState` inside `DemoSidebar.jsx` alone, read by nothing else
+in the frontend. Each click also called `/demo/inject-condition`, `/demo/trigger-camera-failure`,
+`/demo/simulate-offline` — none of which exist anywhere in the backend (no `backend/api/demo.py`
+or equivalent router; grepped to confirm) — so every click also silently 401'd/404'd for zero
+benefit. The panel visually worked (no JS error, no crash) while being functionally inert, which
+is exactly why it looked fine in earlier passes but genuinely wasn't.
+
+**Fix:** `frontend/src/hooks/useDemoScenario.jsx` (new) — a small React Context making the
+selected scenario real, shared, app-level state instead of one component's private `useState`.
+`App.jsx` wraps the whole router in it. Removed the dead `/demo/*` calls entirely rather than
+leaving them silently failing.
+
+Wired to real, visible effects, each clearly labeled "SIMULATED" so it can never be mistaken for a
+real edge-reported condition:
+- **Dense Fog** — `VideoFeed.jsx` shows a fog-tint overlay + "SIMULATED: FOG_RAIN — IR fallback
+  engaged" badge.
+- **Sensor Failure** — a red-bordered overlay + "SIMULATED: SENSOR FAILURE" badge.
+- **Offline State** — `VideoFeed.jsx` switches to its real disconnected view (previously only
+  reachable via a real disconnected WebSocket), and `Header.jsx`'s "EDGE: ONLINE" badge — itself a
+  real, separate bug (hardcoded regardless of any real state, same class as several other
+  hardcoded-badge bugs found this session) — now honestly flips to "EDGE: OFFLINE" while this
+  scenario is selected.
+- **Normal Ops** — resets all of the above.
+
+Verified interactively (not just built and assumed): clicked each of the 4 buttons and confirmed
+the correct badge/overlay text appears via the rendered DOM; confirmed the selection survives real
+in-app navigation (sidebar `<Link>`, not a full page reload) by selecting Offline State on the
+Dashboard, navigating to Camera Health via the sidebar, and confirming "EDGE: OFFLINE" was still
+shown there — proving the state is genuinely app-level now, not page-local. Frontend-only change;
+Python suite unaffected (302/302).
+
+---
+
+## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
 2. Demo runs on CPU (laptop), not Jetson-class edge hardware

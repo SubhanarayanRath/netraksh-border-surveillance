@@ -1,33 +1,25 @@
 import { CheckCircle, Cloud, AlertCircle, WifiOff } from 'lucide-react';
-import { useState } from 'react';
-import { authFetch } from '../services/auth';
+import useDemoScenario from '../hooks/useDemoScenario';
 
+// Was previously local-only state that didn't reach any other component
+// (confirmed: nothing else in the frontend read DemoSidebar's own state),
+// so clicking a button changed nothing except that button's own highlight
+// — a real, non-cosmetic bug for a panel whose whole purpose is to
+// demonstrate the dashboard reacting to a scenario. Also previously called
+// /demo/inject-condition, /demo/trigger-camera-failure, /demo/simulate-offline
+// — none of which exist anywhere in the backend (no backend/api/demo.py or
+// equivalent router) — so every click also silently 401'd/404'd for no
+// benefit. Now uses the shared DemoScenarioProvider (hooks/useDemoScenario.js)
+// so Dashboard/VideoFeed/Header can honestly react to the selected scenario,
+// and the dead backend calls are removed rather than left silently failing.
 export default function DemoSidebar() {
-  const [activeSim, setActiveSim] = useState('normal');
-
-  // NOTE: none of these /demo/* routes exist in the backend (confirmed —
-  // there is no backend/api/demo.py or equivalent router). Every click here
-  // always hits the catch below and falls back to the local "Simulated"
-  // UI state only, which is exactly what the "Simulated" badge on each
-  // button already discloses — this was not a hidden gap, just an
-  // unimplemented one. See docs/LIMITATIONS.md.
-  const handleTrigger = async (type) => {
-    setActiveSim(type);
-    try {
-      if (type === 'normal') await authFetch('/demo/inject-condition?condition=CLEAR', {method: 'POST'});
-      if (type === 'fog') await authFetch('/demo/inject-condition?condition=FOG', {method: 'POST'});
-      if (type === 'failure') await authFetch('/demo/trigger-camera-failure', {method: 'POST'});
-      if (type === 'offline') await authFetch('/demo/simulate-offline', {method: 'POST'});
-    } catch (e) {
-      console.warn("Demo endpoint failed, using local simulation state fallback");
-    }
-  };
+  const { scenario, setScenario } = useDemoScenario();
 
   const SimButton = ({ id, icon: Icon, title, desc }) => {
-    const isActive = activeSim === id;
+    const isActive = scenario === id;
     return (
-      <button 
-        onClick={() => handleTrigger(id)}
+      <button
+        onClick={() => setScenario(id)}
         className={`flex flex-col text-left p-4 rounded border transition-colors ${isActive ? 'bg-elevated border-ok' : 'bg-transparent border-color hover-bg-elevated'}`}
         style={{width: '100%', marginBottom: '1rem', position: 'relative'}}
       >
@@ -38,7 +30,10 @@ export default function DemoSidebar() {
             <span className="text-xs text-muted font-body mt-1">{desc}</span>
           </div>
         </div>
-        {/* Mock fallback badge */}
+        {/* This badge is now accurate: selecting a scenario really does
+            simulate that state across the dashboard (VideoFeed, Header) —
+            "Simulated" distinguishes it from a real edge-reported condition,
+            not from "does nothing" as it did before. */}
         <span className="text-[10px] text-muted absolute top-2 right-2 border rounded px-1 border-color">Simulated</span>
       </button>
     );
@@ -47,7 +42,7 @@ export default function DemoSidebar() {
   return (
     <aside className="sidebar-right">
       <h3 className="text-sm text-muted font-body mb-6 border-b pb-4">Demo Scenario Control</h3>
-      
+
       <SimButton id="normal" icon={CheckCircle} title="Normal Ops" desc="Optimal detection clarity" />
       <SimButton id="fog" icon={Cloud} title="Dense Fog" desc="Trigger IR fallback logic" />
       <SimButton id="failure" icon={AlertCircle} title="Sensor Failure" desc="Data integrity alert" />

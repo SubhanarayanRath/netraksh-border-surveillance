@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ShieldCheck, HelpCircle, ShieldAlert, CheckCircle } from 'lucide-react';
 import VideoFeed from '../components/VideoFeed';
 import useWebSocket from '../hooks/useWebSocket';
+import useDemoScenario from '../hooks/useDemoScenario';
 import { WS_URL } from '../services/auth';
 import { parseUtc } from '../utils/time';
 
@@ -68,6 +69,7 @@ function explainDecision(parsed) {
 
 export default function Dashboard() {
   const { events, health } = useWebSocket(WS_URL);
+  const { scenario: demoScenario } = useDemoScenario();
   const [latestEvent, setLatestEvent] = useState(null);
   const [showWhy, setShowWhy] = useState(false);
 
@@ -140,7 +142,7 @@ export default function Dashboard() {
         {/* Left Column */}
         <div className="flex-col flex-[3] gap-4 h-full">
           <div className="flex-grow min-h-[400px]">
-            <VideoFeed eventData={latestEvent} isConnected={true} />
+            <VideoFeed eventData={latestEvent} isConnected={true} demoScenario={demoScenario} />
           </div>
 
           <div className="bg-panel border rounded p-4 h-48 flex flex-col">
