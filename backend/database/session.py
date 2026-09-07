@@ -70,6 +70,15 @@ def _migrate_add_missing_columns() -> None:
                 conn.execute(text("ALTER TABLE events ADD COLUMN corroboration_distance_m FLOAT"))
                 conn.execute(text("ALTER TABLE events ADD COLUMN corroboration_delta_t_s FLOAT"))
 
+    # Cross-camera corroboration wired into escalation (backend/services/
+    # escalation.py) — same guard pattern, applied to the alerts table.
+    if "alerts" in inspector.get_table_names():
+        existing_alert_columns = {col["name"] for col in inspector.get_columns("alerts")}
+        if "escalated_via_corroboration" not in existing_alert_columns:
+            logger.info("[DB] Migrating alerts table: adding escalated_via_corroboration column")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT 0"))
+
 
 def init_db() -> None:
     """Create all tables if they don't exist. Used for dev/test without migrations."""

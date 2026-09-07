@@ -1830,6 +1830,41 @@ conf=0-means-ignore convention, handles an empty file). Full suite: 286/286 (277
 
 ---
 
+## Cross-Camera Corroboration Wired Into Escalation
+
+**Context:** cross-camera corroboration (above) was deliberately left display-only when first
+built, since wiring it into real alerting behavior is a product decision, not an engineering one.
+User explicitly asked for it to be wired into `backend/services/escalation.py` — done here.
+
+**The change:** a MEDIUM-severity event with strong real cross-camera corroboration
+(`event.corroboration_score >= CORROBORATION_BOOST_MIN_TC`, 0.6 — deliberately much stricter than
+`cross_camera.py`'s own `MIN_TC_TO_RECORD` of 0.15, since this threshold now gates a real change
+in alerting behavior, not just a display annotation) is now also treated as escalation-eligible,
+alongside the existing HIGH-severity condition. Scoped narrowly and disclosed on purpose:
+- **Only MEDIUM is boosted, never LOW** — `CORROBORATION_BOOST_SEVERITY = Severity.MEDIUM.value`,
+  hardcoded, not a sliding scale.
+- **The original, already-signed `Event.severity` field is never mutated** — same principle as
+  cross-camera corroboration itself never rewriting a signed event. The boost only affects this
+  function's local escalation-eligibility check for this one call.
+- **Every alert created via the boost is transparently marked.** New `Alert.escalated_via_corroboration`
+  column (added via the existing migration-guard pattern), `false` for every HIGH-severity alert
+  (which needed no boost — verified by a dedicated test), `true` only when the boost is why the
+  alert exists at all. Exposed through `AlertResponse`, the WebSocket broadcast payload, and shown
+  on the Alerts page ("Escalated via cross-camera corroboration...") — never a silent behavior
+  change.
+- **Condition 2 (crosses a jurisdiction boundary, for blockchain submission) is unaffected** — the
+  boost only ever widens which events pass condition 1; a boosted alert still needs a real boundary
+  zone to reach the blockchain, exactly like a HIGH-severity one.
+
+**Tests:** `tests/unit/test_escalation.py` (new, first-ever for this module, 12 tests) — regression
+coverage (HIGH escalates exactly as before, with or without a corroboration score; MEDIUM without
+strong-enough corroboration still doesn't escalate at all) and new coverage (MEDIUM + strong
+corroboration escalates and is marked; exact-threshold boundary; just-below-threshold does not
+escalate; LOW is never boosted regardless of corroboration strength; a boosted alert can still
+reach the blockchain via a real boundary zone; idempotency). Full suite: 298/298 (286 + 12 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

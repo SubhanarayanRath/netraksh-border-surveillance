@@ -831,9 +831,15 @@ limitation — an out-of-date limitations file is worse than none.
   disclosed, hand-picked walking-speed heuristic (0.8–2.2 m/s), not a measured one. The
   corroboration score is also deliberately never used to retroactively change an already-signed
   event's `decision_state`/confidence — see `docs/ARCHITECTURE.md`'s entry for why (tamper-evident
-  chain-of-custody). It is currently display-only (Evidence page); it is not yet wired into
-  `backend/services/escalation.py`'s severity/escalation decision — a deliberate scoping choice
-  to avoid changing real alerting behavior without an explicit product decision, not an oversight.
+  chain-of-custody). **Update — now wired into escalation, on explicit user request:**
+  `backend/services/escalation.py` treats a MEDIUM-severity event as escalation-eligible when it
+  carries strong real corroboration (`corroboration_score >= 0.6` — much stricter than the 0.15
+  threshold that merely gates whether anything is shown on the Evidence page, since this one gates
+  a real alerting-behavior change). LOW is never boosted. The original `Event.severity` field
+  itself is still never mutated; every alert created via this path is transparently marked
+  `Alert.escalated_via_corroboration=True` (visible via `AlertResponse` and the Alerts page), never
+  a silent change. See `docs/ARCHITECTURE.md`'s "Cross-Camera Corroboration Wired Into Escalation"
+  entry for the full account.
 
 ## 3. Designed in architecture v4, not yet implemented in code
 

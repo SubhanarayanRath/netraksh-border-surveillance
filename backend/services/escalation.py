@@ -6,6 +6,29 @@ Implements §1.3: trigger cross-command alert when BOTH conditions hold:
      (zone.adjacent_command_id is not None)
 
 Only this code path submits to blockchain.
+
+Cross-camera corroboration boost (backend/services/cross_camera.py): a
+MEDIUM-severity event that has strong, real corroboration from another
+camera (see that module's docstring for exact scope — temporal + real-
+distance plausibility, NOT person re-identification) is also treated as
+condition-1-eligible. This is a deliberate, disclosed, real behavior
+change, not an oversight: real corroboration from an independent sensor is
+real supporting evidence that a MEDIUM event reflects a genuine,
+physically consistent movement worth cross-command attention, even though
+neither camera alone reached HIGH on its own. Scoped narrowly on purpose:
+- Only MEDIUM is boosted, never LOW — see CORROBORATION_BOOST_SEVERITY.
+- The boost threshold (CORROBORATION_BOOST_MIN_TC) is deliberately higher
+  than cross_camera.py's own MIN_TC_TO_RECORD (0.15, "is there anything
+  worth displaying") — this threshold gates a real alerting-behavior
+  change, not just a display annotation, so it requires much stronger
+  real corroboration before it fires.
+- The original event.severity field itself (part of the edge's signed,
+  tamper-evident record) is NEVER mutated — the boost only affects this
+  function's local escalation-eligibility check. Every alert created via
+  the boost path is transparently marked escalated_via_corroboration=True
+  on the Alert row, so this is always auditable, never silent.
+- Condition 2 (crosses_boundary) is unaffected by corroboration — the
+  boost only ever widens which events pass condition 1.
 """
 from __future__ import annotations
 
@@ -22,6 +45,16 @@ from shared.schemas import AlertIssuedTransaction
 
 logger = logging.getLogger(__name__)
 
+# Only MEDIUM gets a corroboration boost — LOW never does, regardless of
+# how strong the corroboration is. A disclosed, deliberate scope limit.
+CORROBORATION_BOOST_SEVERITY = Severity.MEDIUM.value
+
+# Deliberately much stricter than cross_camera.py's MIN_TC_TO_RECORD
+# (0.15) — that threshold only gates whether something is worth *showing*;
+# this one gates a real change in escalation/alerting behavior, so it
+# demands strong real corroboration, not merely "some corroboration exists".
+CORROBORATION_BOOST_MIN_TC = 0.6
+
 
 def check_and_escalate(event: Event, db: Session) -> None:
     """
@@ -29,11 +62,25 @@ def check_and_escalate(event: Event, db: Session) -> None:
     and submits AlertIssued to blockchain if both conditions hold.
     Non-blocking: blockchain failure is logged but does not propagate.
     """
-    # Condition 1: severity threshold
-    severity_eligible = event.severity in (Severity.HIGH.value,)
+    # Condition 1: severity threshold, or a real cross-camera-corroboration
+    # boost (see module docstring). event.corroboration_score is only ever
+    # set by backend/services/cross_camera.py, computed from real cameras'
+    # real coordinates and real event timestamps — never fabricated here.
+    escalated_via_corroboration = (
+        event.severity == CORROBORATION_BOOST_SEVERITY
+        and event.corroboration_score is not None
+        and event.corroboration_score >= CORROBORATION_BOOST_MIN_TC
+    )
+    severity_eligible = event.severity in (Severity.HIGH.value,) or escalated_via_corroboration
     if not severity_eligible:
         logger.debug(f"Event {event.id}: severity={event.severity}, not escalation-eligible")
         return
+
+    if escalated_via_corroboration:
+        logger.info(
+            f"Event {event.id}: severity={event.severity} boosted to escalation-eligible by "
+            f"cross-camera corroboration (Tc={event.corroboration_score:.3f} >= {CORROBORATION_BOOST_MIN_TC})"
+        )
 
     # Condition 2: zone boundary check
     zone = db.query(Zone).filter(Zone.id == event.zone_id).first()
@@ -42,7 +89,9 @@ def check_and_escalate(event: Event, db: Session) -> None:
     if not crosses_boundary:
         logger.debug(f"Event {event.id}: zone {event.zone_id} has no adjacent command, not escalation-eligible")
 
-    # Create alert record (for any HIGH severity event, even non-cross-command)
+    # Create alert record (for any escalation-eligible event, even
+    # non-cross-command — HIGH severity, or MEDIUM boosted by real
+    # corroboration per the module docstring)
     existing_alert = db.query(Alert).filter(Alert.event_id == event.id).first()
     if existing_alert:
         return
@@ -54,6 +103,7 @@ def check_and_escalate(event: Event, db: Session) -> None:
         command_id_issuing=settings.COMMAND_ID,
         command_id_receiving=zone.adjacent_command_id if (zone and crosses_boundary) else None,
         blockchain_status="PENDING",
+        escalated_via_corroboration=escalated_via_corroboration,
     )
     db.add(alert)
     db.flush()
@@ -75,6 +125,7 @@ def check_and_escalate(event: Event, db: Session) -> None:
                 "event_id": event.id,
                 "severity": event.severity,
                 "crosses_jurisdiction_boundary": crosses_boundary,
+                "escalated_via_corroboration": escalated_via_corroboration,
                 "decision_state": event.decision_state,
                 "camera_id": event.camera_id,
                 "event_type": event.event_type,

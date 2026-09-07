@@ -155,6 +155,13 @@ export default function Alerts() {
                 {alert.crosses_jurisdiction_boundary && (
                   <p className="text-sm font-body text-muted">Crosses jurisdiction boundary — escalated cross-command.</p>
                 )}
+                {/* Real, set only when backend/services/escalation.py's cross-camera
+                    corroboration boost is why this alert exists at all — a MEDIUM-severity
+                    event that reached alert-worthy status via real corroboration from
+                    another camera, not from its own severity alone. */}
+                {!alert.isMock && alert.escalated_via_corroboration && (
+                  <p className="text-sm font-body text-ok">Escalated via cross-camera corroboration (MEDIUM severity, strong real corroborating sighting).</p>
+                )}
 
                 <div className="flex gap-6 mt-2 pt-3 border-t border-[rgba(239,68,68,0.2)] text-xs font-display text-muted">
                   <span className="flex items-center gap-1"><MapPin size={14}/> {alert.camera_id || alert.zone_id || 'Unknown'}</span>

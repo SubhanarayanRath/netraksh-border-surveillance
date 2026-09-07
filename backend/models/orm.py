@@ -244,6 +244,12 @@ class Alert(Base):
     acknowledged_by: Mapped[Optional[str]] = mapped_column(String(64))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # True only when this alert exists BECAUSE of cross-camera corroboration
+    # boosting a MEDIUM-severity event to escalation-eligible (see
+    # backend/services/escalation.py) — never set for a HIGH-severity event,
+    # which was always escalation-eligible on its own. Recorded so this is
+    # visible/auditable, not a silent behavior change.
+    escalated_via_corroboration: Mapped[bool] = mapped_column(Boolean, default=False)
 
     event: Mapped["Event"] = relationship("Event", back_populates="alert")
     acknowledgements: Mapped[List["AlertAcknowledgement"]] = relationship(

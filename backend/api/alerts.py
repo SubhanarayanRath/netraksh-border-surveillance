@@ -140,4 +140,5 @@ def _alert_to_response(alert: Alert) -> AlertResponse:
         camera_id=alert.event.camera_id if alert.event else None,
         event_type=alert.event.event_type if alert.event else None,
         zone_id=alert.event.zone_id if alert.event else None,
+        escalated_via_corroboration=alert.escalated_via_corroboration,
     )

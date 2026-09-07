@@ -347,6 +347,11 @@ class AlertResponse(BaseModel):
     camera_id: Optional[str] = None
     event_type: Optional[str] = None
     zone_id: Optional[str] = None
+    # True only when this alert exists because cross-camera corroboration
+    # boosted a MEDIUM-severity event to escalation-eligible (see
+    # backend/services/escalation.py) rather than the event's own severity
+    # alone. False for every HIGH-severity alert, which needed no boost.
+    escalated_via_corroboration: bool = False
 
     class Config:
         use_enum_values = True
