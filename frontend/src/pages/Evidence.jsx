@@ -219,11 +219,26 @@ export default function Evidence() {
                 </div>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">DETECTION TYPE</span>
-                  <span className="text-sm font-body">{selectedEvent?.event_type || 'Human'}</span>
+                  {/* Was `selectedEvent?.event_type || 'Human'` — event_type is
+                      the *rule* that fired (LOITERING, ANPR_READ, ...), not
+                      what was detected, and "Human" was a hardcoded fallback
+                      shown even for a real event whose detection_class was
+                      something else (e.g. vehicle). detection_class
+                      (EventResponse, shared/schemas.py) is the real field for
+                      "what was detected". */}
+                  <span className="text-sm font-body">{selectedEvent?.detection_class ? String(selectedEvent.detection_class).toUpperCase() : 'N/A'}</span>
                 </div>
                 <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">EDGE NODE</span>
-                  <span className="text-sm font-body">edge-001 (Active)</span>
+                  {/* EventResponse (shared/schemas.py) has no device/edge-node
+                      id field at all — "edge-001 (Active)" was a hardcoded
+                      literal with nothing real behind it, shown identically
+                      for every event regardless of which edge device actually
+                      produced it. No endpoint currently returns this, so
+                      showing the honest absence rather than a fabricated
+                      value (same pattern as the header's "Last Sync: Not
+                      tracked"). */}
+                  <span className="text-sm font-body text-muted">Not tracked per event</span>
                 </div>
               </div>
 
