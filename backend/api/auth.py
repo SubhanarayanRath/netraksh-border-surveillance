@@ -14,7 +14,6 @@ from backend.database.session import get_db
 from backend.models.orm import User
 from backend.security.auth import (
     audit,
-    bootstrap_users,
     create_access_token,
     hash_password,
     require_admin,

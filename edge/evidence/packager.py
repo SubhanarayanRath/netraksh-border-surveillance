@@ -17,7 +17,6 @@ import sqlite3
 import time
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from cryptography.hazmat.primitives import serialization
@@ -28,9 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from shared import crypto
-from shared.constants import CameraHealthState, DecisionState, SceneCondition
 from shared.schemas import (
-    BoundingBox,
     CameraHealthReport,
     EvidencePackage,
     ReliabilityDecision,
@@ -67,7 +64,7 @@ class EdgeKeyManager:
             self._generate()
 
     def _generate(self) -> None:
-        logger.info(f"[KeyMgr] Generating new Ed25519 keypair...")
+        logger.info("[KeyMgr] Generating new Ed25519 keypair...")
         private_key = Ed25519PrivateKey.generate()
         pub_key = private_key.public_key()
 
@@ -89,7 +86,7 @@ class EdgeKeyManager:
         self._private_key = private_key
         self._public_key = pub_key
         logger.info(f"[KeyMgr] Keys written to {self.private_key_path} / {self.public_key_path}")
-        logger.info(f"[KeyMgr] Upload public key to server: /cameras/{{id}}/public-key")
+        logger.info("[KeyMgr] Upload public key to server: /cameras/{id}/public-key")
 
     def _load(self) -> None:
         with open(self.private_key_path, "rb") as f:
@@ -293,13 +290,23 @@ class EvidenceChainStore:
 
     def verify_chain(self) -> tuple[bool, Optional[int], str]:
         """
-        Walk the entire chain and verify hash linkage.
-        Returns (is_valid, first_broken_sequence_or_None, detail_message)
+        Walk the entire chain and verify hash LINKAGE only (each record's
+        previous_hash matches the prior record's current_hash).
+
+        This deliberately does NOT recompute and compare each record's own
+        hash: the local evidence_chain table only stores a subset of the
+        real EvidencePackage's signable fields (no zone_id, detection_class,
+        scene_condition, camera_health_state, evidence_clip_ref) -- there is
+        not enough here to honestly recompute the real hash, only enough to
+        check that the chain wasn't spliced. Full hash + signature
+        verification requires the complete package, which only exists in
+        backend/services/verification.py::verify_event_integrity() against
+        the stored raw_package_json -- see that function for the real check.
+        Returns (is_valid, first_broken_sequence_or_None, detail_message).
         """
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT sequence_number, event_id, camera_id, timestamp, decision_state, "
-                "confidence, current_hash, previous_hash, signature "
+                "SELECT sequence_number, current_hash, previous_hash "
                 "FROM evidence_chain ORDER BY sequence_number ASC"
             ).fetchall()
 
@@ -307,31 +314,9 @@ class EvidenceChainStore:
             return True, None, "Empty chain — valid by definition"
 
         prev_hash = None
-        for row in rows:
-            seq, event_id, camera_id, timestamp, decision_state, confidence, current_hash, previous_hash, sig = row
-
-            # Recompute expected hash for this record
-            fields = {
-                "event_id": event_id,
-                "camera_id": camera_id,
-                "timestamp": timestamp,
-                "zone_id": "",  # zone_id not stored in chain directly
-                "detection_class": "unknown",
-                "confidence": confidence,
-                "scene_condition": "CLEAR_DAY",
-                "camera_health_state": "OK",
-                "decision_state": decision_state,
-                "evidence_clip_ref": "",
-                "previous_hash": previous_hash or "",
-            }
-            expected_hash = compute_sha256(fields)
-
-            # Verify previous_hash linkage
+        for seq, current_hash, previous_hash in rows:
             if seq > 0 and previous_hash != (prev_hash or ""):
                 return False, seq, f"CHAIN BREAK at sequence {seq}: expected previous_hash={prev_hash}, got {previous_hash}"
-
-            # Hash itself might not match because we don't have all fields here
-            # Full re-verification uses the raw_package_json on the server
             prev_hash = current_hash
 
         return True, None, f"Chain valid — {len(rows)} records verified"

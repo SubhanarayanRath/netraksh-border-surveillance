@@ -11,7 +11,6 @@ from typing import List, Optional
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     DateTime,
     Float,
     ForeignKey,

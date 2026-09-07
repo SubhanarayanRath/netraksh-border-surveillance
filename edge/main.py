@@ -263,7 +263,7 @@ class EdgePipeline:
         Start the pipeline. Loads model, opens camera, then runs frame loop.
         Sync runs in a background thread.
         """
-        logger.info(f"[Pipeline] Loading YOLO model...")
+        logger.info("[Pipeline] Loading YOLO model...")
         self.detector.load()
 
         # Start sync in background thread
@@ -376,8 +376,6 @@ class EdgePipeline:
 
     def _process_frame(self, frame, meta) -> None:
         """Process a single frame through the full pipeline."""
-        import numpy as np
-
         self._verify_tick += 1
 
         # --- Performance instrumentation: t0 (frame received) ---

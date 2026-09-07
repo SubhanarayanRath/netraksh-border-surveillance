@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from shared.constants import DecisionState, DetectionClass, SceneCondition, VehicleSubtype
+from shared.constants import DetectionClass, SceneCondition, VehicleSubtype
 from shared.schemas import BoundingBox, Point, TrackData
 
 logger = logging.getLogger(__name__)

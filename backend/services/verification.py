@@ -16,8 +16,7 @@ from datetime import datetime
 from typing import Optional
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives import serialization
 from sqlalchemy.orm import Session
 
 from backend.models.orm import EvidenceChain

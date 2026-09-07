@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -307,21 +307,42 @@ class BehaviorModule:
                     "confidence": track.confidence,
                 }
 
-        # --- Abandoned object: was stationary, now disappeared ---
+        # --- Abandoned object: was stationary, then genuinely left behind ---
+        # A real gap, fixed here: candidates used to fire the instant a
+        # stationary track disappeared for even a single frame -- no
+        # tolerance for a brief detection/tracking miss, exactly the kind of
+        # single-frame noise ByteTrack's own track_buffer already tolerates
+        # elsewhere. `ABANDONED_DISAPPEAR_FRAMES` and `self._disappeared_tracks`
+        # both already existed for this purpose but were never wired together.
+        # A candidate now has to stay missing for ABANDONED_DISAPPEAR_FRAMES
+        # consecutive updates before it's reported; if tracking recovers it
+        # before then, the pending candidate is cancelled, not fired.
+        reappeared = set(self._disappeared_tracks) & active_ids
+        for reappeared_id in reappeared:
+            del self._disappeared_tracks[reappeared_id]
+
         newly_gone = set(self._static_tracks.keys()) - active_ids
         for gone_id in newly_gone:
-            stat = self._static_tracks.get(gone_id, {})
-            if stat.get("stationary_frames", 0) >= ABANDONED_STATIONARY_FRAMES:
+            stat = self._static_tracks.pop(gone_id, None)
+            if stat and stat.get("stationary_frames", 0) >= ABANDONED_STATIONARY_FRAMES:
+                self._disappeared_tracks[gone_id] = {**stat, "missing_frames": 0}
+
+        fired = []
+        for pending_id, stat in self._disappeared_tracks.items():
+            stat["missing_frames"] += 1
+            if stat["missing_frames"] >= ABANDONED_DISAPPEAR_FRAMES:
                 events.append({
                     "event_type": EventType.ABANDONED_OBJECT,
                     "zone_id": stat.get("zone_id", "unknown"),
-                    "track_id": gone_id,
+                    "track_id": pending_id,
                     "detection_class": stat.get("class"),
                     "confidence": stat.get("confidence", 0.0),
                     "rule": "stationary_object_timeout",
                     "rule_value": stat.get("stationary_frames", 0),
                 })
-            self._static_tracks.pop(gone_id, None)
+                fired.append(pending_id)
+        for pending_id in fired:
+            del self._disappeared_tracks[pending_id]
 
         return events
 

@@ -19,8 +19,6 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.orm import Session
-
 from backend.config import settings
 from shared.schemas import AlertAcknowledgedTransaction, AlertIssuedTransaction
 
@@ -135,6 +133,15 @@ class FabricCLIAdapter(BlockchainAdapter):
             tx.timestamp.isoformat(),
         ]
         output = self._invoke("AlertIssued", args)
+        # NOT EXERCISED: this adapter has never been run against a real
+        # Fabric network (WSL2/Docker unavailable in this dev environment --
+        # see docs/LIMITATIONS.md). `peer chaincode invoke`'s real stdout is
+        # logged here rather than silently discarded, so the first real run
+        # against an actual network is debuggable; tx_id below is a locally
+        # generated placeholder, not parsed from a real chaincode response
+        # (whose exact output format/whether it even contains a usable tx id
+        # has not been verified against a live network).
+        logger.debug(f"[BLOCKCHAIN FABRIC] peer chaincode invoke raw output: {output!r}")
         tx_id = f"FABRIC-{uuid.uuid4().hex[:16].upper()}"
         logger.info(f"[BLOCKCHAIN FABRIC] AlertIssued: tx_id={tx_id}")
         return {"tx_id": tx_id, "status": "CONFIRMED"}
@@ -148,6 +155,10 @@ class FabricCLIAdapter(BlockchainAdapter):
             tx.signature,
         ]
         output = self._invoke("AlertAcknowledged", args)
+        # See the identical note in submit_alert_issued() above: not
+        # exercised against a real network, real output logged rather than
+        # discarded, tx_id is a local placeholder.
+        logger.debug(f"[BLOCKCHAIN FABRIC] peer chaincode invoke raw output: {output!r}")
         tx_id = f"FABRIC-{uuid.uuid4().hex[:16].upper()}"
         logger.info(f"[BLOCKCHAIN FABRIC] AlertAcknowledged: tx_id={tx_id}")
         return {"tx_id": tx_id, "status": "CONFIRMED"}

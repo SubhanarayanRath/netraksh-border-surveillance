@@ -20,7 +20,7 @@ import time
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Deque, Optional, Tuple
+from typing import Deque, Tuple
 
 import cv2
 import numpy as np

@@ -459,3 +459,21 @@ button {
 .hover\:scale-105:hover { transform: scale(1.05); }
 .disabled\:opacity-50:disabled { opacity: 0.5; }
 .last\:border-b-0:last-child { border-bottom: none; }
+
+/* Same "looks like Tailwind, isn't real" gap as .absolute/.relative and the
+   spacing/offset classes above, found the same way (auditing className
+   strings against what's actually defined here) while working on the
+   Architecture page. `tracking-widest` alone is used in 12+ files across
+   this app for every uppercase label/heading (it's load-bearing for the
+   whole HUD look, not incidental) and was silently doing nothing; `opacity-
+   10/40/60/80` (plus the non-`disabled:` form of `opacity-50`) were the
+   same on Architecture's background grid and Dashboard/Health. Values are
+   real Tailwind semantics, not invented. */
+.tracking-wider { letter-spacing: 0.05em; }
+.tracking-widest { letter-spacing: 0.1em; }
+.opacity-10 { opacity: 0.1; }
+.opacity-40 { opacity: 0.4; }
+.opacity-50 { opacity: 0.5; }
+.opacity-60 { opacity: 0.6; }
+.opacity-80 { opacity: 0.8; }
+.flex-wrap { flex-wrap: wrap; }

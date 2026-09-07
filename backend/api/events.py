@@ -20,8 +20,8 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from backend.database.session import get_db
-from backend.models.orm import Alert, Camera, EvidenceChain, EvidencePackage, Event, Zone
-from backend.security.auth import require_any_role, require_operator_or_admin
+from backend.models.orm import Camera, EvidencePackage, Event
+from backend.security.auth import require_any_role
 from backend.security.evidence_key_wrap import unwrap_key
 from backend.services.verification import verify_event_integrity
 from shared.crypto import aes_gcm_decrypt
@@ -152,7 +152,6 @@ async def ingest_event(
     Called by edge sync client when connectivity is restored.
     Runs server-side verification before storing.
     """
-    from backend.services.verification import verify_event_integrity
     from backend.services.escalation import check_and_escalate
 
     ep = payload.evidence_package
@@ -257,7 +256,6 @@ async def verify_event(
         raise HTTPException(status_code=404, detail="Evidence package not found")
 
     from shared.schemas import EvidencePackage as EPSchema
-    from backend.services.verification import verify_event_integrity
 
     camera = db.query(Camera).filter(Camera.id == event.camera_id).first()
     ep = EPSchema(**json.loads(evidence.raw_package_json))

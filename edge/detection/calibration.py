@@ -19,11 +19,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 
-from shared.constants import CONDITION_THRESHOLD_KEYS, SceneCondition
+from shared.constants import SceneCondition
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,6 @@ class CalibrationModule:
         Returns:
             Optimal threshold (maximizes F1 on the validation set)
         """
-        from sklearn.calibration import CalibratedClassifierCV
         from sklearn.isotonic import IsotonicRegression
         from sklearn.linear_model import LogisticRegression
 

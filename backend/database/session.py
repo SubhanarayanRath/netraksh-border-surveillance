@@ -4,7 +4,7 @@ NETRAKSH Backend — Database connection and session management.
 import logging
 from typing import Generator
 
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.config import settings

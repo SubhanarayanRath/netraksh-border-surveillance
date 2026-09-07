@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc

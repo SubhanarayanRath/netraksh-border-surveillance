@@ -1,6 +1,6 @@
 """
-NETRAKSH — WebSocket router for live dashboard alerts.
-WS /ws/alerts — push new alerts to dashboard clients.
+NETRAKSH — WebSocket router for live dashboard updates.
+WS /ws/dashboard — push new events/alerts/health/metrics to dashboard clients.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
@@ -18,15 +19,6 @@ router = APIRouter(tags=["websocket"])
 # Global set of connected WebSocket clients
 _connected_clients: Set[WebSocket] = set()
 
-
-@router.websocket("/ws/alerts")
-async def ws_alerts(websocket: WebSocket):
-    """
-    Live alert stream for the dashboard.
-    """
-    await websocket.accept()
-    _connected_clients.add(websocket)
-    logger.info(f"WebSocket alerts client connected. Total: {len(_connected_clients)}")
 
 @router.websocket("/ws/dashboard")
 async def ws_dashboard(websocket: WebSocket):
@@ -40,14 +32,17 @@ async def ws_dashboard(websocket: WebSocket):
         # Keep alive
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # This is a push-only channel -- any real client message is
+                # intentionally discarded; receiving it just resets the
+                # 30s timer so we know the socket is still alive.
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
             except asyncio.TimeoutError:
                 await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
     except WebSocketDisconnect:
         pass
     finally:
         _connected_clients.discard(websocket)
-        logger.info(f"WebSocket dashboard client disconnected.")
+        logger.info("WebSocket dashboard client disconnected.")
 
 
 async def broadcast_alert(alert_data: dict) -> None:
@@ -103,7 +98,6 @@ async def broadcast_metrics(metrics_data: dict) -> None:
             disconnected.add(client)
     _connected_clients.difference_update(disconnected)
 
-from fastapi.encoders import jsonable_encoder
 
 async def broadcast_event(event_data: dict) -> None:
     """Called when a new event is ingested."""

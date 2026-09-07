@@ -80,7 +80,16 @@ export default function Dashboard() {
   }, [events]);
 
   const parsed = latestEvent ? parseDecisionReason(latestEvent.decision_reason) : null;
-  const healthState = latestEvent?.camera_health_state; // 'OK' | 'DEGRADED' | 'FAILED'
+  // Prefer the live per-camera health push (real, arrives roughly every 5s
+  // independent of whether any event has fired -- see
+  // backend/api/cameras.py's POST /cameras/{id}/health) over the
+  // snapshot embedded in the latest event, which is only as fresh as
+  // whenever that event last fired and could be stale. Falls back to the
+  // event's own recorded value when no live push has arrived yet for this
+  // camera. `health` was previously fetched from the socket and never
+  // actually used here.
+  const healthState = (latestEvent && health[latestEvent.camera_id]?.health_state)
+    || latestEvent?.camera_health_state; // 'OK' | 'DEGRADED' | 'FAILED'
   const sceneCondition = latestEvent?.scene_condition;
   const decisionMeta = DECISION_META[latestEvent?.decision_state] || null;
   const whyExplanation = explainDecision(parsed);
