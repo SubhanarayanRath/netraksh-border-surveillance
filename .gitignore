@@ -36,6 +36,14 @@ scripts/calibration_data_night_glare/snapshots/
 scripts/calibration_data_night_fog_glare/snapshots/
 scripts/calibration_data_fog_glare/snapshots/
 scripts/calibration_data_night_fog_glare_mild/snapshots/
+# MOT16 ground-truth calibration (scripts/collect_mot16_ground_truth_calibration.py)
+# — same rationale, plus these snapshots are derived crops of CC BY-NC-SA
+# licensed MOT16 footage (Milan et al., https://motchallenge.net); not
+# redistributing them keeps the repo clear of any redistribution question
+# even though the license would likely permit it. manifest.json (numeric
+# candidate data + bbox coordinates, no image bytes) IS committed.
+scripts/calibration_data_mot16_04/snapshots/
+scripts/calibration_data_mot16_02/snapshots/
 
 # Frontend
 frontend/node_modules/

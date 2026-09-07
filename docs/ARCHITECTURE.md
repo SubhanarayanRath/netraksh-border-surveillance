@@ -1776,11 +1776,67 @@ preserves existing rows, idempotent). Full suite: 277/277 (254 + 23 new).
 
 ---
 
+## Real Dataset Sourced — MOT16, and the First Real Calibration Fit This Project Has Ever Had
+
+**Why:** every calibration attempt all session (`scripts/fit_reliability_weights.py`,
+`scripts/fit_detection_thresholds.py`) hit the same real wall — this project's only real footage
+(`demo/videos/vtest.avi`) has zero real false positives once reviewed, so there was never a real
+negative example anywhere to fit a threshold against. Sourcing an external real dataset with real
+ground truth was the direct fix, not more engineering on the same single video.
+
+**Dataset chosen:** MOT16 (Milan et al., "MOT16: A Benchmark for Multi-Object Tracking",
+arXiv:1603.00831, https://motchallenge.net), CC BY-NC-SA 3.0, non-commercial research use — real
+CCTV/street footage with real, human-annotated pedestrian ground truth (`gt/gt.txt`). Considered
+and rejected smaller alternatives first (UCSD Anomaly Dataset, 706MB, low-res grayscale, no
+ground-truth boxes suitable for FP/TP labeling; OpenCV sample clips, small but daytime-only, no
+diversity gain) — user chose MOT16 explicitly after being shown the size/license tradeoffs of
+each. Downloaded the real 1.95GB archive, extracted only two real train sequences with ground
+truth (MOT16-02, MOT16-04 — the `test/` split has no `gt.txt`, by design of the benchmark). Raw
+dataset and per-candidate snapshot crops are gitignored, same as this project's own
+`calibration_data_*/snapshots/`; only derived `manifest.json` files (numeric data, no image
+bytes) are committed.
+
+**New: `scripts/collect_mot16_ground_truth_calibration.py`.** Runs the real YOLOv8n detector
+(same model this whole project uses) at a low confidence floor (0.05) against real MOT16 frames,
+and labels every raw candidate against real ground truth by IoU: ≥0.5 with a real GT pedestrian
+box → real detection (label=1); <0.1 with every real GT box → real, GT-verified false positive
+(label=0); anything between is genuinely ambiguous and excluded from the manifest, never guessed.
+Real, measured results:
+
+| Sequence | Frames (stride) | Candidates | Real detections | Real false positives |
+|---|---|---|---|---|
+| MOT16-04 (marketplace) | 1050 (10) | 3834 | 3122 | **712** |
+| MOT16-02 (street) | 600 (5) | 3268 | 1851 | **1417** |
+
+**New: `scripts/fit_detection_thresholds_mot16.py`.** Fed both manifests into
+`CalibrationModule.fit()` (the same real module every prior attempt this session correctly
+refused to fit on single-class data). Both now produce a real, non-degenerate isotonic fit — the
+first time all session this project has had genuine negative examples to calibrate against:
+MOT16-04 → threshold **0.410**; MOT16-02 → threshold **0.100**.
+
+**The honest headline finding is that these two real numbers disagree.** Rather than pick one and
+call it "the" calibrated threshold, this is reported as-is: a confidence threshold fitted on one
+real camera/crowd-density does not obviously transfer to a different one. Neither value is applied
+to `edge/detection/calibration.py`'s runtime `THRESHOLD_*` defaults — doing so would mean silently
+resolving a real disagreement in favor of whichever number looked more convincing, on a camera
+neither MOT16 sequence was even filmed on. This is the same discipline this project has applied to
+every other calibration attempt: report the real result, including when the real result is
+"these two real answers don't agree yet" — see `docs/LIMITATIONS.md` for the full account.
+
+**Tests:** `tests/unit/test_mot16_ground_truth_calibration.py` (new, 9 tests) — real IoU
+computation (identical/disjoint/known-fraction/symmetric/degenerate-zero-area boxes) and real
+MOT16 `gt.txt` parsing (filters to the real pedestrian class code, honors the devkit's
+conf=0-means-ignore convention, handles an empty file). Full suite: 286/286 (277 + 9 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)
 2. Demo runs on CPU (laptop), not Jetson-class edge hardware
-3. Detection thresholds are prototype values, not calibrated from labeled data
+3. Detection thresholds are prototype values, not calibrated from labeled data — though MOT16
+   ground truth (above) has now produced a real, non-degenerate fit; it is not yet applied to
+   runtime defaults, and the two real sequences tried disagree with each other
 4. Face recognition is NOT attempted in MVP — detection only
 5. ANPR scoped to checkpoint-angle cameras only
 6. Clock drift check uses NTP-synchronized system clock (opportunistic)

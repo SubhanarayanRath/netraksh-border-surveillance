@@ -577,9 +577,37 @@ limitation — an out-of-date limitations file is worse than none.
   defaults, explicitly logged as such at runtime. **Do not present these as calibrated in the PPT** —
   `fit()` has now actually been run, for real, against real labeled data, and correctly refused for
   all three conditions; that refusal is the honest, current status, not an untried gap anymore.
-- **No custom border-surveillance dataset exists.** A future dataset covering night/fog/rain/terrain
-  could be collected and used to fine-tune the detector — this is documented as future work, not
-  claimed as already done anywhere in this codebase.
+  **Update — a real dataset with real false positives has since been found (see the MOT16 entry
+  below), and `fit()` now DOES produce a real, non-degenerate result against it.** It is still not
+  applied to the runtime `THRESHOLD_*` defaults, for reasons explained there.
+- **`fit()` finally has real negative examples to calibrate against — from MOT16, not this
+  project's own footage — and the two real sequences tried disagree with each other.**
+  `scripts/collect_mot16_ground_truth_calibration.py` (new) runs the real YOLOv8n detector at a
+  low confidence floor (0.05) against real MOT16 CCTV frames and labels each raw candidate against
+  real, human-annotated ground truth (IoU ≥ 0.5 with a real GT pedestrian box → real detection;
+  IoU < 0.1 with every real GT box → real, GT-verified false positive; anything in between is
+  genuinely ambiguous and excluded, never guessed). Unlike this project's own footage, MOT16
+  actually has real false positives: MOT16-04 (1050 frames, marketplace) produced 712 real false
+  positives out of 3834 candidates; MOT16-02 (600 frames, street) produced 1417 out of 3268.
+  `scripts/fit_detection_thresholds_mot16.py` fed both through `CalibrationModule.fit()` and got a
+  real, non-degenerate isotonic fit both times — **but the two real fitted thresholds disagree:
+  0.410 for MOT16-04, 0.100 for MOT16-02.** That disagreement is itself an honest, useful finding,
+  not a bug to paper over: a confidence threshold fitted on one real camera/crowd-density doesn't
+  obviously transfer to a different one, which is exactly why this project does NOT apply either
+  fitted value to `edge/detection/calibration.py`'s runtime `THRESHOLD_*` defaults automatically —
+  doing so would mean picking one of two genuinely conflicting real answers and asserting it as
+  "the" calibrated threshold for a camera neither sequence was even filmed on. Both are documented
+  here as real results with a real caveat, not silently reconciled. MOT16 is Milan et al., "MOT16:
+  A Benchmark for Multi-Object Tracking" (arXiv:1603.00831, https://motchallenge.net), CC
+  BY-NC-SA 3.0, used here for non-commercial research (this SIH hackathon prototype) — the raw
+  dataset (1.95GB) and per-candidate snapshot crops are NOT committed to this repo (gitignored,
+  same as this project's own `calibration_data_*/snapshots/`); only `manifest.json` (numeric
+  candidate data — confidence, bbox, IoU, label — no image bytes) is.
+- **No custom border-surveillance dataset exists — real footage from other public benchmarks
+  (MOT16, above) has been used to test calibration methodology, but no footage of this project's
+  own actual border/checkpoint camera exists.** A future dataset covering night/fog/rain/terrain
+  from the team's real deployment hardware could be collected and used to fine-tune the detector —
+  this is documented as future work, not claimed as already done anywhere in this codebase.
 - **Hardware target is intentionally generic, not a named board.** Per architecture v4 §2, no
   specific hardware (Jetson or otherwise) is claimed because the team has not benchmarked on one.
   Every FPS/latency number in `docs/PERFORMANCE_REPORT.md` is only valid for the machine it was
