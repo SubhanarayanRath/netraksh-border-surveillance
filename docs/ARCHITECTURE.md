@@ -1953,6 +1953,66 @@ Python suite unaffected (302/302).
 
 ---
 
+## Tiered Evidence Capture by Condition Quality — a Real Gap Found and Fixed
+
+**Context:** user asked, pointedly, whether this whole session's fixes went any deeper than
+surface-level UI polish, and specifically described an expected behavior: worse condition should
+still capture *something* locally, not nothing. Audited `edge/main.py`'s FAILED-camera-health
+(ABSTAIN, "very poor condition") path directly rather than assuming — confirmed a real gap:
+`self._emit_event(..., frame=None, # Don't waste disk on failed camera snapshots)`, called
+unconditionally on **every single frame** while the camera stays FAILED. The metadata heartbeat
+was real and already synced (used by the Camera Health page), but the actual visual evidence was
+never captured at all — if the camera health monitor's own frozen/blur/exposure detection had a
+false trigger, there was nothing to review afterward.
+
+**Fix:** `shared/constants.py`'s new `ABSTAIN_SNAPSHOT_INTERVAL_SECONDS` (30s) and
+`edge/main.py`'s new `should_capture_abstain_snapshot()` (a small pure function, deliberately
+factored out so it's testable without instantiating the full `EdgePipeline` — real YOLO model
+load and all). The per-frame ABSTAIN heartbeat itself is unchanged (real, useful telemetry as-is);
+a real encrypted snapshot is now captured periodically during a sustained failure instead of
+never, without flooding local disk with one encrypted JPEG per frame.
+
+**Scope, stated honestly:** the other two tiers already behaved as expected without changes —
+UNCERTAIN (R < 0.75, "a little better") and DETECTED (R ≥ 0.75, "good condition") both already
+save full metadata + an encrypted snapshot and go through the complete pipeline; only the FAILED/
+ABSTAIN tier had zero visual evidence. This is the specific, real interpretation of "tiered by
+condition quality" that closes an actual gap without touching the Camera Health page's existing,
+working, tested telemetry.
+
+**Tests:** `tests/unit/test_abstain_snapshot_capture.py` (new, 6 tests) — boundary conditions on
+the throttle (captures immediately on the first FAILED frame of a run, not again immediately
+after, not just before the interval elapses, captures exactly at and well after the boundary) plus
+a guard against the constant ever silently regressing to 0/negative. Full suite: 308/308 (302 + 6
+new).
+
+**Also audited and confirmed real** (with file references, since "have you actually implemented
+this" deserves evidence, not reassurance):
+- SHA-256 hashing, Ed25519 signing, AES-256-GCM encryption, hash chain: all real, all in
+  `edge/evidence/packager.py` (`compute_sha256`, `EdgeKeyManager.sign`, `EvidenceEncryptor`,
+  `EvidenceChainStore.append`), exercised by `tests/unit/test_evidence.py`.
+- Cross-camera corroboration: real, `backend/services/cross_camera.py` (see its own changelog
+  entry above).
+- Adaptive Compute Gate, Track Continuity Guard, Night-Motion Fallback: all real, all
+  instantiated and wired into `edge/main.py`'s real per-frame loop (`self.adaptive_gate`,
+  `self.continuity_guard`, `self.night_motion_fallback`) — not merely defined and unused.
+- Event Verifier state machine (`edge/temporal/event_verifier.py`): OBSERVED → CANDIDATE →
+  VERIFIED → ALERTED is real and exercised (`EventVerifier.observe()`, real confirmation-count
+  logic, real cooldown/expiry). **ACKNOWLEDGED is real** (`POST /alerts/{id}/acknowledge`,
+  `backend/api/alerts.py`) but **CLOSED is not** — `EventState.CLOSED` exists as an enum value
+  with a docstring claiming it's "set later by command-center operator action," but grepping the
+  entire codebase confirms nothing anywhere actually sets it. This is a real, open gap, disclosed
+  here rather than left to look complete — see `docs/LIMITATIONS.md`.
+- **Dashboard UI visibility of the above is uneven, disclosed here directly**: the Adaptive
+  Compute Gate's real state (ACTIVE/IDLE, skip ratio) IS shown on the Performance page
+  (`frontend/src/pages/Performance.jsx`, from real `PipelineMetrics` data). The Event
+  Verifier's OBSERVED/CANDIDATE/VERIFIED progression, Track Continuity Guard re-associations, and
+  Night-Motion Fallback firings are real and working on the edge but have **no dashboard
+  visualization at all** — a real engine can be entirely real and still invisible to someone only
+  looking at the dashboard, which is a fair thing to flag as looking unfinished even where the
+  underlying mechanism isn't.
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

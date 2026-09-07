@@ -50,6 +50,7 @@ from edge.temporal.track_features import TrackFeatureTracker
 from edge.tracking.continuity_guard import TrackContinuityGuard
 from edge.tracking.continuity_guard import compute_histogram as compute_track_histogram
 from shared.constants import (
+    ABSTAIN_SNAPSHOT_INTERVAL_SECONDS,
     NIGHT_MOTION_COOLDOWN_SECONDS,
     CameraHealthState,
     DecisionState,
@@ -60,6 +61,17 @@ from shared.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def should_capture_abstain_snapshot(last_snapshot_time: float, now: float) -> bool:
+    """
+    Tiered evidence capture by condition quality (shared/constants.py's
+    ABSTAIN_SNAPSHOT_INTERVAL_SECONDS docstring) — a pure, directly-testable
+    function so this throttle decision doesn't require instantiating the
+    full EdgePipeline (real YOLO model load and all) just to verify its
+    boundary conditions.
+    """
+    return (now - last_snapshot_time) >= ABSTAIN_SNAPSHOT_INTERVAL_SECONDS
 
 
 def determine_severity(event: dict, reliability) -> Severity:
@@ -137,6 +149,11 @@ class EdgePipeline:
         # docs/ARCHITECTURE.md's changelog entry for the fix.
         self.night_motion_fallback = NightMotionFallback()
         self._last_night_motion_emit_time = 0.0
+        # Tiered evidence capture (see shared/constants.py's
+        # ABSTAIN_SNAPSHOT_INTERVAL_SECONDS docstring) — 0.0 so the very
+        # first FAILED-health frame of a run always captures a snapshot
+        # immediately, not after waiting a full interval.
+        self._last_abstain_snapshot_time = 0.0
 
         # Load zones
         self.zones = load_zones(self.zone_config_path)
@@ -341,6 +358,18 @@ class EdgePipeline:
         # If camera FAILED, emit ABSTAIN heartbeat and stop
         if health.health_state == CameraHealthState.FAILED:
             reliability = make_abstain(self.camera_id, health.health_reason, condition.condition)
+            # Tiered evidence capture by condition quality (see shared/
+            # constants.py's ABSTAIN_SNAPSHOT_INTERVAL_SECONDS docstring):
+            # this heartbeat fires every frame (unchanged, real camera-health
+            # telemetry), but previously NEVER saved a snapshot at all --
+            # frame=None unconditionally -- so a false FAILED trigger left
+            # nothing to review. Now captures a real encrypted snapshot
+            # periodically instead of never, without flooding disk with one
+            # per frame during a sustained outage.
+            now = time.time()
+            capture_snapshot = should_capture_abstain_snapshot(self._last_abstain_snapshot_time, now)
+            if capture_snapshot:
+                self._last_abstain_snapshot_time = now
             self._emit_event(
                 track=None,
                 reliability=reliability,
@@ -348,7 +377,7 @@ class EdgePipeline:
                 condition=condition,
                 zone_id=self._default_zone_id,
                 overrides={},
-                frame=None,  # Don't waste disk on failed camera snapshots
+                frame=frame if capture_snapshot else None,
             )
             t_frame_end = time.perf_counter()
             self.metrics.record_frame(

@@ -171,6 +171,17 @@ IDLE_INFERENCE_INTERVAL_FRAMES = 5
 # storage with a new snapshot every frame.
 NIGHT_MOTION_COOLDOWN_SECONDS = 30.0
 
+# Tiered evidence capture by condition quality: a FAILED-camera-health
+# ABSTAIN heartbeat previously saved no visual evidence at all (frame=None,
+# every frame, unconditionally) -- so if the camera health monitor itself
+# had a false trigger, there was no way to review what the camera actually
+# saw. It's still emitted every frame (unchanged -- that heartbeat cadence
+# is itself real, useful camera-health telemetry), but the raw encrypted
+# snapshot is now captured periodically at this interval instead of never,
+# so a sustained outage doesn't flood local disk with one encrypted JPEG
+# per frame either.
+ABSTAIN_SNAPSHOT_INTERVAL_SECONDS = 30.0
+
 # Blur detection: Laplacian variance below this = blurry
 BLUR_LAPLACIAN_THRESHOLD = 80.0
 
