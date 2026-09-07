@@ -264,6 +264,22 @@ class Alert(Base):
     # which was always escalation-eligible on its own. Recorded so this is
     # visible/auditable, not a silent behavior change.
     escalated_via_corroboration: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Real terminal close action -- shared.constants.EventState defines
+    # ACKNOWLEDGED and CLOSED as the lifecycle's final two states, but
+    # before this, nothing anywhere ever actually set CLOSED (confirmed by
+    # grep, not assumed -- see docs/LIMITATIONS.md). Additive, alongside
+    # the existing acknowledged_at/acknowledged_by (which stay unchanged) --
+    # closing requires an alert to already be acknowledged first, a real
+    # lifecycle constraint enforced in backend/api/alerts.py.
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    closed_by: Mapped[Optional[str]] = mapped_column(String(64))
+    resolution_notes: Mapped[Optional[str]] = mapped_column(Text)
+    # A real, queryable EventState value (shared.constants.EventState) --
+    # ALERTED at creation, ACKNOWLEDGED/CLOSED at those real actions. Makes
+    # the enum's own docstring claim ("ACKNOWLEDGED/CLOSED are set later by
+    # command-center operator action") genuinely true, rather than only
+    # implied by acknowledged_at/closed_at being non-null.
+    lifecycle_state: Mapped[str] = mapped_column(String(16), default="ALERTED")
 
     event: Mapped["Event"] = relationship("Event", back_populates="alert")
     acknowledgements: Mapped[List["AlertAcknowledgement"]] = relationship(

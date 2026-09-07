@@ -388,6 +388,15 @@ class AlertResponse(BaseModel):
     # backend/services/escalation.py) rather than the event's own severity
     # alone. False for every HIGH-severity alert, which needed no boost.
     escalated_via_corroboration: bool = False
+    # Real terminal close action (SIH PS 26187 audit finding:
+    # EventState.CLOSED was defined but never actually set anywhere).
+    # closed_at/closed_by/resolution_notes are None until POST
+    # /alerts/{id}/close is called. lifecycle_state is a real, queryable
+    # EventState value (ALERTED/ACKNOWLEDGED/CLOSED).
+    closed_at: Optional[datetime] = None
+    closed_by: Optional[str] = None
+    resolution_notes: Optional[str] = None
+    lifecycle_state: str = "ALERTED"
 
     class Config:
         use_enum_values = True

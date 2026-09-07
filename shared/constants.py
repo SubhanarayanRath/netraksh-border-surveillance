@@ -30,7 +30,11 @@ class EventState(str, Enum):
     A task module firing only reaches OBSERVED/CANDIDATE; evidence is packaged
     and an alert raised only once a candidate is promoted to VERIFIED/ALERTED
     by edge.temporal.event_verifier.EventVerifier. ACKNOWLEDGED/CLOSED are set
-    later by command-center operator action (existing RBAC-gated capability).
+    later by real command-center operator action: backend/api/alerts.py's
+    POST /alerts/{id}/acknowledge and POST /alerts/{id}/close set
+    Alert.lifecycle_state to these real values (SIH PS 26187 audit finding
+    fixed — CLOSED previously had zero real producer anywhere, confirmed by
+    grep, not just this docstring's own claim).
     """
     OBSERVED = "OBSERVED"
     CANDIDATE = "CANDIDATE"

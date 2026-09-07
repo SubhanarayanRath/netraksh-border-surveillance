@@ -88,6 +88,25 @@ def _migrate_add_missing_columns() -> None:
                 # hypothetical. FALSE is valid in both SQLite and Postgres.
                 conn.execute(text("ALTER TABLE alerts ADD COLUMN escalated_via_corroboration BOOLEAN DEFAULT FALSE"))
 
+    # Real alert "close" action (SIH PS 26187 audit finding: EventState.CLOSED
+    # was defined but never actually set anywhere) -- same guard pattern,
+    # applied to the alerts table. VARCHAR defaults, so no risk of the
+    # BOOLEAN-literal bug immediately above.
+    if "alerts" in inspector.get_table_names():
+        existing_alert_columns = {col["name"] for col in inspector.get_columns("alerts")}
+        if "closed_at" not in existing_alert_columns:
+            logger.info("[DB] Migrating alerts table: adding close-action columns")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN closed_at DATETIME"))
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN closed_by VARCHAR(64)"))
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN resolution_notes TEXT"))
+                # Existing rows predate this column entirely; every alert
+                # that already exists really was, at minimum, ALERTED (that
+                # is how an Alert row comes to exist at all -- see
+                # backend/services/escalation.py) -- a real, honest backfill
+                # default, not an arbitrary placeholder.
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN lifecycle_state VARCHAR(16) DEFAULT 'ALERTED'"))
+
     # Vehicle classification (SIH PS 26187) -- same guard pattern, applied
     # to the events table. VARCHAR default, so no risk of the
     # SQLite/Postgres BOOLEAN-literal bug immediately above.

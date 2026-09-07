@@ -171,3 +171,28 @@ class TestIdempotency:
 
         alerts = db_session.query(Alert).filter(Alert.event_id == ev.id).all()
         assert len(alerts) == 1
+
+
+class TestAlertLifecycleState:
+    """SIH PS 26187 audit finding: EventState.CLOSED was defined but never
+    actually set anywhere. A real Alert now carries a real, queryable
+    lifecycle_state (shared.constants.EventState) — ALERTED at creation
+    here; ACKNOWLEDGED/CLOSED are set by backend/api/alerts.py's real
+    acknowledge/close endpoints, not exercised by this escalation-only
+    test file."""
+
+    def test_a_newly_created_alert_has_lifecycle_state_alerted(self, db_session):
+        ev = _make_event(db_session, severity=Severity.HIGH.value)
+        check_and_escalate(ev, db_session)
+
+        alert = db_session.query(Alert).filter(Alert.event_id == ev.id).first()
+        assert alert.lifecycle_state == "ALERTED"
+
+    def test_a_newly_created_alert_has_no_close_fields_set(self, db_session):
+        ev = _make_event(db_session, severity=Severity.HIGH.value)
+        check_and_escalate(ev, db_session)
+
+        alert = db_session.query(Alert).filter(Alert.event_id == ev.id).first()
+        assert alert.closed_at is None
+        assert alert.closed_by is None
+        assert alert.resolution_notes is None

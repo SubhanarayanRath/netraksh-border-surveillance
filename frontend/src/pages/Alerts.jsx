@@ -36,6 +36,7 @@ export default function Alerts() {
   const [restAlerts, setRestAlerts] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | auth-required | error
   const [ackingId, setAckingId] = useState(null);
+  const [closingId, setClosingId] = useState(null);
 
   const loadAlerts = useCallback(async () => {
     setStatus('loading');
@@ -94,6 +95,26 @@ export default function Alerts() {
       // best-effort — the button just stops spinning below
     } finally {
       setAckingId(null);
+    }
+  };
+
+  // Real terminal close action (POST /alerts/{id}/close) — SIH PS 26187
+  // audit finding: EventState.CLOSED was defined but never actually set
+  // anywhere. Only reachable once an alert is already acknowledged, same
+  // real lifecycle order the backend itself enforces.
+  const handleClose = async (alertId) => {
+    setClosingId(alertId);
+    try {
+      const res = await authFetch(`/alerts/${alertId}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) await loadAlerts();
+    } catch (_e) {
+      // best-effort — the button just stops spinning below
+    } finally {
+      setClosingId(null);
     }
   };
 
@@ -167,8 +188,21 @@ export default function Alerts() {
                   <span className="flex items-center gap-1"><MapPin size={14}/> {alert.camera_id || alert.zone_id || 'Unknown'}</span>
                   <span className="flex items-center gap-1"><Crosshair size={14}/> T - {Math.floor((Date.now() - (parseUtc(alert.timestamp || alert.created_at) || new Date())) / 60000)} MINS</span>
                   {!alert.isMock && (
-                    alert.acknowledged_at ? (
-                      <span className="flex items-center gap-1 text-ok"><CheckCircle size={14}/> Acknowledged{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}</span>
+                    alert.closed_at ? (
+                      <span className="flex items-center gap-1 text-muted"><CheckCircle size={14}/> Closed{alert.closed_by ? ` by ${alert.closed_by}` : ''}</span>
+                    ) : alert.acknowledged_at ? (
+                      <span className="flex items-center gap-2 ml-auto">
+                        <span className="flex items-center gap-1 text-ok"><CheckCircle size={14}/> Acknowledged{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}</span>
+                        {canAcknowledge && (
+                          <button
+                            onClick={() => handleClose(alert.alert_id)}
+                            disabled={closingId === alert.alert_id}
+                            className="text-muted border border-color rounded px-2 py-0.5 hover-bg-elevated disabled:opacity-50"
+                          >
+                            {closingId === alert.alert_id ? 'Closing…' : 'Close'}
+                          </button>
+                        )}
+                      </span>
                     ) : canAcknowledge ? (
                       <button
                         onClick={() => handleAcknowledge(alert.alert_id)}

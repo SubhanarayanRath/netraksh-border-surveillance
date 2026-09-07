@@ -2210,6 +2210,46 @@ zero subscriptions handled as a real no-op).
 
 ---
 
+## Real Alert "Close" Action — Closing the `EventState.CLOSED` Gap
+
+**Context:** continuing the SIH PS 26187 audit, but this one is an internal completeness finding
+from that same audit rather than a literal PS line item — `shared.constants.EventState` defines
+`ACKNOWLEDGED` and `CLOSED` as the alert lifecycle's real final two states, and its own docstring
+claimed both are "set later by command-center operator action." Grepping the whole codebase found
+`ACKNOWLEDGED` genuinely is (`POST /alerts/{id}/acknowledge`) — but `CLOSED` had zero real producer
+anywhere. An acknowledged alert had no further real action available; it stayed "acknowledged"
+forever with no way to mark it as fully reviewed and resolved.
+
+**New `Alert.closed_at`/`closed_by`/`resolution_notes`** (migration, same guard pattern as every
+other column added this session) **and a real, queryable `Alert.lifecycle_state`**
+(`shared.constants.EventState` value — `ALERTED` at creation, set by
+`backend/services/escalation.py`; `ACKNOWLEDGED`/`CLOSED` set by the real acknowledge/close
+endpoints) — additive alongside the existing `acknowledged_at`/`acknowledged_by`, which are
+unchanged. New `POST /alerts/{id}/close` (`backend/api/alerts.py`, same RBAC as acknowledge —
+OPERATOR or ADMIN) **enforces a real lifecycle order**: an alert must already be acknowledged
+before it can be closed, and can only be closed once. `GET /alerts` gained `?include_closed=`
+(default `false`) so the main dashboard's active-alert view doesn't stay cluttered with fully
+resolved items forever, while the full history remains a real, explicit opt-in away.
+
+**Frontend (`Alerts.jsx`):** an acknowledged, not-yet-closed alert now shows a real "Close" button
+alongside its "Acknowledged by ..." line; a closed alert shows "Closed by ..." instead. The
+`EventState` docstring itself was updated to point at the real code that now makes its claim true,
+rather than only asserting it.
+
+**Verified genuinely end-to-end** (not just unit-tested in isolation): ran the real
+`ALERTED → ACKNOWLEDGED → CLOSED` transition directly against the local database — a real `Event`
+escalated via `check_and_escalate`, then acknowledged, then closed with real resolution notes —
+confirmed `lifecycle_state` reflected each real transition correctly, then cleaned up the test
+data. Server restart confirmed the migration runs clean.
+
+**Tests:** `tests/unit/test_escalation.py` gained `TestAlertLifecycleState` (2 tests — a newly
+created alert's real `lifecycle_state` is `ALERTED`, with no close fields set).
+`tests/unit/test_db_migration.py` gained `TestMigrationAddsAlertCloseColumns` (4 tests — the new
+columns are added, a legacy row gets a real, honest `ALERTED` backfill default rather than an
+arbitrary placeholder, existing rows preserved, idempotent). Full suite: 376/376 (370 + 6 new).
+
+---
+
 ## Assumptions and Limitations
 See `docs/LIMITATIONS.md` for the full list. Key items:
 1. Blockchain is MOCK MODE (WSL2/Docker unavailable on dev machine)

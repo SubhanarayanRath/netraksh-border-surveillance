@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 from backend.config import settings
 from backend.models.orm import Alert, Event, Zone
 from backend.services.blockchain import get_blockchain_client
-from shared.constants import Severity
+from shared.constants import EventState, Severity
 from shared.schemas import AlertIssuedTransaction
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,10 @@ def check_and_escalate(event: Event, db: Session) -> None:
         command_id_receiving=zone.adjacent_command_id if (zone and crosses_boundary) else None,
         blockchain_status="PENDING",
         escalated_via_corroboration=escalated_via_corroboration,
+        # Real EventState value (shared.constants.EventState), not a bare
+        # string literal -- see backend/models/orm.py's Alert.lifecycle_state
+        # docstring for why this exists.
+        lifecycle_state=EventState.ALERTED.value,
     )
     db.add(alert)
     db.flush()

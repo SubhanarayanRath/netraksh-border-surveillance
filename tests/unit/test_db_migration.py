@@ -404,3 +404,59 @@ class TestWatchlistTablesRealSchema:
         db.commit()
 
         assert db.query(WatchlistFaceImage).count() == 0
+
+
+class TestMigrationAddsAlertCloseColumns:
+    """SIH PS 26187 audit finding: EventState.CLOSED was defined but never
+    actually set anywhere. Same guard pattern, applied to the alerts
+    table's new close-action columns."""
+
+    def test_adds_close_columns_to_legacy_alerts_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts2.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        cols = {c["name"] for c in inspect(engine).get_columns("alerts")}
+        assert "closed_at" in cols
+        assert "closed_by" in cols
+        assert "resolution_notes" in cols
+        assert "lifecycle_state" in cols
+
+    def test_legacy_rows_get_a_real_alerted_backfill_default(self, tmp_path, monkeypatch):
+        """A legacy alert row predates lifecycle_state entirely, but it
+        really was, at minimum, ALERTED (that's how an Alert row comes to
+        exist) -- a real, honest backfill, not an arbitrary placeholder."""
+        db_path = str(tmp_path / "legacy_alerts2.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT lifecycle_state FROM alerts WHERE id = 'alert-legacy'")).fetchone()
+        assert row[0] == "ALERTED"
+
+    def test_preserves_existing_alert_rows(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts2.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT id, severity FROM alerts WHERE id = 'alert-legacy'")).fetchone()
+        assert row is not None
+        assert row[1] == "HIGH"
+
+    def test_idempotent_on_an_already_migrated_alerts_table(self, tmp_path, monkeypatch):
+        db_path = str(tmp_path / "legacy_alerts2.db")
+        engine = _make_legacy_engine_with_alerts(db_path)
+        monkeypatch.setattr("backend.database.session.engine", engine)
+
+        _migrate_add_missing_columns()
+        _migrate_add_missing_columns()
+
+        cols = [c["name"] for c in inspect(engine).get_columns("alerts")]
+        assert cols.count("closed_at") == 1

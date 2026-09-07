@@ -3,6 +3,9 @@ NETRAKSH — Alerts router.
 GET  /alerts               — list alerts (cross-command view)
 GET  /alerts/{id}          — get single alert
 POST /alerts/{id}/acknowledge — Command B acknowledges alert
+POST /alerts/{id}/close        — real terminal close action (SIH PS 26187
+                                  audit finding: EventState.CLOSED was
+                                  defined but never actually set anywhere)
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from backend.database.session import get_db
 from backend.models.orm import Alert, AlertAcknowledgement, User
 from backend.security.auth import audit, require_any_role, require_operator_or_admin
 from backend.services.blockchain import get_blockchain_client
+from shared.constants import EventState
 from shared.schemas import (
     AlertAcknowledgeRequest,
     AlertAcknowledgedTransaction,
@@ -34,6 +38,7 @@ async def list_alerts(
     cross_command_only: bool = Query(False),
     severity: Optional[str] = Query(None),
     acknowledged: Optional[bool] = Query(None),
+    include_closed: bool = Query(False, description="Include alerts that have been closed (see POST /alerts/{id}/close)"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
     db: Session = Depends(get_db),
@@ -53,6 +58,12 @@ async def list_alerts(
             q = q.filter(Alert.acknowledged_at.isnot(None))
         else:
             q = q.filter(Alert.acknowledged_at.is_(None))
+    if not include_closed:
+        # Default view is the active/open alert list -- a closed alert has
+        # already been reviewed and resolved (POST /alerts/{id}/close), so
+        # it shouldn't clutter the main dashboard forever. Real opt-in via
+        # ?include_closed=true for anyone who wants the full history.
+        q = q.filter(Alert.closed_at.is_(None))
     alerts = q.order_by(desc(Alert.created_at)).offset(offset).limit(limit).all()
     return [_alert_to_response(a) for a in alerts]
 
@@ -100,6 +111,7 @@ async def acknowledge_alert(
     alert.acknowledged_at = datetime.utcnow()
     alert.acknowledged_by = current_user.username
     alert.command_id_receiving = payload.receiving_command_id
+    alert.lifecycle_state = EventState.ACKNOWLEDGED.value
 
     # Submit AlertAcknowledged to blockchain (non-blocking — failure doesn't block dashboard)
     if alert.blockchain_status == "CONFIRMED" or alert.blockchain_status == "MOCK":
@@ -124,6 +136,40 @@ async def acknowledge_alert(
     return _alert_to_response(alert)
 
 
+@router.post("/{alert_id}/close", response_model=AlertResponse)
+async def close_alert(
+    alert_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_operator_or_admin),
+):
+    """
+    Real terminal "close" action — the alert lifecycle's actual final step
+    (shared.constants.EventState.CLOSED). Before this, an acknowledged
+    alert had no further real action available; it stayed "acknowledged"
+    forever with no way to mark it as fully reviewed/resolved. RBAC:
+    OPERATOR or ADMIN only, same as acknowledge. Requires the alert to
+    already be acknowledged first — a real, enforced lifecycle order, not
+    just a UI suggestion.
+    """
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    if not alert.acknowledged_at:
+        raise HTTPException(status_code=400, detail="Alert must be acknowledged before it can be closed")
+    if alert.closed_at:
+        raise HTTPException(status_code=400, detail="Alert already closed")
+
+    alert.closed_at = datetime.utcnow()
+    alert.closed_by = current_user.username
+    alert.resolution_notes = payload.get("resolution_notes")
+    alert.lifecycle_state = EventState.CLOSED.value
+
+    db.commit()
+    audit(db, "ALERT_CLOSED", user_id=current_user.id, resource_type="alert", resource_id=alert_id)
+    return _alert_to_response(alert)
+
+
 def _alert_to_response(alert: Alert) -> AlertResponse:
     return AlertResponse(
         alert_id=alert.id,
@@ -141,4 +187,8 @@ def _alert_to_response(alert: Alert) -> AlertResponse:
         event_type=alert.event.event_type if alert.event else None,
         zone_id=alert.event.zone_id if alert.event else None,
         escalated_via_corroboration=alert.escalated_via_corroboration,
+        closed_at=alert.closed_at,
+        closed_by=alert.closed_by,
+        resolution_notes=alert.resolution_notes,
+        lifecycle_state=alert.lifecycle_state,
     )
