@@ -90,14 +90,25 @@ def _migrate_add_missing_columns() -> None:
 
     # Real alert "close" action (SIH PS 26187 audit finding: EventState.CLOSED
     # was defined but never actually set anywhere) -- same guard pattern,
-    # applied to the alerts table. VARCHAR defaults, so no risk of the
-    # BOOLEAN-literal bug immediately above.
+    # applied to the alerts table.
+    # A REAL, PREVIOUSLY-SHIPPED PRODUCTION CRASH, found via the live Render
+    # deploy log (2026-09-07): `DATETIME` is a SQLite type-affinity keyword,
+    # not a real Postgres type -- SQLite accepts it silently (this project's
+    # entire local test suite runs against SQLite only, so nothing local
+    # could have caught it), Postgres raises
+    # `psycopg2.errors.UndefinedObject: type "datetime" does not exist` and
+    # crashes application startup. This is the exact same class of
+    # SQLite-lenient/Postgres-strict divergence as the earlier
+    # `BOOLEAN DEFAULT 0` incident (see docs/ARCHITECTURE.md/LIMITATIONS.md)
+    # -- the "VARCHAR defaults, so no risk of the BOOLEAN-literal bug"
+    # comment this replaced checked for that one specific pattern and missed
+    # this different one. Fixed to `TIMESTAMP`, a real type in both engines.
     if "alerts" in inspector.get_table_names():
         existing_alert_columns = {col["name"] for col in inspector.get_columns("alerts")}
         if "closed_at" not in existing_alert_columns:
             logger.info("[DB] Migrating alerts table: adding close-action columns")
             with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE alerts ADD COLUMN closed_at DATETIME"))
+                conn.execute(text("ALTER TABLE alerts ADD COLUMN closed_at TIMESTAMP"))
                 conn.execute(text("ALTER TABLE alerts ADD COLUMN closed_by VARCHAR(64)"))
                 conn.execute(text("ALTER TABLE alerts ADD COLUMN resolution_notes TEXT"))
                 # Existing rows predate this column entirely; every alert

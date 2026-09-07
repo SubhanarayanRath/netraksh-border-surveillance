@@ -262,6 +262,29 @@ class TestMigrationSqlIsPostgresCompatible:
                     f"instead: {line.strip()}"
                 )
 
+    def test_no_column_migration_uses_the_sqlite_only_datetime_keyword(self):
+        """
+        A second, real production incident of the same class, found via the
+        live Render deploy log (2026-09-07): the `closed_at` column
+        migration used `ALTER TABLE alerts ADD COLUMN closed_at DATETIME` —
+        DATETIME is a SQLite type-affinity keyword, accepted silently (same
+        reason nothing local caught it), but not a real Postgres type. Real
+        crash: `psycopg2.errors.UndefinedObject: type "datetime" does not
+        exist`. Fixed to TIMESTAMP, a real type in both engines. Verified
+        this test actually fails against the original buggy line before
+        trusting it (reverted the fix, watched this assertion fail, restored
+        the fix) — same discipline as the BOOLEAN regression test above.
+        """
+        session_py = Path(__file__).resolve().parent.parent.parent / "backend" / "database" / "session.py"
+        source = session_py.read_text()
+        for line in source.splitlines():
+            if "ALTER TABLE" in line.upper() and "ADD COLUMN" in line.upper():
+                assert " DATETIME" not in line.upper().replace(",", " "), (
+                    f"Found the SQLite-only DATETIME type keyword in a raw column migration — this "
+                    f"is not a real Postgres type (crashes with UndefinedObject). Use TIMESTAMP "
+                    f"instead: {line.strip()}"
+                )
+
 
 class TestMigrationAddsVehicleSubtypeColumn:
     """SIH PS 26187 vehicle classification (backend/api/events.py,
