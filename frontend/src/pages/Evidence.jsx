@@ -22,8 +22,8 @@ export default function Evidence() {
   // Mock events are tagged with _isMock: true so the UI can disable
   // actions that require real evidence (hash verification, chain check).
   const displayEvents = events.length > 0 ? events : [
-    { event_id: 'EV-0184', event_type: 'Perimeter Breach Attempt', timestamp: new Date().toISOString(), decision_state: 'DETECTED', zone_id: 'Sector A', camera_id: 'CAM-Z4-09', _isMock: true },
-    { event_id: 'EV-0183', event_type: 'Suspicious Vehicle Loitering', timestamp: new Date().toISOString(), decision_state: 'UNCERTAIN', zone_id: 'Sector B', camera_id: 'CAM-Z4-10', _isMock: true },
+    { event_id: 'EV-0184', event_type: 'Perimeter Breach Attempt', timestamp: new Date().toISOString(), decision_state: 'DETECTED', zone_id: 'Sector A', camera_id: 'cam-border-01', _isMock: true },
+    { event_id: 'EV-0183', event_type: 'Suspicious Vehicle Loitering', timestamp: new Date().toISOString(), decision_state: 'UNCERTAIN', zone_id: 'Sector B', camera_id: 'cam-checkpoint-01', _isMock: true },
   ];
 
   useEffect(() => {
@@ -204,7 +204,9 @@ export default function Evidence() {
               <div className="flex justify-between items-start mb-8">
                 <div className="flex-col">
                   <span className="text-main font-body text-sm">Event #{selectedEvent?.event_id.split('-')[0]}</span>
-                  <span className="text-lg font-display text-main uppercase mt-2 block">NETRAKSH INTEGRITY DEEP DIVE</span>
+                  <span className="text-lg font-display text-main uppercase mt-2 block">
+                    {selectedEvent?._isMock ? 'SIMULATED EVENT — NO EVIDENCE GENERATED' : 'NETRAKSH INTEGRITY DEEP DIVE'}
+                  </span>
                 </div>
                 {verifyStatus === 'verified' && (
                   <div className="border border-ok text-ok px-4 py-2 rounded font-display flex items-center gap-2 glow-ok">
@@ -403,8 +405,8 @@ export default function Evidence() {
                 active={verifyStatus === 'verified'} 
               />
               <VerificationStep 
-                icon={Cloud} title="Cloud Ledger Sync" 
-                status={verifyStatus === 'verified' ? "VERIFIED" : "PENDING"} 
+                icon={Cloud} title="Ledger Integration (Prototype)" 
+                status={verifyStatus === 'verified' ? "PROTOTYPE SYNCED" : "PENDING"} 
                 active={verifyStatus === 'verified'} 
               />
             </div>

@@ -122,7 +122,10 @@ export default function Header() {
               EDGE: {scenario === 'offline' ? 'OFFLINE' : 'ONLINE'}
             </span>
             <button 
-              onClick={() => setShowSyncPanel(!showSyncPanel)}
+              onClick={() => {
+                setShowSyncPanel(!showSyncPanel);
+                if (!showSyncPanel) setShowAccountPanel(false);
+              }}
               className="flex items-center gap-1 hover:text-white transition-colors relative"
             >
               <Activity size={12} className={syncStatus.queued > 0 ? "text-warning" : "text-ok"} /> 
@@ -141,7 +144,10 @@ export default function Header() {
               Performance's LoginPrompt) had nowhere to show who was
               actually signed in or let them sign out again. */}
           <button
-            onClick={() => setShowAccountPanel((v) => !v)}
+            onClick={() => {
+              setShowAccountPanel(!showAccountPanel);
+              if (!showAccountPanel) setShowSyncPanel(false);
+            }}
             className={`w-8 h-8 rounded-full bg-elevated flex items-center justify-center border transition-colors ${isAuthenticated ? (ROLE_COLORS[role] || 'text-ok') : 'text-muted'}`}
             title={isAuthenticated ? `${username} (${role})` : 'Not signed in'}
           >

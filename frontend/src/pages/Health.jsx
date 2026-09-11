@@ -175,11 +175,11 @@ export default function Health() {
         </div>
         {status === 'ready' && (
           <div className="bg-panel border rounded p-4 flex gap-4 items-center">
-            <div className="relative w-16 h-16 rounded-full border-4 border-ok flex items-center justify-center">
-              <span className="font-display text-main text-lg">{sightPct != null ? `${sightPct}%` : '-'}</span>
+            <div className="relative w-20 h-16 rounded-full border-4 border-ok flex items-center justify-center">
+              <span className="font-display text-main text-lg">{mergedCameras.length > 0 ? `${okCount} / ${mergedCameras.length}` : '-'}</span>
             </div>
             <div className="flex flex-col gap-1 text-xs font-display">
-              <span className="text-muted">System Sight</span>
+              <span className="text-muted">Healthy Cameras</span>
               <span className="text-ok flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-ok"></div> {okCount} OK</span>
               <span className="text-warning flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-warning"></div> {degradedCount} DEGRADED</span>
               <span className="text-danger flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-danger"></div> {failedCount} FAILED</span>
