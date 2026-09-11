@@ -19,9 +19,11 @@ export default function Evidence() {
   const [evidenceImageSizeBytes, setEvidenceImageSizeBytes] = useState(null);
 
   // Use mock events if none from websocket
+  // Mock events are tagged with _isMock: true so the UI can disable
+  // actions that require real evidence (hash verification, chain check).
   const displayEvents = events.length > 0 ? events : [
-    { event_id: 'EV-0184', event_type: 'Perimeter Breach Attempt', timestamp: new Date().toISOString(), decision_state: 'DETECTED', zone_id: 'Sector A', camera_id: 'CAM-Z4-09' },
-    { event_id: 'EV-0183', event_type: 'Suspicious Vehicle Loitering', timestamp: new Date().toISOString(), decision_state: 'UNCERTAIN', zone_id: 'Sector B', camera_id: 'CAM-Z4-10' },
+    { event_id: 'EV-0184', event_type: 'Perimeter Breach Attempt', timestamp: new Date().toISOString(), decision_state: 'DETECTED', zone_id: 'Sector A', camera_id: 'CAM-Z4-09', _isMock: true },
+    { event_id: 'EV-0183', event_type: 'Suspicious Vehicle Loitering', timestamp: new Date().toISOString(), decision_state: 'UNCERTAIN', zone_id: 'Sector B', camera_id: 'CAM-Z4-10', _isMock: true },
   ];
 
   useEffect(() => {
@@ -286,14 +288,24 @@ export default function Evidence() {
                 )}
               </div>
 
-              <button 
-                onClick={handleVerify}
-                disabled={verifyStatus === 'verifying'}
-                className="w-full bg-main text-black bg-white hover:bg-gray-200 py-3 rounded font-display uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
-              >
-                <GitBranch size={18} /> 
-                {verifyStatus === 'verifying' ? 'Verifying Chain...' : 'Verify Netraksh Integrity Chain'}
-              </button>
+              {/* Verify button — disabled for mock/fallback events that have no real evidence.
+                  The real gate (hash_valid && signature_valid && chain_valid) in handleVerify
+                  is untouched; this only adds an honest pre-check for the demo-fallback case. */}
+              {selectedEvent?._isMock ? (
+                <div className="w-full border border-color text-muted py-3 rounded font-display text-xs tracking-widest flex items-center justify-center gap-2 opacity-60 cursor-not-allowed">
+                  <GitBranch size={18} />
+                  No real evidence — run the edge pipeline to generate real events
+                </div>
+              ) : (
+                <button 
+                  onClick={handleVerify}
+                  disabled={verifyStatus === 'verifying'}
+                  className="w-full bg-main text-black bg-white hover:bg-gray-200 py-3 rounded font-display uppercase tracking-widest flex items-center justify-center gap-2 transition-colors"
+                >
+                  <GitBranch size={18} /> 
+                  {verifyStatus === 'verifying' ? 'Verifying Chain...' : 'Verify Netraksh Integrity Chain'}
+                </button>
+              )}
             </div>
 
             {/* Media Card */}
@@ -378,9 +390,10 @@ export default function Evidence() {
               />
               <VerificationStep
                 icon={Shield} title="SHA-256 Generated"
-                // Real hash from EventResponse.hash, truncated for display —
-                // this used to be the literal string "A94F...72C1" for
-                // every single event, never the event's actual hash.
+                // Real hash from EventResponse.hash, truncated for display.
+                // Full hash was produced by edge/evidence/packager.py at the
+                // moment of detection using Python's hashlib.sha256.
+                // Hover the badge to see the first 8 characters.
                 status={selectedEvent?.hash ? `${selectedEvent.hash.slice(0, 4)}...${selectedEvent.hash.slice(-4)}` : 'PENDING'}
                 active={verifyStatus !== null}
               />

@@ -55,9 +55,10 @@ certs/*.crt
 certs/*/*.key
 certs/*/*.crt
 
-# OS / editor
+# OS / editor / logs
 .DS_Store
 Thumbs.db
+*.log
 .vscode/
 .idea/
 

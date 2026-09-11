@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api import alerts, auth, cameras, events, integrations, system, watchlist, websocket
+from backend.api import alerts, auth, cameras, demo, events, integrations, system, watchlist, websocket
 from backend.config import settings
 from backend.database.session import SessionLocal, init_db
 from backend.security.auth import bootstrap_users
@@ -145,6 +145,7 @@ app.include_router(alerts.router)
 app.include_router(watchlist.router)
 app.include_router(integrations.router)
 app.include_router(websocket.router)
+app.include_router(demo.router)  # Local prototype only — no auth
 
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse

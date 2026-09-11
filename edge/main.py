@@ -813,18 +813,21 @@ def run_edge(config_path: Optional[str] = None) -> None:
             config = json.load(f)
     else:
         # Default config from environment
+        camera_id = os.environ.get("CAMERA_ID", os.environ.get("EDGE_DEVICE_ID", "cam-border-01"))
         config = {
-            "camera_id": os.environ.get("EDGE_DEVICE_ID", "edge-001"),
-            "video_source": os.environ.get("VIDEO_SOURCE", "0"),
+            "camera_id": camera_id,
+            "video_source": os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.avi"),
             "backend_url": os.environ.get("BACKEND_URL", "http://localhost:8443"),
             "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
             "simulate_frozen": os.environ.get("SIMULATE_FROZEN_CAMERA", "").lower() == "true",
             "simulate_night": os.environ.get("SIMULATE_NIGHT_CONDITION", "").lower() == "true",
             "zones_config_path": os.environ.get("ZONES_CONFIG_PATH", "demo/scripts/zones_config.json"),
             "key_dir": "certs/edge",
-            "chain_db_path": "edge/data/chain.db",
-            "sync_db_path": "edge/data/sync.db",
+            # Per-camera paths so two simultaneous processes don't collide
+            "chain_db_path": f"edge/data/chain_{camera_id}.db",
+            "sync_db_path": f"edge/data/sync_{camera_id}.db",
             "clip_dir": "edge/data/clips",
+            "metrics_json_path": f"edge/data/metrics_{camera_id}.json",
         }
 
     pipeline = EdgePipeline(config)

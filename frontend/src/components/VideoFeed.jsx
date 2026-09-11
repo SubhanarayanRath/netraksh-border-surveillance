@@ -6,6 +6,8 @@ import { CameraOff, CloudFog, AlertTriangle } from 'lucide-react';
 // honestly-labeled, client-side-only simulated overlay, never mixed into
 // real eventData/isConnected so it can never be mistaken for a real
 // edge-reported condition.
+// camera_id is dynamically read from eventData to show the actual reporting
+// camera (cam-border-01 or cam-checkpoint-01); falls back to 'cam-border-01'.
 export default function VideoFeed({ eventData, isConnected, demoScenario = 'normal' }) {
   // eventData shape: { detection_class: 'person', confidence: 0.91, bbox: [x,y,w,h], track_id: '184', ... }
 
@@ -76,11 +78,12 @@ export default function VideoFeed({ eventData, isConnected, demoScenario = 'norm
 
       {/* Top badges */}
       <div className="absolute top-4 left-4 z-20 flex gap-2">
-        <div className="bg-danger text-white text-xs px-2 py-1 rounded font-display flex items-center gap-1">
-          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div> LIVE
+        {/* DEMO FEED badge — clearly not a live RTSP stream */}
+        <div className="bg-panel text-warning text-xs px-2 py-1 rounded font-display border border-warning">
+          DEMO FEED
         </div>
         <div className="bg-panel text-main text-xs px-2 py-1 rounded font-display border">
-          CAM-07 | NORTH FENCE
+          {eventData?.camera_id || 'cam-border-01'}
         </div>
         {demoScenario === 'fog' && (
           <div className="bg-panel text-warning text-xs px-2 py-1 rounded font-display border border-warning flex items-center gap-1">
@@ -95,7 +98,9 @@ export default function VideoFeed({ eventData, isConnected, demoScenario = 'norm
       </div>
 
       <div className="absolute top-4 right-4 z-20">
-        <span className="text-[10px] text-muted border rounded px-1 bg-dark">Simulated Feed</span>
+        <span className="text-[10px] text-muted border rounded px-1 bg-dark">
+          DEMO FEED — {eventData?.camera_id || 'cam-border-01'}
+        </span>
       </div>
 
       {/* Bounding Box — only ever drawn for a real event; see label logic above. */}

@@ -1,5 +1,6 @@
 import { CheckCircle, Cloud, AlertCircle, WifiOff } from 'lucide-react';
 import useDemoScenario from '../hooks/useDemoScenario';
+import { authFetch } from '../services/auth';
 
 // Was previously local-only state that didn't reach any other component
 // (confirmed: nothing else in the frontend read DemoSidebar's own state),
@@ -11,15 +12,58 @@ import useDemoScenario from '../hooks/useDemoScenario';
 // equivalent router) — so every click also silently 401'd/404'd for no
 // benefit. Now uses the shared DemoScenarioProvider (hooks/useDemoScenario.js)
 // so Dashboard/VideoFeed/Header can honestly react to the selected scenario,
-// and the dead backend calls are removed rather than left silently failing.
+// AND posts to the real /demo/scenario endpoint (backend/api/demo.py) so
+// the edge pipeline can actually change its behaviour.
 export default function DemoSidebar() {
   const { scenario, setScenario } = useDemoScenario();
 
-  const SimButton = ({ id, icon: Icon, title, desc }) => {
+  // What each scenario actually does in the pipeline (not marketing copy):
+  const SCENARIO_META = {
+    normal: {
+      icon: CheckCircle,
+      title: 'Normal Ops',
+      desc: 'Full pipeline · YOLO detects → R computed → DETECTED if R ≥ 0.75',
+    },
+    fog: {
+      icon: Cloud,
+      title: 'Dense Fog',
+      desc: 'Frame blurred → SceneConditionClassifier → FOG_RAIN → S drops → may produce UNCERTAIN; IR fallback label shown',
+    },
+    failure: {
+      icon: AlertCircle,
+      title: 'Sensor Failure',
+      desc: 'Frozen frames → CameraHealthMonitor FAILED → Gate 1 hard-override → ABSTAIN (R never computed)',
+    },
+    offline: {
+      icon: WifiOff,
+      title: 'Offline State',
+      desc: 'SyncClient pauses outbound → events queue locally → header shows BUFFERING · click Normal to recover',
+    },
+  };
+
+  const handleScenario = async (id) => {
+    // 1. Update local shared state immediately (VideoFeed / Header react)
+    setScenario(id);
+    // 2. POST to backend so the polling edge pipeline changes behaviour
+    try {
+      await authFetch('/demo/scenario', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario: id }),
+      });
+    } catch (e) {
+      // Non-fatal: the visual overlay still works even if the POST fails.
+      // Edge pipeline will pick up the new scenario on its next 5s poll.
+      console.debug('[DemoSidebar] POST /demo/scenario failed (non-fatal):', e);
+    }
+  };
+
+  const SimButton = ({ id }) => {
+    const { icon: Icon, title, desc } = SCENARIO_META[id];
     const isActive = scenario === id;
     return (
       <button
-        onClick={() => setScenario(id)}
+        onClick={() => handleScenario(id)}
         className={`flex flex-col text-left p-4 rounded border transition-colors ${isActive ? 'bg-elevated border-ok' : 'bg-transparent border-color hover-bg-elevated'}`}
         style={{width: '100%', marginBottom: '1rem', position: 'relative'}}
       >
@@ -30,10 +74,9 @@ export default function DemoSidebar() {
             <span className="text-xs text-muted font-body mt-1">{desc}</span>
           </div>
         </div>
-        {/* This badge is now accurate: selecting a scenario really does
-            simulate that state across the dashboard (VideoFeed, Header) —
-            "Simulated" distinguishes it from a real edge-reported condition,
-            not from "does nothing" as it did before. */}
+        {/* This badge is accurate: selecting a scenario really does
+            change pipeline behaviour (edge polls /demo/scenario every 5s)
+            in addition to the client-side visual overlay. */}
         <span className="text-[10px] text-muted absolute top-2 right-2 border rounded px-1 border-color">Simulated</span>
       </button>
     );
@@ -43,10 +86,10 @@ export default function DemoSidebar() {
     <aside className="sidebar-right">
       <h3 className="text-sm text-muted font-body mb-6 border-b pb-4">Demo Scenario Control</h3>
 
-      <SimButton id="normal" icon={CheckCircle} title="Normal Ops" desc="Optimal detection clarity" />
-      <SimButton id="fog" icon={Cloud} title="Dense Fog" desc="Trigger IR fallback logic" />
-      <SimButton id="failure" icon={AlertCircle} title="Sensor Failure" desc="Data integrity alert" />
-      <SimButton id="offline" icon={WifiOff} title="Offline State" desc="Disconnected/Manual Override" />
+      <SimButton id="normal" />
+      <SimButton id="fog" />
+      <SimButton id="failure" />
+      <SimButton id="offline" />
     </aside>
   );
 }

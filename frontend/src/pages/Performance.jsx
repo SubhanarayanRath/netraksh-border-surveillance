@@ -89,7 +89,11 @@ export default function Performance() {
     <div className="bg-panel border rounded p-6 flex flex-col gap-6">
       <div className="flex justify-between items-start">
         <div className="flex-col">
-          <span className="text-lg font-display text-main uppercase">{m.edge_device_id}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-display text-main uppercase">{m.edge_device_id}</span>
+            {/* Explicit prototype disclaimer — no Jetson/GPU/TensorRT hardware */}
+            <span className="text-[10px] font-display border border-warning text-warning rounded px-1">CPU PROTOTYPE — not Jetson/GPU</span>
+          </div>
           <span className="text-xs font-display text-muted uppercase tracking-widest">
             Uptime {formatUptime(m.uptime_seconds)} · Last report {m.timestamp ? parseUtc(m.timestamp).toLocaleTimeString() : '—'}
           </span>
@@ -157,10 +161,12 @@ export default function Performance() {
   return (
     <div className="h-full flex flex-col gap-6">
       <div className="flex-col">
-        <h2 className="text-xl font-display text-main tracking-widest uppercase">Edge Performance</h2>
+        <h2 className="text-xl font-display text-main tracking-widest uppercase">CPU Prototype Metrics</h2>
         <p className="text-sm font-body text-muted">
-          Real, locally-measured latency and resource usage from every edge device that has ever reported —
-          not simulated, not declared/configured values.
+          Real, locally-measured pipeline latency and resource usage from this CPU-based prototype.
+          No GPU, TensorRT, or Jetson hardware — all numbers are from <code>perf_counter()</code> calls
+          in the running Python process on this machine.
+          Not simulated, not declared/configured values.
         </p>
       </div>
 

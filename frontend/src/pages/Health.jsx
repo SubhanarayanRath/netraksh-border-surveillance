@@ -86,7 +86,8 @@ export default function Health() {
           ) : (
             <div className="w-full h-full relative" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', filter: cam.health_state === 'DEGRADED' ? 'blur(4px) brightness(0.5)' : 'none' }}>
               <div className="absolute top-2 left-2 text-[10px] font-display bg-white text-black px-1 rounded">{cam.health_state === 'OK' ? 'ONLINE' : cam.health_state === 'DEGRADED' ? 'DEGRADED' : 'UNKNOWN'}</div>
-              <div className="absolute bottom-2 right-2 text-[10px] font-display bg-dark border rounded px-1 text-muted text-white">LIVE</div>
+              {/* Explicitly labelled as Simulated Feed Preview — this is a static placeholder image, not a live RTSP stream */}
+              <div className="absolute bottom-2 right-2 text-[10px] font-display bg-dark border rounded px-1 text-muted text-white">DEMO PREVIEW</div>
             </div>
           )}
           {cam.health_state === 'DEGRADED' && (
@@ -160,6 +161,17 @@ export default function Health() {
           <p className="text-sm font-body text-muted">
             Real-time status of all perimeter visual sensors. Highlighting optical clarity, latency drift, and connection state to ensure continuous intelligence gathering.
           </p>
+          {/* 2-camera demo banner — honest about what is registered vs. what is live hardware */}
+          <div className="mt-3 p-3 border border-color rounded bg-panel text-xs font-display text-muted" style={{ maxWidth: '520px' }}>
+            <span className="text-warning font-bold">DEMO MODE</span>
+            {' — '}
+            2 cameras registered: <span className="text-main">cam-border-01</span> (Border Post Alpha)
+            {' and '}
+            <span className="text-main">cam-checkpoint-01</span> (Checkpoint Bravo).
+            Both run local video files (demo/videos/vtest.avi), not physical CCTV hardware.
+            Architecture supports additional cameras via{' '}
+            <code className="bg-dark px-1 rounded">POST /cameras</code>.
+          </div>
         </div>
         {status === 'ready' && (
           <div className="bg-panel border rounded p-4 flex gap-4 items-center">
