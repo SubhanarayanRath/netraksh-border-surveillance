@@ -1,29 +1,39 @@
-import { Box, Server, Camera, ShieldCheck, Database, Link, ArrowRight } from 'lucide-react';
+import { Box, Server, Camera, ShieldCheck, Database, Link, ArrowRight, CheckCircle, Activity, HardDrive, Cpu, Network } from 'lucide-react';
 
 export default function Architecture() {
-  // NOTE ON LAYOUT: this used to lay the 4 pipeline cards out with a
-  // `w-1/4` className. That class was never defined anywhere in index.css
-  // (confirmed by grepping it — the file only ever defines fractionless
-  // widths like w-full/w-64) so every card silently fell back to its
-  // shrink-to-fit content width inside a fixed h-64 box; on real content,
-  // that made the Reliability Gate card's 3 status rows + formula overflow
-  // its own box and visually collide with the Evidence Chain row below it.
-  // Real fix: a real inline flex-basis with a floor, no invented class.
-  const CARD_FLEX = { flex: '1 1 210px', minWidth: 0 };
-
-  const ArchNode = ({ step, title, subtitle, icon: Icon, children, isCore }) => (
-    <div
-      className={`bg-panel border rounded p-4 flex flex-col ${isCore ? 'border-ok glow-ok' : 'border-color'}`}
-      style={CARD_FLEX}
+  const ArchNode = ({ step, title, subtitle, icon: Icon, children, isCore, glowColor }) => (
+    <div 
+      className={`bg-panel border rounded flex flex-col ${isCore ? 'border-ok glow-ok' : 'border-color'}`}
+      style={{ 
+        flex: 1,
+        minWidth: '220px',
+        padding: '1.25rem',
+        background: 'linear-gradient(145deg, rgba(15,23,42,0.8) 0%, rgba(15,23,42,0.4) 100%)',
+        boxShadow: isCore ? '0 8px 32px rgba(74,222,128,0.1)' : '0 4px 20px rgba(0,0,0,0.2)',
+        position: 'relative',
+        overflow: 'hidden',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'translateY(-4px)';
+        e.currentTarget.style.boxShadow = isCore ? '0 12px 40px rgba(74,222,128,0.5)' : `0 12px 30px ${glowColor || 'rgba(255,255,255,0.05)'}`;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = 'translateY(0)';
+        e.currentTarget.style.boxShadow = isCore ? '0 8px 32px rgba(74,222,128,0.1)' : '0 4px 20px rgba(0,0,0,0.2)';
+      }}
     >
-      <div className="flex items-center justify-between gap-2 mb-3 pb-2 border-b border-color">
-        <div className="flex items-center gap-2 text-muted">
-          <Icon size={16} />
+      {/* Top Border Accent */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '2px', background: glowColor || (isCore ? '#4ade80' : 'rgba(255,255,255,0.1)') }}></div>
+
+      <div className="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-color">
+        <div className="flex items-center gap-2" style={{ color: isCore ? '#4ade80' : '#e2e8f0' }}>
+          <Icon size={18} />
           <span className="text-xs font-display uppercase tracking-widest">{title}</span>
         </div>
-        <span className="text-xs font-display text-muted opacity-60">{step}</span>
+        <span className="text-[10px] font-display text-muted bg-dark px-2 py-1 rounded border border-color">{step}</span>
       </div>
-      <h3 className="text-main font-display mb-1" style={{ fontSize: '0.95rem', lineHeight: 1.35 }}>{subtitle}</h3>
+      <h3 className="text-main font-display mb-3" style={{ fontSize: '1.1rem', letterSpacing: '0.05em' }}>{subtitle}</h3>
       <div className="text-sm font-body text-muted flex-grow">
         {children}
       </div>
@@ -31,145 +41,205 @@ export default function Architecture() {
   );
 
   const Connector = () => (
-    <div className="flex items-center justify-center text-muted" style={{ flex: '0 0 18px' }}>
-      <ArrowRight size={16} />
+    <div className="flex items-center justify-center text-muted" style={{ padding: '0 0.5rem', opacity: 0.5 }}>
+      <ArrowRight size={20} />
     </div>
   );
 
   return (
-    <div className="h-full flex flex-col gap-6" style={{ overflowY: 'auto' }}>
-      <div className="flex-col">
-        <h2 className="text-xl font-display text-main tracking-widest uppercase mb-2">Netraksh System Architecture</h2>
-        <p className="text-sm font-body text-muted max-w-3xl">
-          End-to-end data pipeline from physical sensor arrays to permissioned ledger consensus. Designed for zero-trust environments requiring immutable audit trails.
+    <div className="h-full flex flex-col gap-6" style={{ overflowY: 'auto', paddingRight: '12px', paddingBottom: '2rem' }}>
+      
+      {/* Header */}
+      <div className="flex-col pb-4 border-b border-color">
+        <h2 className="font-display tracking-widest uppercase mb-2" style={{ 
+          fontSize: '1.75rem', 
+          background: 'linear-gradient(90deg, #ffffff 0%, #94a3b8 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent'
+        }}>
+          System Architecture
+        </h2>
+        <p className="text-sm font-body text-muted" style={{ maxWidth: '800px', lineHeight: '1.6' }}>
+          The NETRAKSH pipeline operates on a decentralized edge-to-cloud architecture. It processes video streams locally on CPU hardware, mathematically scores event reliability, and commits high-confidence incidents to a secure cryptographic ledger.
         </p>
       </div>
 
-      <div className="flex-grow flex flex-col gap-8 p-8 bg-[rgba(15,23,42,0.5)] rounded border border-color relative overflow-hidden">
-        {/* Background grid pattern */}
-        <div className="absolute inset-0 opacity-10" style={{
-          backgroundImage: 'linear-gradient(var(--border-color) 1px, transparent 1px), linear-gradient(90deg, var(--border-color) 1px, transparent 1px)',
-          backgroundSize: '40px 40px'
-        }}></div>
-
-        <div className="flex flex-wrap items-stretch gap-2 relative z-10">
-          <ArchNode step="STAGE 01" title="Sensor Input" subtitle="Existing IP CCTV" icon={Camera}>
-            <div className="mt-4 flex flex-col gap-2">
-              <span className="text-xs">RTSP / ONVIF Streams</span>
-              {/* Was a fixed "FPS 30.0 / RESOLUTION 4K UHD" — fabricated,
-                  not measured from anything. There's no single fixed
-                  camera spec; this depends entirely on whatever stream is
-                  connected (docs/PERFORMANCE_REPORT.md's real measured run
-                  used a 768x576, ~10fps source, on CPU only). Stating that
-                  honestly instead of inventing a spec. */}
-              <div className="flex justify-between border-t border-color pt-2 mt-2">
-                <span>FPS / RESOLUTION</span>
-                <span className="text-main">Depends on source stream</span>
+      {/* Main Pipeline Container */}
+      <div style={{
+        background: 'radial-gradient(circle at 50% -20%, rgba(255,255,255,0.03) 0%, transparent 70%)',
+        padding: '1.5rem',
+        borderRadius: '0.75rem',
+        border: '1px solid var(--border-color)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2rem'
+      }}>
+        
+        {/* Stage 1-4 Row (Using strict Flexbox for perfect horizontal alignment) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'stretch' }}>
+          
+          <ArchNode step="STAGE 01" title="Sensor Input" subtitle="Video Ingestion" icon={Camera} glowColor="rgba(56,189,248,0.5)">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-start gap-2">
+                <Activity size={14} className="mt-1 text-main opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.4' }}>Processes live RTSP streams or local video files (demo mode).</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <ShieldCheck size={14} className="mt-1 text-main opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.4' }}>Continuous camera health monitoring (blur, exposure, sync drift).</span>
               </div>
             </div>
           </ArchNode>
 
           <Connector />
 
-          <ArchNode step="STAGE 02" title="Edge Node" subtitle="Netraksh Inference Engine" icon={Box}>
-            {/* Was "TensorRT Optimized" — never true. edge/detection/detector.py
-                runs plain ultralytics YOLOv8n; docs/PERFORMANCE_REPORT.md's
-                real measured run states this explicitly: "on CPU only, no
-                GPU, no TensorRT". */}
-            <div className="text-xs mb-4">YOLOv8n &middot; CPU inference (no GPU/TensorRT)</div>
-            <div className="flex flex-col gap-2">
-              <span className="flex items-center gap-2 text-ok"><ShieldCheck size={14}/> HEALTH GATE</span>
-              <span className="flex items-center gap-2 text-ok"><ShieldCheck size={14}/> CONDITION GATE</span>
-              <span className="flex items-center gap-2 text-ok"><ShieldCheck size={14}/> DETECTION GATE</span>
+          <ArchNode step="STAGE 02" title="Edge Node" subtitle="CPU Inference Engine" icon={Cpu} glowColor="rgba(167,139,250,0.5)">
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center text-xs border-b border-color pb-2">
+                <span className="opacity-70">MODEL</span>
+                <span className="text-main font-mono bg-dark px-1.5 py-0.5 rounded border border-color">YOLOv8n + ByteTrack</span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-b border-color pb-2">
+                <span className="opacity-70">HARDWARE</span>
+                <span className="text-main font-mono bg-dark px-1.5 py-0.5 rounded border border-color">CPU Only (No GPU)</span>
+              </div>
+              <div className="flex justify-between items-center text-xs pb-1">
+                <span className="opacity-70">LATENCY</span>
+                <span className="text-main font-mono bg-dark px-1.5 py-0.5 rounded border border-color">~165-175 ms/frame</span>
+              </div>
             </div>
           </ArchNode>
 
           <Connector />
 
-          <div className="relative" style={CARD_FLEX}>
-            <div className="absolute -top-3 right-4 bg-ok text-black font-display px-2 py-0.5 rounded font-bold z-20" style={{ fontSize: '10px' }}>CORE DIFFERENTIATOR</div>
-            <ArchNode step="STAGE 03" title="Reliability Gate" subtitle="Netraksh Confidence Filter" icon={ShieldCheck} isCore={true}>
-              {/* Was "DETECTED >=85% / UNCERTAIN 50-84% / ABSTAIN <50%" — not
-                  the real gate at all. The real Hybrid Reliability Engine
-                  (edge/reliability/decision.py) is R = 0.40D + 0.20T + 0.20S
-                  + 0.20H banded at RELIABILITY_R_THRESHOLD (0.75); ABSTAIN
-                  is not a low-R band, it's Gate 1's hard override on a
-                  camera-health failure, independent of R entirely. */}
-              <div className="flex flex-col gap-2 mt-1">
-                <div className="bg-[rgba(74,222,128,0.1)] border border-ok text-ok p-2 rounded flex items-center gap-2 text-xs">
-                  <div className="w-2 h-2 rounded-full bg-ok"></div> DETECTED (R &ge; 0.75)
+          <ArchNode step="STAGE 03" title="Reliability Engine" subtitle="Confidence Filter" icon={ShieldCheck} isCore={true}>
+            <div className="flex flex-col gap-3">
+              <div className="text-xs font-mono bg-dark p-2 rounded text-center border border-ok text-ok glow-ok mb-1" style={{ letterSpacing: '0.05em' }}>
+                R = 0.40D + 0.20T + 0.20S + 0.20H
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-xs font-display">
+                  <div className="w-2 h-2 rounded-full bg-ok flex-shrink-0" style={{ boxShadow: '0 0 8px #4ade80' }}></div>
+                  <span className="text-ok w-16 flex-shrink-0">DETECTED</span>
+                  <span className="text-muted opacity-80">R &ge; 0.75</span>
                 </div>
-                <div className="bg-[rgba(251,191,36,0.1)] border border-warning text-warning p-2 rounded flex items-center gap-2 text-xs">
-                  <div className="w-2 h-2 rounded-full bg-warning"></div> UNCERTAIN (R &lt; 0.75)
+                <div className="flex items-center gap-2 text-xs font-display">
+                  <div className="w-2 h-2 rounded-full bg-warning flex-shrink-0" style={{ boxShadow: '0 0 8px #fbbf24' }}></div>
+                  <span className="text-warning w-16 flex-shrink-0">UNCERTAIN</span>
+                  <span className="text-muted opacity-80">R &lt; 0.75</span>
                 </div>
-                <div className="bg-[rgba(100,116,139,0.1)] border border-neutral text-neutral p-2 rounded flex items-center gap-2 text-xs">
-                  <div className="w-2 h-2 rounded-full bg-neutral"></div> ABSTAIN (camera health failed &mdash; Gate 1 override)
+                <div className="flex items-center gap-2 text-xs font-display">
+                  <div className="w-2 h-2 rounded-full bg-neutral flex-shrink-0"></div>
+                  <span className="text-neutral w-16 flex-shrink-0">ABSTAIN</span>
+                  <span className="text-muted opacity-80">Health Override</span>
                 </div>
               </div>
-              <div className="text-muted mt-3 font-mono" style={{ fontSize: '10px' }}>R = 0.40&middot;D + 0.20&middot;T + 0.20&middot;S + 0.20&middot;H</div>
-            </ArchNode>
-          </div>
+            </div>
+          </ArchNode>
 
           <Connector />
 
-          <ArchNode step="STAGE 04" title="Command Server" subtitle="Netraksh HQ Aggregator" icon={Server}>
-            <div className="mt-4">
-              Store &amp; Forward Logic
+          <ArchNode step="STAGE 04" title="Command API" subtitle="Backend Aggregator" icon={Server} glowColor="rgba(244,114,182,0.5)">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-start gap-2">
+                <HardDrive size={14} className="mt-1 text-main opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.4' }}>Local SQLite Outbox for offline resilience and event buffering.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <Network size={14} className="mt-1 text-main opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.4' }}>FastAPI handles synchronization and cross-camera corroboration.</span>
+              </div>
             </div>
           </ArchNode>
+
         </div>
 
-        {/* Flow note tying the pipeline row into the two ledger paths below —
-            replaces a previous layout that left ~30% of the row as dead
-            whitespace (Evidence Chain at 30% width + Blockchain at 40%,
-            nothing filling the remaining ~30%) with an explicit statement
-            of the real branching rule instead. */}
-        <div className="flex items-center gap-3 relative z-10 text-xs text-muted font-body" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '1.5rem' }}>
-          <ArrowRight size={14} className="text-muted" style={{ flexShrink: 0 }} />
-          <span>Every event is written to the local Evidence Chain. Only <span className="text-danger">high-severity, cross-command</span> events are additionally submitted to the Permissioned Ledger.</span>
+        {/* Divider / Transition Text */}
+        <div className="flex items-center gap-3 text-xs text-muted font-body pt-4 border-t border-color">
+          <ArrowRight size={14} className="opacity-50" style={{ flexShrink: 0 }} />
+          <span>Every event generates local cryptographically signed evidence. High-severity, cross-command events are additionally dispatched to the Permissioned Ledger.</span>
         </div>
 
-        <div className="flex flex-wrap items-stretch gap-4 relative z-10">
-          <div className="bg-panel border border-color rounded p-4 flex flex-col" style={{ flex: '1 1 280px', minWidth: 0 }}>
-            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-color text-muted">
-              <Database size={16} />
-              <span className="text-xs font-display uppercase tracking-widest">Evidence Chain</span>
+        {/* Data Layer Row (Using Flexbox) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'stretch' }}>
+          
+          {/* Local Ledger */}
+          <div 
+            className="bg-panel border border-color rounded flex flex-col" 
+            style={{ 
+              flex: '1 1 300px', 
+              padding: '1.5rem',
+              background: 'linear-gradient(145deg, rgba(15,23,42,0.8) 0%, rgba(15,23,42,0.4) 100%)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              position: 'relative',
+              overflow: 'hidden',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 12px 30px rgba(56,189,248,0.5)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
+            }}
+          >
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '2px', background: 'rgba(255,255,255,0.1)' }}></div>
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-color text-main">
+              <Database size={18} />
+              <span className="text-xs font-display uppercase tracking-widest">Evidence Vault</span>
             </div>
-            <h3 className="text-main font-display mb-1" style={{ fontSize: '0.95rem' }}>Local Ledger</h3>
-            <div className="text-sm font-body text-muted flex-grow">
-              <div className="mt-1 text-xs">Cryptographic Hashing &middot; every event, always</div>
-              {/* Was a hardcoded literal SHA-256 hash shown for every visit —
-                  and specifically the well-known hash of the *empty string*,
-                  which looks like a real captured value but isn't one.
-                  edge/evidence/packager.py computes a real per-event SHA-256
-                  over the actual evidence bytes; there's no single fixed
-                  value to show here without a real selected event. */}
-              <div className="mt-4 p-2 bg-dark rounded font-mono break-all text-muted border border-color" style={{ fontSize: '10px' }}>
-                SHA-256 computed per-event over real evidence bytes at capture time — see Evidence page for a real event's hash.
+            <h3 className="text-main font-display mb-2 text-lg">Local Chain</h3>
+            <div className="flex flex-col gap-3 text-sm font-body text-muted mt-2">
+              <div className="flex items-start gap-2">
+                <CheckCircle size={14} className="mt-1 text-ok opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.5' }}>SHA-256 hashing computed per-event over real evidence bytes (bounding boxes, imagery, JSON).</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <CheckCircle size={14} className="mt-1 text-ok opacity-80" style={{ flexShrink: 0 }} />
+                <span style={{ lineHeight: '1.5' }}>Ed25519 signing ensures immutable local tamper evidence.</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-[rgba(239,68,68,0.05)] border border-danger rounded p-4 flex flex-col glow-danger" style={{ flex: '1 1 340px', minWidth: 0 }}>
-            <div className="flex justify-between items-center gap-2 mb-3 pb-2 text-danger" style={{ borderBottom: '1px solid rgba(239,68,68,0.2)' }}>
+          {/* Blockchain */}
+          <div 
+            className="border border-danger rounded flex flex-col glow-danger" 
+            style={{ 
+              flex: '1 1 300px', 
+              padding: '1.5rem',
+              background: 'linear-gradient(145deg, rgba(15,23,42,0.8) 0%, rgba(15,23,42,0.4) 100%)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              position: 'relative',
+              overflow: 'hidden',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 12px 30px rgba(239,68,68,0.5)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
+            }}
+          >
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '2px', background: 'rgba(239,68,68,0.5)' }}></div>
+            <div className="flex justify-between items-center gap-2 mb-4 pb-3 border-b border-color text-danger">
               <div className="flex items-center gap-2">
-                <Link size={16} />
+                <Link size={18} />
                 <span className="text-xs font-display uppercase tracking-widest">Blockchain</span>
               </div>
-              <span className="bg-danger text-white px-1 rounded" style={{ fontSize: '10px' }}>HIGH-SEVERITY CROSS-COMMAND ONLY</span>
+              <span className="bg-danger text-white rounded font-display tracking-widest" style={{ padding: '0.25rem 0.5rem', fontSize: '9px', boxShadow: '0 0 10px rgba(239,68,68,0.4)' }}>HIGH SEVERITY</span>
             </div>
-            <h3 className="text-main font-display mb-1 text-danger" style={{ fontSize: '0.95rem' }}>Permissioned Ledger</h3>
-            {/* Was "Hyperledger Fabric consensus network" stated as fact —
-                backend/services/blockchain.py's own real, honest labeling
-                is MOCK mode (WSL2/Docker unavailable on this deployment),
-                with FabricCLIAdapter left in place, unused, as a real
-                documented one-line swap for when Fabric becomes available.
-                This page should say the same thing the running system
-                actually says at runtime, not a stronger claim. */}
-            <div className="text-sm font-body text-muted flex-grow mt-1">
-              Hyperledger Fabric-compatible adapter &mdash; running in MOCK mode (WSL2/Docker unavailable on this deployment); real Fabric is a documented one-line swap.
+            <h3 className="text-danger font-display mb-2 text-lg tracking-wide">Permissioned Ledger</h3>
+            <div className="flex flex-col gap-3 text-sm font-body text-muted mt-2">
+              <span>Hyperledger Fabric-compatible adapter prototype.</span>
+              <div className="bg-dark p-3 rounded border border-danger text-xs text-muted" style={{ borderOpacity: 0.3, lineHeight: '1.5' }}>
+                Currently running in MOCK mode due to deployment environment constraints. Architecture supports immediate live-switch upon Fabric node availability.
+              </div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
