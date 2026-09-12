@@ -568,6 +568,7 @@ class EdgePipeline:
             payload = {
                 "camera_id": self.camera_id,
                 "timestamp": time.time(),
+                "video_time": self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if self.cap else None,
                 "sequence": self._telemetry_sequence,
                 "tracks": live_tracks
             }

@@ -1,4 +1,4 @@
-﻿import { CameraOff, CloudFog, AlertTriangle, Upload, Play } from 'lucide-react';
+import { CameraOff, CloudFog, AlertTriangle, Upload, Play } from 'lucide-react';
 import { useMemo, useState, useEffect, useRef } from 'react';
 
 // demoScenario: 'normal' | 'fog' | 'failure' | 'offline'
@@ -32,6 +32,15 @@ const containerRef = useRef(null);
   const activeLiveTracks = useMemo(() => {
     if (!liveTracksData || !liveTracksData.tracks) return [];
     if (Date.now() - liveTracksData.timestamp > 500) return []; // Stale
+    
+    // Sync video time to edge stream to keep boxes perfectly aligned
+    if (liveTracksData.video_time != null && videoRef.current) {
+        const diff = Math.abs(videoRef.current.currentTime - liveTracksData.video_time);
+        if (diff > 0.5) { // Only seek if drifted by more than 500ms
+            videoRef.current.currentTime = liveTracksData.video_time;
+        }
+    }
+    
     return liveTracksData.tracks;
   }, [liveTracksData, renderTrigger]);
 

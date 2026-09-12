@@ -170,6 +170,23 @@ async def ingest_event(
         db.add(camera)
         db.flush()
 
+    # Ensure zone exists (create stub if unknown) to prevent IntegrityError
+    if ep.zone_id:
+        from backend.models.orm import Zone
+        zone = db.query(Zone).filter(Zone.id == ep.zone_id).first()
+        if not zone:
+            logger.warning(f"Event from unknown zone {ep.zone_id} — creating stub zone")
+            zone = Zone(
+                id=ep.zone_id,
+                camera_id=ep.camera_id,
+                name=f"Unknown-{ep.zone_id[:8]}",
+                zone_type="unknown",
+                polygon_json="[]",
+                owning_command_id=camera.owning_command_id,
+            )
+            db.add(zone)
+            db.flush()
+
     # Create event record
     event = Event(
         id=ep.event_id,
