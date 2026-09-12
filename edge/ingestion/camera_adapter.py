@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class FrameMetadata:
-    __slots__ = ("frame_index", "timestamp", "fps_declared", "width", "height", "source")
+    __slots__ = ("frame_index", "timestamp", "video_time_seconds", "fps_declared", "width", "height", "source")
 
-    def __init__(self, frame_index: int, timestamp: float, fps_declared: float,
+    def __init__(self, frame_index: int, timestamp: float, video_time_seconds: float, fps_declared: float,
                  width: int, height: int, source: str):
         self.frame_index = frame_index
         self.timestamp = timestamp
+        self.video_time_seconds = video_time_seconds
         self.fps_declared = fps_declared
         self.width = width
         self.height = height
@@ -110,6 +111,7 @@ class CameraAdapter:
             meta = FrameMetadata(
                 frame_index=frame_index,
                 timestamp=time.time(),
+                video_time_seconds=self._cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0 if self._cap else 0.0,
                 fps_declared=self._fps_declared,
                 width=frame.shape[1],
                 height=frame.shape[0],

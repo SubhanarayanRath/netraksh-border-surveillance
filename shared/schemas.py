@@ -206,6 +206,7 @@ class LiveTrack(BaseModel):
 class LiveTelemetryPayload(BaseModel):
     camera_id: str
     timestamp: float
+    video_time: Optional[float] = None
     sequence: int
     tracks: List[LiveTrack]
 
