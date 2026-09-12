@@ -29,6 +29,7 @@ RUN ["pip", "install", "--no-cache-dir", "-r", "requirements-backend.txt"]
 
 COPY backend/ ./backend/
 COPY shared/ ./shared/
+COPY mock_edge_simulator.py ./
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 # Real secrets (SECRET_KEY, ADMIN_PASSWORD, DATABASE_URL, etc.) MUST be
@@ -39,4 +40,4 @@ ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=8443
 EXPOSE 8443
 
-CMD sh -c "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8443}"
+CMD sh -c "python mock_edge_simulator.py & python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8443}"
