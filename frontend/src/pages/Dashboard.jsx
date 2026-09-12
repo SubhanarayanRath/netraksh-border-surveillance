@@ -154,7 +154,7 @@ export default function Dashboard() {
     }
 
     return (
-      <div className={`flex flex-col rounded ${colors} transition-all ${active ? 'shadow-lg scale-105' : ''}`} style={{ padding: '0.75rem' }}>
+      <div className={`flex flex-col rounded ${colors} transition-all ${active ? 'shadow-lg scale-105' : ''}`} style={{ padding: '0.75rem', height: '100%' }}>
         <div className="flex items-center" style={{ gap: '0.5rem', marginBottom: '0.1rem' }}>
           {icon}
           <span className="font-display font-bold text-base">{title}</span>
@@ -259,11 +259,56 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {/* Cross-Camera Corroboration Panel
+              Shows temporal/spatial plausibility score (Tc) when a second
+              camera has observed the same detection class within the expected
+              travel-time window.  This is NOT identity re-identification —
+              see backend/services/cross_camera.py for honest scope. */}
+          <div className="bg-panel border rounded p-4 flex flex-col gap-2 mt-2">
+            <div className="flex items-center gap-2 border-b border-color pb-2">
+              <GitMerge size={14} className="text-muted" />
+              <span className="text-xs font-display text-muted uppercase tracking-widest">Cross-Camera Corroboration</span>
+              <span className="text-[10px] text-muted border border-color rounded px-1 ml-auto">temporal/spatial only — not identity</span>
+            </div>
+            {latestEvent?.corroboration_score != null ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-ok text-lg">&#10003;</span>
+                  <span className="text-sm font-display text-ok">
+                    Corroborated by{' '}
+                    <span className="font-bold">{latestEvent.corroborated_by_event_id ? 'cam-checkpoint-01' : 'second camera'}</span>
+                  </span>
+                </div>
+                <div className="flex gap-4 text-xs font-body text-muted">
+                  <span>Tc = <span className="text-main">{latestEvent.corroboration_score.toFixed(3)}</span></span>
+                  {latestEvent.corroboration_delta_t_s != null && (
+                    <span>Δt = <span className="text-main">{latestEvent.corroboration_delta_t_s.toFixed(0)}s</span> apart</span>
+                  )}
+                  {latestEvent.corroboration_distance_m != null && (
+                    <span><span className="text-main">{latestEvent.corroboration_distance_m.toFixed(0)}m</span> camera separation</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted italic">Same detection class appeared at a spatially-plausible camera within expected travel time. No identity or re-identification claimed.</span>
+              </div>
+            ) : latestEvent ? (
+              <div className="flex items-start gap-2">
+                <span className="text-warning text-base">&#9888;</span>
+                <div className="flex flex-col">
+                  <span className="text-sm font-display text-warning">No corroboration available</span>
+                  <span className="text-xs text-muted">Single-camera observation only — confidence reduced. Either cam-checkpoint-01 has not yet reported a matching event, or spatial/temporal plausibility was below threshold.</span>
+                </div>
+              </div>
+            ) : (
+              <span className="text-xs text-muted">Waiting for a real event…</span>
+            )}
+          </div>
+
         </div>
 
         {/* Right Column */}
         <div className="flex-col h-full" style={{ flex: 2, display: 'flex', gap: '0.75rem' }}>
-          <div className="bg-panel border rounded flex flex-col flex-grow" style={{ padding: '1rem', gap: '0.75rem' }}>
+          <div className="bg-panel border rounded flex flex-col" style={{ padding: '1rem', gap: '0.75rem' }}>
             <div className="flex justify-between items-start">
               <div className="flex-col">
                 <span className="text-[15px] font-display text-main uppercase">Reliability Decision</span>
@@ -366,7 +411,7 @@ export default function Dashboard() {
           </div>
 
           {/* Not `grid grid-cols-3` — inert class, see docs/LIMITATIONS.md */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', flexGrow: 1 }}>
             <StatusPill 
               title="DETECTED" desc="Evidence Cryptographically Verified" 
               type="detected" active={latestEvent?.decision_state === 'DETECTED'} />
@@ -376,50 +421,6 @@ export default function Dashboard() {
             <StatusPill 
               title="ABSTAIN" desc="System Unreliable" 
               type="abstain" active={latestEvent?.decision_state === 'ABSTAIN'} />
-          </div>
-
-          {/* Cross-Camera Corroboration Panel
-              Shows temporal/spatial plausibility score (Tc) when a second
-              camera has observed the same detection class within the expected
-              travel-time window.  This is NOT identity re-identification —
-              see backend/services/cross_camera.py for honest scope. */}
-          <div className="bg-panel border rounded p-4 flex flex-col gap-2 mt-2">
-            <div className="flex items-center gap-2 border-b border-color pb-2">
-              <GitMerge size={14} className="text-muted" />
-              <span className="text-xs font-display text-muted uppercase tracking-widest">Cross-Camera Corroboration</span>
-              <span className="text-[10px] text-muted border border-color rounded px-1 ml-auto">temporal/spatial only — not identity</span>
-            </div>
-            {latestEvent?.corroboration_score != null ? (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-ok text-lg">&#10003;</span>
-                  <span className="text-sm font-display text-ok">
-                    Corroborated by{' '}
-                    <span className="font-bold">{latestEvent.corroborated_by_event_id ? 'cam-checkpoint-01' : 'second camera'}</span>
-                  </span>
-                </div>
-                <div className="flex gap-4 text-xs font-body text-muted">
-                  <span>Tc = <span className="text-main">{latestEvent.corroboration_score.toFixed(3)}</span></span>
-                  {latestEvent.corroboration_delta_t_s != null && (
-                    <span>Δt = <span className="text-main">{latestEvent.corroboration_delta_t_s.toFixed(0)}s</span> apart</span>
-                  )}
-                  {latestEvent.corroboration_distance_m != null && (
-                    <span><span className="text-main">{latestEvent.corroboration_distance_m.toFixed(0)}m</span> camera separation</span>
-                  )}
-                </div>
-                <span className="text-[10px] text-muted italic">Same detection class appeared at a spatially-plausible camera within expected travel time. No identity or re-identification claimed.</span>
-              </div>
-            ) : latestEvent ? (
-              <div className="flex items-start gap-2">
-                <span className="text-warning text-base">&#9888;</span>
-                <div className="flex flex-col">
-                  <span className="text-sm font-display text-warning">No corroboration available</span>
-                  <span className="text-xs text-muted">Single-camera observation only — confidence reduced. Either cam-checkpoint-01 has not yet reported a matching event, or spatial/temporal plausibility was below threshold.</span>
-                </div>
-              </div>
-            ) : (
-              <span className="text-xs text-muted">Waiting for a real event…</span>
-            )}
           </div>
         </div>
 
