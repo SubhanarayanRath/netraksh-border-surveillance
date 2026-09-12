@@ -9,9 +9,9 @@
 FROM node:20-slim AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+RUN ["npm", "ci"]
 COPY frontend/ ./
-RUN npm run build
+RUN ["npm", "run", "build"]
 
 # --- Stage 2: the actual runtime image ---
 # This container only ever runs backend.main:app — it never imports edge
@@ -25,7 +25,7 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 
 COPY requirements-backend.txt ./
-RUN pip install --no-cache-dir -r requirements-backend.txt
+RUN ["pip", "install", "--no-cache-dir", "-r", "requirements-backend.txt"]
 
 COPY backend/ ./backend/
 COPY shared/ ./shared/
@@ -39,4 +39,4 @@ ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=8443
 EXPOSE 8443
 
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8443"]
+CMD sh -c "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8443}"
