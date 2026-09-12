@@ -99,6 +99,12 @@ async def get_evidence_image(
         raise HTTPException(status_code=404, detail="This event has no evidence clip")
 
     path = event.evidence_clip_ref
+    
+    # Path traversal protection
+    normalized_path = os.path.normpath(path)
+    if ".." in normalized_path.split(os.sep) or os.path.isabs(normalized_path):
+        raise HTTPException(status_code=400, detail="Invalid path in evidence reference.")
+        
     if not os.path.exists(path):
         raise HTTPException(
             status_code=404,
@@ -188,6 +194,15 @@ async def ingest_event(
         face_match_person_id=ep.face_match_person_id,
         face_match_person_name=ep.face_match_person_name,
         face_match_confidence=ep.face_match_confidence,
+        bbox_x=ep.bbox_x,
+        bbox_y=ep.bbox_y,
+        bbox_w=ep.bbox_w,
+        bbox_h=ep.bbox_h,
+        score_d=ep.score_d,
+        score_t=ep.score_t,
+        score_s=ep.score_s,
+        score_h=ep.score_h,
+        score_r=ep.score_r,
         evidence_clip_ref=ep.evidence_clip_ref,
         edge_device_id=payload.edge_device_id,
         sequence_number=payload.sequence_number,
@@ -274,6 +289,8 @@ async def verify_event(
 
 def _event_to_response(event: Event, db: Session) -> EventResponse:
     ep = db.query(EvidencePackage).filter(EvidencePackage.event_id == event.id).first()
+    from backend.models.orm import Alert
+    alert = db.query(Alert).filter(Alert.event_id == event.id).first()
     return EventResponse(
         event_id=event.id,
         camera_id=event.camera_id,
@@ -296,8 +313,21 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         corroborated_by_event_id=event.corroborated_by_event_id,
         corroboration_distance_m=event.corroboration_distance_m,
         corroboration_delta_t_s=event.corroboration_delta_t_s,
+        corroboration_t_expected_s=event.corroboration_t_expected_s,
+        corroboration_sigma_s=event.corroboration_sigma_s,
         vehicle_subtype=event.vehicle_subtype,
         face_match_person_id=event.face_match_person_id,
         face_match_person_name=event.face_match_person_name,
         face_match_confidence=event.face_match_confidence,
+        bbox_x=event.bbox_x,
+        bbox_y=event.bbox_y,
+        bbox_w=event.bbox_w,
+        bbox_h=event.bbox_h,
+        score_d=event.score_d,
+        score_t=event.score_t,
+        score_s=event.score_s,
+        score_h=event.score_h,
+        score_r=event.score_r,
+        blockchain_tx_id=alert.blockchain_tx_id if alert else None,
+        blockchain_status=alert.blockchain_status if alert else None,
     )

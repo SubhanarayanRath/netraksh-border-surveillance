@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CameraOff, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
-import LoginPrompt from '../components/LoginPrompt';
 
 // This entire page used to be 3 hardcoded mock cameras (CAM-07/12/04) with
 // a "82%" / "36 OK / 5 DEGRADED / 3 FAILED" summary that didn't even
@@ -25,8 +24,8 @@ export default function Health() {
     setStatus('loading');
     try {
       const res = await authFetch('/cameras');
-      if (res.status === 401 || res.status === 403) {
-        setStatus('auth-required');
+      if (res.status === 403) {
+        setStatus('access-denied');
         return;
       }
       if (!res.ok) {
@@ -196,9 +195,10 @@ export default function Health() {
         <div className="text-danger text-sm text-center mt-8">Could not reach the backend.</div>
       )}
 
-      {status === 'auth-required' && (
-        <div className="max-w-xs mx-auto mt-8 bg-panel border rounded p-4">
-          <LoginPrompt message="Sign in to view camera health" onSuccess={loadCameras} />
+      {status === 'access-denied' && (
+        <div className="max-w-xs mx-auto mt-8 bg-panel border border-danger p-4 rounded text-center">
+          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+          <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 

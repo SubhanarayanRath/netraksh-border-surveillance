@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { Cpu, Zap, HardDrive, Gauge, AlertTriangle } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
-import LoginPrompt from '../components/LoginPrompt';
 import { parseUtc } from '../utils/time';
 
 // Real edge performance telemetry (edge/instrumentation/metrics.py's
@@ -41,8 +40,8 @@ export default function Performance() {
     setStatus('loading');
     try {
       const res = await authFetch('/system/metrics');
-      if (res.status === 401 || res.status === 403) {
-        setStatus('auth-required');
+      if (res.status === 403) {
+        setStatus('access-denied');
         return;
       }
       if (!res.ok) {
@@ -170,9 +169,10 @@ export default function Performance() {
         </p>
       </div>
 
-      {status === 'auth-required' && (
-        <div className="max-w-xs bg-panel border rounded p-4">
-          <LoginPrompt message="Sign in to view performance data" onSuccess={loadMetrics} />
+      {status === 'access-denied' && (
+        <div className="max-w-xs bg-panel border border-danger rounded p-4 text-center">
+          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+          <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 

@@ -346,6 +346,11 @@ def make_reliability_decision(
             scene_condition=condition,
             detector_confidence=detector_confidence,
             applied_threshold=calibration_threshold,
+            score_d=d,
+            score_t=t,
+            score_s=s,
+            score_h=h,
+            score_r=r,
         )
 
     # R above threshold — DETECTED, flag health context
@@ -362,6 +367,11 @@ def make_reliability_decision(
             scene_condition=condition,
             detector_confidence=detector_confidence,
             applied_threshold=calibration_threshold,
+            score_d=d,
+            score_t=t,
+            score_s=s,
+            score_h=h,
+            score_r=r,
         )
 
     # Full DETECTED
@@ -374,6 +384,11 @@ def make_reliability_decision(
         scene_condition=condition,
         detector_confidence=detector_confidence,
         applied_threshold=calibration_threshold,
+        score_d=d,
+        score_t=t,
+        score_s=s,
+        score_h=h,
+        score_r=r,
     )
 
 
@@ -386,6 +401,11 @@ def make_abstain(camera_id: str, reason: str, condition: SceneCondition = SceneC
         scene_condition=condition,
         detector_confidence=0.0,
         applied_threshold=0.0,
+        score_d=None,
+        score_t=None,
+        score_s=None,
+        score_h=None,
+        score_r=None,
     )
 
 
@@ -398,4 +418,9 @@ def make_uncertain(condition: SceneCondition, confidence: float, threshold: floa
         scene_condition=condition,
         detector_confidence=confidence,
         applied_threshold=threshold,
+        score_d=None,
+        score_t=None,
+        score_s=None,
+        score_h=None,
+        score_r=None,
     )

@@ -21,7 +21,8 @@ from backend.config import settings
 from backend.database.session import get_db
 from backend.models.orm import Alert, Camera, Event, PipelineMetricsSnapshot, SyncQueue
 from backend.security.auth import require_any_role
-from shared.schemas import PipelineMetricsReport, PipelineMetricsResponse
+from shared.schemas import PipelineMetricsReport, PipelineMetricsResponse, LiveTelemetryPayload
+from backend.api.websocket import broadcast_telemetry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["system"])
@@ -94,6 +95,23 @@ async def verify_chain(
         return {"is_valid": True, "message": f"Successfully verified {len(evidence_list)} blocks across all edge hash chains."}
     else:
         return {"is_valid": False, "message": f"{invalid_count} block(s) failed integrity verification. Chain compromised."}
+
+
+_telemetry_requests = 0
+
+@router.post("/system/telemetry", status_code=202)
+async def post_telemetry(payload: LiveTelemetryPayload):
+    """
+    Ingest live track telemetry from the edge pipeline.
+    This is ephemeral — not saved to DB, just broadcast to clients.
+    """
+    global _telemetry_requests
+    _telemetry_requests += 1
+    if _telemetry_requests % 100 == 0:
+        logger.info(f"[Telemetry] Received {_telemetry_requests} payloads from edge")
+        
+    await broadcast_telemetry(payload.model_dump())
+    return {"status": "ok"}
 
 
 @router.post("/system/metrics", status_code=201)

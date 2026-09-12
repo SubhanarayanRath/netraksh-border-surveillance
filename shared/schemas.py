@@ -180,9 +180,34 @@ class ReliabilityDecision(BaseModel):
     scene_condition: SceneCondition
     detector_confidence: float = Field(ge=0.0, le=1.0)
     applied_threshold: float = Field(ge=0.0, le=1.0)
+    score_d: Optional[float] = None
+    score_t: Optional[float] = None
+    score_s: Optional[float] = None
+    score_h: Optional[float] = None
+    score_r: Optional[float] = None
 
     class Config:
         use_enum_values = True
+
+
+# ---------------------------------------------------------------------------
+# Live Telemetry (architecture v4 §16)
+# ---------------------------------------------------------------------------
+
+class LiveTrack(BaseModel):
+    track_id: int
+    detection_class: str
+    confidence: float
+    bbox_x: float
+    bbox_y: float
+    bbox_w: float
+    bbox_h: float
+
+class LiveTelemetryPayload(BaseModel):
+    camera_id: str
+    timestamp: float
+    sequence: int
+    tracks: List[LiveTrack]
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +265,19 @@ class EvidencePackage(BaseModel):
     face_match_person_id: Optional[str] = None
     face_match_person_name: Optional[str] = None
     face_match_confidence: Optional[float] = None
+    
+    # Bounding box coordinates (normalized 0.0 - 1.0)
+    bbox_x: Optional[float] = None
+    bbox_y: Optional[float] = None
+    bbox_w: Optional[float] = None
+    bbox_h: Optional[float] = None
+    
+    # Reliability Score Breakdown
+    score_d: Optional[float] = None
+    score_t: Optional[float] = None
+    score_s: Optional[float] = None
+    score_h: Optional[float] = None
+    score_r: Optional[float] = None
 
     class Config:
         use_enum_values = True
@@ -335,8 +373,25 @@ class EventResponse(BaseModel):
     # plausible corroborating sighting was found; never fabricated.
     corroboration_score: Optional[float] = None
     corroborated_by_event_id: Optional[str] = None
+    corroborating_camera_id: Optional[str] = None
+    corroboration_status: Optional[str] = None
     corroboration_distance_m: Optional[float] = None
     corroboration_delta_t_s: Optional[float] = None
+    corroboration_t_expected_s: Optional[float] = None
+    corroboration_sigma_s: Optional[float] = None
+    
+    # BBox coordinates
+    bbox_x: Optional[float] = None
+    bbox_y: Optional[float] = None
+    bbox_w: Optional[float] = None
+    bbox_h: Optional[float] = None
+    
+    # Reliability scores
+    score_d: Optional[float] = None
+    score_t: Optional[float] = None
+    score_s: Optional[float] = None
+    score_h: Optional[float] = None
+    score_r: Optional[float] = None
     # Real sub-classification when detection_class == "vehicle" (see
     # shared.constants.VehicleSubtype). None for every other detection
     # class or when the underlying YOLO class wasn't a recognized vehicle
@@ -349,6 +404,23 @@ class EventResponse(BaseModel):
     face_match_person_name: Optional[str] = None
     face_match_confidence: Optional[float] = None
 
+    # Bounding box coordinates (normalized 0.0 - 1.0)
+    bbox_x: Optional[float] = None
+    bbox_y: Optional[float] = None
+    bbox_w: Optional[float] = None
+    bbox_h: Optional[float] = None
+
+    # Blockchain tracking (from associated Alert)
+    blockchain_tx_id: Optional[str] = None
+    blockchain_status: Optional[str] = None
+
+    # Reliability Score Breakdown
+    score_d: Optional[float] = None
+    score_t: Optional[float] = None
+    score_s: Optional[float] = None
+    score_h: Optional[float] = None
+    score_r: Optional[float] = None
+
     class Config:
         use_enum_values = True
         from_attributes = True
@@ -360,6 +432,8 @@ class VerificationResponse(BaseModel):
     signature_valid: bool
     chain_valid: bool
     detail: str
+    calculated_hash: Optional[str] = None
+    stored_hash: Optional[str] = None
     verified_at: datetime = Field(default_factory=datetime.utcnow)
 
 

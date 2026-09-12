@@ -55,8 +55,8 @@ export default function TacticalMap({ alerts = [] }) {
       setStatus('loading');
       try {
         const res = await authFetch('/cameras');
-        if (res.status === 401 || res.status === 403) {
-          setStatus('auth-required');
+        if (res.status === 403) {
+          setStatus('access-denied');
           return;
         }
         if (!res.ok) {
@@ -181,9 +181,10 @@ export default function TacticalMap({ alerts = [] }) {
           Loading real camera positions…
         </div>
       )}
-      {status === 'auth-required' && (
-        <div className="absolute inset-0 flex items-center justify-center text-white text-sm font-display text-center px-4 z-[1000]" style={{ backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(4px)' }}>
-          Sign in to view live tactical map telemetry.
+      {status === 'access-denied' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-danger text-sm font-display text-center px-4 z-[1000]" style={{ backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(4px)' }}>
+          <span className="tracking-widest uppercase mb-1">Access Denied</span>
+          <span className="text-xs text-muted">You do not have permission to view camera telemetry.</span>
         </div>
       )}
       {status === 'error' && (

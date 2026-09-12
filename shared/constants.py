@@ -175,7 +175,7 @@ ABANDONED_STATIONARY_FRAMES = 60
 ABANDONED_DISAPPEAR_FRAMES = 5
 
 # Frozen frame detection: variance below this = frozen
-FROZEN_FRAME_VARIANCE_THRESHOLD = 5.0
+FROZEN_FRAME_VARIANCE_THRESHOLD = 2.0
 
 # Adaptive Compute Gating (architecture v4 §6). Deliberately higher than
 # FROZEN_FRAME_VARIANCE_THRESHOLD above: this distinguishes "no real motion,

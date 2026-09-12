@@ -2,13 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { Search, Shield, CheckCircle, Database, GitBranch, Cloud } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
 import { authFetch, WS_URL } from '../services/auth';
-import LoginPrompt from '../components/LoginPrompt';
 import { parseUtc } from '../utils/time';
 
 export default function Evidence() {
   const { events } = useWebSocket(WS_URL);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [verifyStatus, setVerifyStatus] = useState(null); // 'verifying', 'verified', 'failed'
+  const [verifyData, setVerifyData] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Real decrypted evidence image (GET /events/{id}/evidence-image), separate
@@ -21,10 +21,7 @@ export default function Evidence() {
   // Use mock events if none from websocket
   // Mock events are tagged with _isMock: true so the UI can disable
   // actions that require real evidence (hash verification, chain check).
-  const displayEvents = events.length > 0 ? events : [
-    { event_id: 'EV-0184', event_type: 'Perimeter Breach Attempt', timestamp: new Date().toISOString(), decision_state: 'DETECTED', zone_id: 'Sector A', camera_id: 'cam-border-01', _isMock: true },
-    { event_id: 'EV-0183', event_type: 'Suspicious Vehicle Loitering', timestamp: new Date().toISOString(), decision_state: 'UNCERTAIN', zone_id: 'Sector B', camera_id: 'cam-checkpoint-01', _isMock: true },
-  ];
+  const displayEvents = events;
 
   useEffect(() => {
     if (displayEvents.length > 0 && !selectedEvent) {
@@ -54,8 +51,8 @@ export default function Evidence() {
     setEvidenceImageSizeBytes(null);
     try {
       const res = await authFetch(`/events/${eventId}/evidence-image`);
-      if (res.status === 401 || res.status === 403) {
-        setEvidenceImageStatus('auth-required');
+      if (res.status === 403) {
+        setEvidenceImageStatus('access-denied');
         return;
       }
       if (res.status === 409) {
@@ -106,7 +103,7 @@ export default function Evidence() {
       // below) and no auth header (now required, see backend/api/events.py).
       // Fixed to POST + authFetch as part of pre-deployment hardening.
       const res = await authFetch(`/events/${selectedEvent.event_id}/verify`, { method: 'POST' });
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 403) {
         setTimeout(() => setVerifyStatus('failed'), 1500);
         return;
       }
@@ -118,6 +115,7 @@ export default function Evidence() {
       const allValid = res.ok && data.hash_valid && data.signature_valid && data.chain_valid;
       setTimeout(() => {
         setVerifyStatus(allValid ? 'verified' : 'failed');
+        setVerifyData(data);
       }, 1500); // Artificial delay for animation
     } catch (e) {
       setTimeout(() => setVerifyStatus('failed'), 1500);
@@ -205,7 +203,7 @@ export default function Evidence() {
                 <div className="flex-col">
                   <span className="text-main font-body text-sm">Event #{selectedEvent?.event_id.split('-')[0]}</span>
                   <span className="text-lg font-display text-main uppercase mt-2 block">
-                    {selectedEvent?._isMock ? 'SIMULATED EVENT — NO EVIDENCE GENERATED' : 'NETRAKSH INTEGRITY DEEP DIVE'}
+                    NETRAKSH INTEGRITY DEEP DIVE
                   </span>
                 </div>
                 {verifyStatus === 'verified' && (
@@ -253,20 +251,47 @@ export default function Evidence() {
                 </div>
                 <div className="flex-col" style={{ gridColumn: 'span 2' }}>
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">CROSS-CAMERA CORROBORATION</span>
-                  {/* Real, computed by backend/services/cross_camera.py after
-                      ingest — see that module's docstring for exact scope
-                      (temporal + real-distance plausibility, NOT person
-                      re-identification). Absence is honestly shown as
-                      "No corroborating sighting found", never as a
-                      fabricated score. */}
-                  {selectedEvent?.corroboration_score != null ? (
-                    <span className="text-sm font-body text-ok">
-                      Tc={selectedEvent.corroboration_score.toFixed(2)} · camera event {selectedEvent.corroborated_by_event_id?.split('-')[0]}
-                      {selectedEvent.corroboration_distance_m != null && ` · ${selectedEvent.corroboration_distance_m.toFixed(0)}m away`}
-                      {selectedEvent.corroboration_delta_t_s != null && ` · seen ${selectedEvent.corroboration_delta_t_s.toFixed(0)}s apart`}
+                  {selectedEvent?.corroboration_status === 'CORROBORATED' ? (
+                    <div className="flex-col gap-1">
+                      <span className="text-sm font-body text-ok block">
+                        Tc={selectedEvent.corroboration_score?.toFixed(2)} · camera {selectedEvent.corroborating_camera_id?.split('-')[0]} event {selectedEvent.corroborated_by_event_id?.split('-')[0]}
+                        {selectedEvent.corroboration_distance_m != null && ` · ${selectedEvent.corroboration_distance_m.toFixed(0)}m away`}
+                        {selectedEvent.corroboration_delta_t_s != null && ` · seen ${selectedEvent.corroboration_delta_t_s.toFixed(0)}s apart`}
+                      </span>
+                      <span className="text-[10px] text-muted font-display uppercase tracking-widest block mt-1">
+                        Formula: Tc = e^(-|Δt - t_expected| / σ)
+                        {selectedEvent.corroboration_t_expected_s != null && (
+                          ` | Δt = ${selectedEvent.corroboration_delta_t_s?.toFixed(1)}s, t_expected = ${selectedEvent.corroboration_t_expected_s?.toFixed(1)}s, σ = ${selectedEvent.corroboration_sigma_s?.toFixed(1)}s`
+                        )}
+                      </span>
+                    </div>
+                  ) : selectedEvent?.corroboration_status === 'NO_CORROBORATION' ? (
+                    <span className="text-sm font-body text-warning block mt-1">
+                      NO CORROBORATION: no physically plausible matching event found
                     </span>
                   ) : (
-                    <span className="text-sm font-body text-muted">No corroborating sighting found (temporal/spatial plausibility only — not identity confirmation)</span>
+                    <span className="text-sm font-body text-muted block mt-1">
+                      CORROBORATION UNAVAILABLE: Missing GPS or insufficient event data
+                    </span>
+                  )}
+                </div>
+                
+                <div className="flex-col" style={{ gridColumn: 'span 2' }}>
+                  <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">RELIABILITY SCORING</span>
+                  {selectedEvent?.score_r != null ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] text-muted font-display uppercase tracking-widest block mt-1">
+                        Formula: R = (0.40 × D) + (0.20 × T) + (0.20 × S) + (0.20 × H)
+                      </span>
+                      <span className="text-sm font-body">
+                        D = {selectedEvent.score_d?.toFixed(2)} | T = {selectedEvent.score_t?.toFixed(2)} | S = {selectedEvent.score_s?.toFixed(2)} | H = {selectedEvent.score_h?.toFixed(2)}
+                      </span>
+                      <span className="text-sm font-body font-bold text-main mt-1">
+                        R = {selectedEvent.score_r?.toFixed(3)}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-sm font-body block">{selectedEvent?.decision_reason || 'N/A'}</span>
                   )}
                 </div>
                 {selectedEvent?.detection_class === 'face' && (
@@ -293,12 +318,6 @@ export default function Evidence() {
               {/* Verify button — disabled for mock/fallback events that have no real evidence.
                   The real gate (hash_valid && signature_valid && chain_valid) in handleVerify
                   is untouched; this only adds an honest pre-check for the demo-fallback case. */}
-              {selectedEvent?._isMock ? (
-                <div className="w-full border border-color text-muted py-3 rounded font-display text-xs tracking-widest flex items-center justify-center gap-2 opacity-60 cursor-not-allowed">
-                  <GitBranch size={18} />
-                  No real evidence — run the edge pipeline to generate real events
-                </div>
-              ) : (
                 <button 
                   onClick={handleVerify}
                   disabled={verifyStatus === 'verifying'}
@@ -307,7 +326,6 @@ export default function Evidence() {
                   <GitBranch size={18} /> 
                   {verifyStatus === 'verifying' ? 'Verifying Chain...' : 'Verify Netraksh Integrity Chain'}
                 </button>
-              )}
             </div>
 
             {/* Media Card */}
@@ -331,12 +349,10 @@ export default function Evidence() {
                   </div>
                 )}
 
-                {evidenceImageStatus === 'auth-required' && (
-                  <div className="absolute inset-0 bg-black/85 flex items-center justify-center p-3">
-                    <LoginPrompt
-                      message="Sign in to view evidence"
-                      onSuccess={() => selectedEvent && loadEvidenceImage(selectedEvent.event_id)}
-                    />
+                {evidenceImageStatus === 'access-denied' && (
+                  <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-3 text-center">
+                    <span className="text-danger font-display tracking-widest uppercase">Access Denied</span>
+                    <span className="text-xs text-muted mt-1">You do not have permission to view evidence</span>
                   </div>
                 )}
 
@@ -358,13 +374,19 @@ export default function Evidence() {
                   </div>
                 )}
 
-                {/* Mock bbox overlay — only shown over the placeholder, never over real decrypted evidence */}
-                {evidenceImageStatus !== 'ready' && evidenceImageStatus !== 'auth-required' && (
-                  <div className="absolute border-2 border-ok" style={{ top: '20%', left: '30%', width: '20%', height: '60%', backgroundColor: 'rgba(74,222,128,0.1)' }}>
-                    <div className="absolute top-0 left-0 -translate-y-full bg-ok text-black text-xs font-display px-1 whitespace-nowrap">
-                      [PERSON 98%]
+                {/* Real bbox overlay rendered on top of decrypted evidence */}
+                {evidenceImageStatus === 'ready' && selectedEvent && (
+                  selectedEvent.bbox_w != null ? (
+                    <div className="absolute border-2 border-ok pointer-events-none" style={{ top: `${selectedEvent.bbox_y * 100}%`, left: `${selectedEvent.bbox_x * 100}%`, width: `${selectedEvent.bbox_w * 100}%`, height: `${selectedEvent.bbox_h * 100}%`, backgroundColor: 'rgba(74,222,128,0.1)' }}>
+                      <div className="absolute top-0 left-0 -translate-y-full bg-ok text-black text-[10px] font-display px-1 whitespace-nowrap">
+                        TRACK #{selectedEvent.track_id != null ? selectedEvent.track_id : 'N/A'} (Tracker Identity)
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="absolute top-2 right-2 text-[10px] font-display bg-dark px-1 py-1 border rounded text-warning">
+                      Bounding box unavailable for this event
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -383,19 +405,11 @@ export default function Evidence() {
               
               <VerificationStep
                 icon={Database} title="Event Data Extracted"
-                // Real decrypted evidence size when we actually have the
-                // bytes (evidenceImageSizeBytes, set in loadEvidenceImage);
-                // this used to be a hardcoded "RAW: 1.4MB" for every event
-                // regardless of whether one existed at all.
                 status={evidenceImageSizeBytes != null ? `RAW: ${(evidenceImageSizeBytes / 1024).toFixed(1)}KB` : 'NO FILE'}
                 active={verifyStatus !== null}
               />
               <VerificationStep
                 icon={Shield} title="SHA-256 Generated"
-                // Real hash from EventResponse.hash, truncated for display.
-                // Full hash was produced by edge/evidence/packager.py at the
-                // moment of detection using Python's hashlib.sha256.
-                // Hover the badge to see the first 8 characters.
                 status={selectedEvent?.hash ? `${selectedEvent.hash.slice(0, 4)}...${selectedEvent.hash.slice(-4)}` : 'PENDING'}
                 active={verifyStatus !== null}
               />
@@ -405,11 +419,52 @@ export default function Evidence() {
                 active={verifyStatus === 'verified'} 
               />
               <VerificationStep 
-                icon={Cloud} title="Ledger Integration (Prototype)" 
-                status={verifyStatus === 'verified' ? "PROTOTYPE SYNCED" : "PENDING"} 
+                icon={Cloud} title="Blockchain Adapter: MockBlockchainAdapter" 
+                status={verifyStatus === 'verified' ? "MOCK / SIMULATION" : "PENDING"} 
                 active={verifyStatus === 'verified'} 
               />
             </div>
+            
+            {/* Hash Display Area */}
+            {verifyStatus !== null && verifyStatus !== 'verifying' && verifyData && (
+              <div className="mt-8 p-4 bg-dark border border-color rounded">
+                <div className="flex flex-col gap-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-display text-muted uppercase">Hashed Artifact</span>
+                    <span className="text-xs font-body text-main ml-4 text-right">Evidence Package (payload fields)</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-display text-muted uppercase">Calculated SHA-256</span>
+                    <span className="text-xs font-body text-main break-all ml-4 text-right select-all">{verifyData.calculated_hash || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-display text-muted uppercase">Stored SHA-256</span>
+                    <span className="text-xs font-body text-main break-all ml-4 text-right select-all">{verifyData.stored_hash || 'N/A'}</span>
+                  </div>
+                  {selectedEvent?.blockchain_tx_id && (
+                    <>
+                      <div className="flex justify-between items-center border-t border-color pt-3">
+                        <span className="text-xs font-display text-muted uppercase">MockBlockchainAdapter TX ID</span>
+                        <span className="text-xs font-body text-warning break-all ml-4 text-right select-all">{selectedEvent.blockchain_tx_id}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-display text-muted uppercase">Ledger Receipt (Simulation)</span>
+                        <span className="text-xs font-body text-warning break-all ml-4 text-right select-all">MOCK</span>
+                      </div>
+                    </>
+                  )}
+                  {verifyStatus === 'verified' ? (
+                    <div className="text-ok font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
+                      <CheckCircle size={14} /> INTEGRITY VERIFIED (HASH MATCH)
+                    </div>
+                  ) : (
+                    <div className="text-danger font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
+                      INTEGRITY FAILURE
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
         </div>

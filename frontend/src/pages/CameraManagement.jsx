@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { MapPin, Plus, Save, ShieldAlert } from 'lucide-react';
 import { authFetch } from '../services/auth';
 import useAuth from '../hooks/useAuth';
-import LoginPrompt from '../components/LoginPrompt';
 
 // The first genuinely ADMIN-exclusive page in this app — every other page
 // is readable by any authenticated role (require_any_role on the backend).
@@ -16,7 +15,7 @@ import LoginPrompt from '../components/LoginPrompt';
 export default function CameraManagement() {
   const { role } = useAuth();
   const [cameras, setCameras] = useState([]);
-  const [status, setStatus] = useState('loading'); // loading | ready | auth-required | forbidden | error
+  const [status, setStatus] = useState('loading'); // loading | ready | access-denied | error
   const [editingId, setEditingId] = useState(null);
   const [editLat, setEditLat] = useState('');
   const [editLon, setEditLon] = useState('');
@@ -34,12 +33,8 @@ export default function CameraManagement() {
     setStatus('loading');
     try {
       const res = await authFetch('/cameras');
-      if (res.status === 401) {
-        setStatus('auth-required');
-        return;
-      }
       if (res.status === 403) {
-        setStatus('forbidden');
+        setStatus('access-denied');
         return;
       }
       if (!res.ok) {
@@ -144,13 +139,14 @@ export default function CameraManagement() {
         </p>
       </div>
 
-      {status === 'auth-required' && (
-        <div className="max-w-xs bg-panel border rounded" style={{ padding: '1rem' }}>
-          <LoginPrompt message="Sign in as ADMIN" onSuccess={loadCameras} />
+      {status === 'access-denied' && (
+        <div className="max-w-xs bg-panel border border-danger p-4 rounded text-center">
+          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+          <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 
-      {(status === 'forbidden' || (status === 'ready' && role !== 'ADMIN')) && (
+      {status !== 'access-denied' && status === 'ready' && role !== 'ADMIN' && (
         <div className="max-w-md bg-panel border border-danger rounded flex items-center" style={{ padding: '1rem', gap: '0.75rem' }}>
           <ShieldAlert size={24} className="text-danger flex-shrink-0" />
           <span className="text-sm font-body text-main">

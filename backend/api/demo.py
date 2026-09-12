@@ -27,7 +27,10 @@ The edge pipeline polls GET /demo/scenario every 5 s and reacts:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+import shutil
+import os
+from backend.security.auth import get_current_user
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -35,15 +38,15 @@ router = APIRouter(prefix="/demo", tags=["demo"])
 # In-memory scenario state — a plain dict so any import of this module
 # shares the same object.  Resets to 'normal' on each server restart.
 # ---------------------------------------------------------------------------
-_state: dict = {"scenario": "normal"}
+_state: dict = {"scenario": "normal", "video_source": None}
 
 _VALID_SCENARIOS = frozenset({"normal", "fog", "failure", "offline"})
 
 
 @router.get("/scenario")
 async def get_scenario():
-    """Return the currently active demo scenario."""
-    return {"scenario": _state["scenario"]}
+    """Return the currently active demo scenario and video source."""
+    return {"scenario": _state["scenario"], "video_source": _state["video_source"]}
 
 
 @router.post("/scenario")
@@ -56,4 +59,37 @@ async def set_scenario(payload: dict):
     requested = payload.get("scenario", "normal")
     if requested in _VALID_SCENARIOS:
         _state["scenario"] = requested
-    return {"scenario": _state["scenario"]}
+    return {"scenario": _state["scenario"], "video_source": _state["video_source"]}
+
+
+@router.post("/upload")
+async def upload_video(file: UploadFile = File(...), current_user = Depends(get_current_user)):
+    """
+    Upload a new video for the edge pipeline to process.
+    Requires authentication. Only accepts video files.
+    """
+    if not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="Only video files are supported")
+
+    # Ensure target directory exists
+    target_dir = os.path.join(os.getcwd(), "demo", "videos")
+    os.makedirs(target_dir, exist_ok=True)
+    
+    # Save as uploaded.mp4 (or appropriate extension)
+    ext = os.path.splitext(file.filename)[1]
+    if not ext:
+        ext = ".mp4"
+    target_path = os.path.join(target_dir, f"uploaded_demo{ext}")
+    
+    try:
+        with open(target_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save video file: {str(e)}")
+
+    # Update state so edge pipeline detects the new source
+    # Convert to relative path for edge pipeline
+    rel_path = f"demo/videos/uploaded_demo{ext}"
+    _state["video_source"] = rel_path
+    
+    return {"status": "success", "video_source": rel_path}

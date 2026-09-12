@@ -98,6 +98,33 @@ async def broadcast_metrics(metrics_data: dict) -> None:
             disconnected.add(client)
     _connected_clients.difference_update(disconnected)
 
+_telemetry_broadcasts = 0
+
+async def broadcast_telemetry(telemetry_data: dict) -> None:
+    """Called when edge posts live telemetry payload."""
+    if not _connected_clients:
+        return
+    
+    global _telemetry_broadcasts
+    _telemetry_broadcasts += 1
+    if _telemetry_broadcasts % 100 == 0:
+        logger.info(f"[Telemetry] Broadcasted {_telemetry_broadcasts} frames to {len(_connected_clients)} clients")
+
+    message = json.dumps({
+        "type": "live_telemetry",
+        "telemetry": jsonable_encoder(telemetry_data)
+    })
+    disconnected = set()
+    for client in _connected_clients:
+        try:
+            # We don't want telemetry to pile up on slow clients
+            # FastAPI websocket doesn't expose underlying queue depth easily,
+            # but we just send it normally.
+            await client.send_text(message)
+        except Exception:
+            disconnected.add(client)
+    _connected_clients.difference_update(disconnected)
+
 
 async def broadcast_event(event_data: dict) -> None:
     """Called when a new event is ingested."""

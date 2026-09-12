@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # _process_frame in the main thread.  Python dict writes are atomic under
 # the GIL for single-key updates.
 # ---------------------------------------------------------------------------
-_scenario: dict = {"current": "normal"}
+_scenario: dict = {"current": "normal", "video_source": None, "should_restart": False}
 
 # How long (seconds) a single 'failure' trigger keeps frozen frames active
 # before auto-resetting so the demo doesn't get permanently stuck.
@@ -86,12 +86,23 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
             resp = httpx.get(f"{backend_url}/demo/scenario", timeout=2.0)
             if resp.status_code == 200:
                 data = resp.json()
-                new = data.get("scenario", "normal")
-                if new != _scenario["current"]:
+                new_scenario = data.get("scenario", "normal")
+                new_source = data.get("video_source")
+
+                if new_scenario != _scenario["current"]:
                     logger.info(
-                        f"[DemoRunner] Scenario changed: {_scenario['current']} → {new}"
+                        f"[DemoRunner] Scenario changed: {_scenario['current']} → {new_scenario}"
                     )
-                _scenario["current"] = new
+                    _scenario["current"] = new_scenario
+                
+                # If a new video source is provided, and it's different, trigger restart
+                if new_source and new_source != _scenario.get("video_source"):
+                    # Only trigger restart if we already had a source (not the first poll)
+                    # or if the backend dictates a source different from the CLI args.
+                    if _scenario["video_source"] is not None:
+                        logger.info(f"[DemoRunner] Video source changed to {new_source}, triggering restart...")
+                        _scenario["should_restart"] = True
+                    _scenario["video_source"] = new_source
         except Exception as exc:
             logger.debug(f"[DemoRunner] Scenario poll failed (non-fatal): {exc}")
         time.sleep(interval)
@@ -213,6 +224,20 @@ class DemoAwareEdgePipeline(EdgePipeline):
         t = threading.Thread(target=_offline_watcher, daemon=True, name="offline-watcher")
         t.start()
 
+        def _restart_watcher():
+            while True:
+                if getattr(self, "_running", False) and _scenario.get("should_restart"):
+                    logger.info("[DemoRunner] Restart requested by scenario state. Stopping pipeline...")
+                    self.stop()
+                    _scenario["should_restart"] = False
+                    break
+                if not getattr(self, "_running", False):
+                    break
+                time.sleep(1.0)
+        
+        t_restart = threading.Thread(target=_restart_watcher, daemon=True, name="restart-watcher")
+        t_restart.start()
+
         # Delegate to the real EdgePipeline.start(), which handles YOLO load,
         # sync thread, frame loop, etc.
         super().start()
@@ -245,27 +270,46 @@ def run_demo_pipeline(
         name=f"scenario-poll-{camera_id}",
     )
     poll_thread.start()
-    logger.info("[DemoRunner] Scenario poll thread started (polls every 5s)")
+    # Initialize _scenario["video_source"] with the CLI argument so the first
+    # poll doesn't immediately restart if the backend doesn't have one set yet.
+    _scenario["video_source"] = video_source
 
-    config = {
-        "camera_id": camera_id,
-        "camera_name": camera_id,
-        "video_source": video_source,
-        "backend_url": backend_url,
-        "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
-        "zones_config_path": zones_config_path,
-        "key_dir": "certs/edge",
-        # Per-camera chain/sync DBs so two simultaneous pipelines don't collide
-        "chain_db_path": f"edge/data/chain_{camera_id}.db",
-        "sync_db_path": f"edge/data/sync_{camera_id}.db",
-        "clip_dir": "edge/data/clips",
-        "metrics_json_path": f"edge/data/metrics_{camera_id}.json",
-        "simulate_frozen": False,
-        "simulate_night": False,
-    }
+    while True:
+        current_source = _scenario["video_source"]
+        
+        config = {
+            "camera_id": camera_id,
+            "camera_name": camera_id,
+            "video_source": current_source,
+            "backend_url": backend_url,
+            "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
+            "zones_config_path": zones_config_path,
+            "key_dir": "certs/edge",
+            # Per-camera chain/sync DBs so two simultaneous pipelines don't collide
+            "chain_db_path": f"edge/data/chain_{camera_id}.db",
+            "sync_db_path": f"edge/data/sync_{camera_id}.db",
+            "clip_dir": "edge/data/clips",
+            "metrics_json_path": f"edge/data/metrics_{camera_id}.json",
+            "simulate_frozen": False,
+            "simulate_night": False,
+        }
 
-    pipeline = DemoAwareEdgePipeline(config)
-    pipeline.start()
+        logger.info(f"[DemoRunner] Instantiating pipeline with source {current_source}")
+        pipeline = DemoAwareEdgePipeline(config)
+        
+        # start() blocks until the pipeline stops (e.g. video ends, interrupted, or restarted)
+        pipeline.start()
+        
+        if _scenario.get("should_restart"):
+            # The pipeline was stopped by the restart watcher, continue loop to recreate
+            logger.info("[DemoRunner] Pipeline stopped for restart. Recreating...")
+            # We already cleared should_restart in the watcher, but just in case:
+            _scenario["should_restart"] = False
+            time.sleep(1.0)
+        else:
+            # Normal exit (e.g. video ended or Ctrl+C)
+            logger.info("[DemoRunner] Pipeline exited normally. Ending loop.")
+            break
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@ import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle, Eye } from 'lucid
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
 import useAuth from '../hooks/useAuth';
-import LoginPrompt from '../components/LoginPrompt';
 import TacticalMap from '../components/TacticalMap';
 import { parseUtc } from '../utils/time';
 
@@ -42,11 +41,12 @@ export default function Alerts() {
     setStatus('loading');
     try {
       const res = await authFetch('/alerts');
-      if (res.status === 401 || res.status === 403) {
-        setStatus('auth-required');
+      if (res.status === 403) {
+        setStatus('access-denied');
         return;
       }
       if (!res.ok) {
+        // 401 is handled globally by authFetch interceptor
         setStatus('error');
         return;
       }
@@ -76,11 +76,7 @@ export default function Alerts() {
   // ones, indistinguishable from them. Now they only appear as a fallback
   // when there are zero real alerts, clearly labeled as such — the same
   // convention Evidence.jsx already uses for its own placeholder events.
-  const mockAlerts = [
-    { alert_id: 'ALT-992-A', severity: 'CRITICAL', event_type: 'DEMO — Multiple Intruders', camera_id: 'Sector 7, Node Alpha', timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(), isMock: true },
-    { alert_id: 'ALT-814-B', severity: 'HIGH', event_type: 'DEMO — Vehicle Ramming Attempt', camera_id: 'East Gate Checkpoint', timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(), isMock: true },
-  ];
-  const displayAlerts = realAlerts.length > 0 ? realAlerts : mockAlerts;
+  const displayAlerts = realAlerts;
 
   const handleAcknowledge = async (alertId) => {
     setAckingId(alertId);
@@ -132,13 +128,14 @@ export default function Alerts() {
         </div>
       </div>
 
-      {status === 'auth-required' && (
-        <div className="max-w-xs bg-panel border rounded p-4">
-          <LoginPrompt message="Sign in to view alerts" onSuccess={loadAlerts} />
+      {status === 'access-denied' && (
+        <div className="max-w-xs bg-panel border border-danger p-4 rounded text-center">
+          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+          <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 
-      {status !== 'auth-required' && (
+      {status !== 'access-denied' && (
         // NOT `grid grid-cols-1 lg:grid-cols-2` — found while building the
         // real map that neither class does anything in this project: there
         // is no Tailwind compiler here, only a small hand-written CSS
@@ -154,9 +151,9 @@ export default function Alerts() {
           <div className="flex flex-col overflow-y-auto pr-2 custom-scrollbar" style={{ flex: '1 1 0%', minWidth: 0, gap: '1rem' }}>
             {status === 'loading' && <div className="text-muted text-sm text-center mt-4">Loading real alerts…</div>}
             {status === 'error' && <div className="text-danger text-sm text-center mt-4">Could not reach the backend.</div>}
-            {realAlerts.length === 0 && status === 'ready' && (
+            {displayAlerts.length === 0 && status === 'ready' && (
               <div className="text-[10px] font-display text-muted uppercase tracking-widest border border-color rounded px-2 py-1 text-center">
-                No real alerts yet — showing demo placeholders below
+                No alerts available
               </div>
             )}
             {displayAlerts.map(alert => (

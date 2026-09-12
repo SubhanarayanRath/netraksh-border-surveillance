@@ -89,13 +89,23 @@ export function logout() {
 }
 
 // fetch() against the backend with the stored token attached, if any.
-// Callers still need to check res.status themselves (401/403 = not signed
-// in or wrong role, 404/409 = valid response the endpoint defines).
+// Callers still need to check res.status themselves for 403 (wrong role),
+// 404/409, etc. However, 401 (Unauthorized) is now caught globally:
+// it triggers a logout to redirect the user to the central login page.
 export async function authFetch(path, options = {}) {
   const token = getToken();
   const headers = { ...(options.headers || {}) };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  return fetch(`${BACKEND_URL}${path}`, { ...options, headers });
+  const response = await fetch(`${BACKEND_URL}${path}`, { ...options, headers });
+  
+  if (response.status === 401) {
+    // Token is missing, invalid, or expired.
+    // Force a global logout which triggers the AUTH_CHANGE_EVENT.
+    // The ProtectedRoute component will detect this and redirect to /login.
+    logout();
+  }
+  
+  return response;
 }

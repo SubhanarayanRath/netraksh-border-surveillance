@@ -30,7 +30,6 @@ import os
 import sys
 from pathlib import Path
 
-import httpx
 
 # Ensure project root is on path when run as `python scripts/upload_evidence_key.py`
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -70,24 +69,35 @@ def main() -> None:
         )
     key_b64 = _read_key_b64(key_path)
 
+    import urllib.request
+    import urllib.parse
+    import json
+    
     base_url = args.backend_url.rstrip("/")
-    with httpx.Client(timeout=10.0) as client:
-        token_resp = client.post(
-            f"{base_url}/auth/token",
-            data={"username": args.username, "password": args.password},
-        )
-        if token_resp.status_code != 200:
-            raise SystemExit(f"Login failed ({token_resp.status_code}): {token_resp.text}")
-        token = token_resp.json()["access_token"]
+    
+    # Get token
+    data = urllib.parse.urlencode({"username": args.username, "password": args.password}).encode("utf-8")
+    req = urllib.request.Request(f"{base_url}/auth/token", data=data)
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            resp_data = json.loads(response.read().decode())
+            token = resp_data["access_token"]
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"Login failed ({e.code}): {e.read().decode()}")
 
-        resp = client.put(
-            f"{base_url}/cameras/{args.camera_id}/evidence-key",
-            json={"evidence_key_b64": key_b64},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    if resp.status_code != 200:
-        raise SystemExit(f"Upload failed ({resp.status_code}): {resp.text}")
+    # Upload key
+    put_data = json.dumps({"evidence_key_b64": key_b64}).encode("utf-8")
+    req2 = urllib.request.Request(f"{base_url}/cameras/{args.camera_id}/evidence-key", data=put_data, method="PUT")
+    req2.add_header("Authorization", f"Bearer {token}")
+    req2.add_header("Content-Type", "application/json")
+    
+    try:
+        with urllib.request.urlopen(req2) as response:
+            pass
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"Upload failed ({e.code}): {e.read().decode()}")
 
     print(f"Evidence key registered for camera '{args.camera_id}'. "
           f"GET /events/{{event_id}}/evidence-image can now decrypt this camera's evidence.")

@@ -154,11 +154,16 @@ def verify_event_integrity(
         f"hash={hash_valid}, sig={sig_valid}, chain={chain_valid}"
     )
 
+    calculated_hash = compute_sha256(evidence_package.get_signable_fields())
+    stored_hash = evidence_package.hash or ""
+
     return VerificationResponse(
         event_id=evidence_package.event_id,
         hash_valid=hash_valid,
         signature_valid=sig_valid,
         chain_valid=chain_valid,
         detail=" | ".join(detail_parts),
+        calculated_hash=calculated_hash,
+        stored_hash=stored_hash,
         verified_at=datetime.utcnow(),
     )

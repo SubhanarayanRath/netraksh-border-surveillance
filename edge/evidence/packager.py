@@ -263,8 +263,6 @@ class EvidenceChainStore:
         Returns the sequence number assigned.
         """
         previous_hash, seq_num = self.get_latest_hash()
-        package.previous_hash = previous_hash
-        package.hash = compute_sha256(package.get_signable_fields())
         package.signature = signature
 
         with self._get_conn() as conn:
@@ -426,6 +424,29 @@ class EvidencePackager:
             face_match_person_name=overrides.get("face_match_person_name"),
             face_match_confidence=overrides.get("face_match_confidence"),
         )
+        
+        if track and hasattr(track, "bbox"):
+            if frame is not None and hasattr(frame, 'shape'):
+                h, w = frame.shape[:2]
+                ep.bbox_x = float(track.bbox.x1) / w
+                ep.bbox_y = float(track.bbox.y1) / h
+                ep.bbox_w = float(track.bbox.width) / w
+                ep.bbox_h = float(track.bbox.height) / h
+            else:
+                ep.bbox_x = float(track.bbox.x1)
+                ep.bbox_y = float(track.bbox.y1)
+                ep.bbox_w = float(track.bbox.width)
+                ep.bbox_h = float(track.bbox.height)
+                
+        ep.score_d = reliability.score_d
+        ep.score_t = reliability.score_t
+        ep.score_s = reliability.score_s
+        ep.score_h = reliability.score_h
+        ep.score_r = reliability.score_r
+
+        # Fetch previous hash so it is included in the signature
+        previous_hash, _ = self.chain_store.get_latest_hash()
+        ep.previous_hash = previous_hash
 
         # Compute hash of signable fields
         ep.hash = compute_sha256(ep.get_signable_fields())
@@ -435,7 +456,7 @@ class EvidencePackager:
         ep.signature = signature
         _t2 = time.perf_counter()
 
-        # Append to local hash-chain (also sets previous_hash and re-computes hash)
+        # Append to local hash-chain
         seq_num = self.chain_store.append(ep, signature)
         _t3 = time.perf_counter()
 

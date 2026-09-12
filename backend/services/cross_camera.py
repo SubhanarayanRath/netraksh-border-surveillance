@@ -111,6 +111,7 @@ class CorroborationResult:
     t_expected_s: float
     t_min_s: float
     t_max_s: float
+    sigma_s: float
     tc: float
 
 
@@ -146,21 +147,22 @@ def temporal_consistency(delta_t_s: float, t_min_s: float, t_max_s: float) -> fl
     t_expected = (t_min_s + t_max_s) / 2.0
     sigma = max((t_max_s - t_min_s) / 2.0, MIN_SIGMA_SECONDS)
     tc = math.exp(-abs(delta_t_s - t_expected) / sigma)
-    return max(0.0, min(1.0, tc))
+    return max(0.0, min(1.0, tc)), sigma
 
 
-def find_corroboration(event: Event, db: Session) -> Optional[CorroborationResult]:
+def find_corroboration(event: Event, db: Session) -> tuple[str, Optional[CorroborationResult]]:
     """
     Look for a real, already-stored event at another real-coordinate camera
     that is temporally/spatially plausible as corroboration for `event`.
-    Returns the single BEST (highest-Tc) match at or above MIN_TC_TO_RECORD,
-    or None if no such match exists — no match is ever fabricated.
+    Returns (status, single BEST (highest-Tc) match at or above MIN_TC_TO_RECORD),
+    or (status, None) if no such match exists — no match is ever fabricated.
     """
     camera = db.query(Camera).filter(Camera.id == event.camera_id).first()
     if camera is None or camera.latitude is None or camera.longitude is None:
         # Can't compute a real topology without this camera's real
         # coordinates — honestly skip rather than guess.
-        return None
+        return "UNAVAILABLE", None
+
 
     other_cameras = (
         db.query(Camera)
@@ -171,7 +173,8 @@ def find_corroboration(event: Event, db: Session) -> Optional[CorroborationResul
         .all()
     )
     if not other_cameras:
-        return None
+        return "NO_CORROBORATION", None
+
 
     window_start = event.timestamp - MAX_CORROBORATION_WINDOW
     window_end = event.timestamp + MAX_CORROBORATION_WINDOW
@@ -197,7 +200,7 @@ def find_corroboration(event: Event, db: Session) -> Optional[CorroborationResul
         t_min, t_max = expected_travel_time_range(distance_m)
         for cand in candidates:
             delta_t_s = abs((event.timestamp - cand.timestamp).total_seconds())
-            tc = temporal_consistency(delta_t_s, t_min, t_max)
+            tc, sigma = temporal_consistency(delta_t_s, t_min, t_max)
             if tc < MIN_TC_TO_RECORD:
                 continue
             if best is None or tc > best.tc:
@@ -209,10 +212,15 @@ def find_corroboration(event: Event, db: Session) -> Optional[CorroborationResul
                     t_expected_s=(t_min + t_max) / 2.0,
                     t_min_s=t_min,
                     t_max_s=t_max,
+                    sigma_s=sigma,
                     tc=tc,
                 )
 
-    return best
+    if best is None:
+        return "NO_CORROBORATION", None
+    
+    return "CORROBORATED", best
+
 
 
 def apply_corroboration(event: Event, db: Session) -> Optional[CorroborationResult]:
@@ -224,24 +232,35 @@ def apply_corroboration(event: Event, db: Session) -> Optional[CorroborationResu
     doesn't already have a better one, so corroboration is visible from
     either event's record without a second matching pass.
     """
-    result = find_corroboration(event, db)
+    status, result = find_corroboration(event, db)
+    
+    event.corroboration_status = status
+    
     if result is None:
-        logger.debug(f"[CrossCamera] No corroboration found for event {event.id}")
+        logger.debug(f"[CrossCamera] {status} for event {event.id}")
+        db.commit()
         return None
 
     event.corroboration_score = result.tc
     event.corroborated_by_event_id = result.other_event_id
+    event.corroborating_camera_id = result.other_camera_id
     event.corroboration_distance_m = result.distance_m
     event.corroboration_delta_t_s = result.delta_t_s
+    event.corroboration_t_expected_s = result.t_expected_s
+    event.corroboration_sigma_s = result.sigma_s
 
     other_event = db.query(Event).filter(Event.id == result.other_event_id).first()
     if other_event is not None and (
         other_event.corroboration_score is None or other_event.corroboration_score < result.tc
     ):
+        other_event.corroboration_status = "CORROBORATED"
         other_event.corroboration_score = result.tc
         other_event.corroborated_by_event_id = event.id
+        other_event.corroborating_camera_id = event.camera_id
         other_event.corroboration_distance_m = result.distance_m
         other_event.corroboration_delta_t_s = result.delta_t_s
+        other_event.corroboration_t_expected_s = result.t_expected_s
+        other_event.corroboration_sigma_s = result.sigma_s
 
     db.commit()
     logger.info(

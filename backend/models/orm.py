@@ -158,6 +158,20 @@ class Event(Base):
     face_match_person_name: Mapped[Optional[str]] = mapped_column(String(128))
     face_match_confidence: Mapped[Optional[float]] = mapped_column(Float)
     evidence_clip_ref: Mapped[Optional[str]] = mapped_column(String(512))
+    evidence_image_ref: Mapped[Optional[str]] = mapped_column(String(512))
+    
+    # Bounding box coordinates (normalized 0.0 - 1.0)
+    bbox_x: Mapped[Optional[float]] = mapped_column(Float)
+    bbox_y: Mapped[Optional[float]] = mapped_column(Float)
+    bbox_w: Mapped[Optional[float]] = mapped_column(Float)
+    bbox_h: Mapped[Optional[float]] = mapped_column(Float)
+    
+    score_d: Mapped[Optional[float]] = mapped_column(Float)
+    score_t: Mapped[Optional[float]] = mapped_column(Float)
+    score_s: Mapped[Optional[float]] = mapped_column(Float)
+    score_h: Mapped[Optional[float]] = mapped_column(Float)
+    score_r: Mapped[Optional[float]] = mapped_column(Float)
+    
     edge_device_id: Mapped[Optional[str]] = mapped_column(String(64))
     sequence_number: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -174,6 +188,10 @@ class Event(Base):
     corroborated_by_event_id: Mapped[Optional[str]] = mapped_column(String(36))
     corroboration_distance_m: Mapped[Optional[float]] = mapped_column(Float)
     corroboration_delta_t_s: Mapped[Optional[float]] = mapped_column(Float)
+    corroboration_t_expected_s: Mapped[Optional[float]] = mapped_column(Float)
+    corroboration_sigma_s: Mapped[Optional[float]] = mapped_column(Float)
+    corroborating_camera_id: Mapped[Optional[str]] = mapped_column(String(36))
+    corroboration_status: Mapped[Optional[str]] = mapped_column(String(32))
 
     camera: Mapped["Camera"] = relationship("Camera", back_populates="events")
     zone: Mapped[Optional["Zone"]] = relationship("Zone", back_populates="events")

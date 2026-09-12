@@ -5,7 +5,6 @@ import Logo from './Logo';
 import { authFetch, logout } from '../services/auth';
 import useAuth from '../hooks/useAuth';
 import useDemoScenario from '../hooks/useDemoScenario';
-import LoginPrompt from './LoginPrompt';
 
 const ROLE_COLORS = {
   ADMIN: 'text-danger border-danger',
@@ -166,7 +165,7 @@ export default function Header() {
         // bottom of the relatively-positioned <header> regardless of its
         // real height.
         <div className="absolute right-4 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3" style={{ top: 'calc(100% + 8px)' }}>
-          {isAuthenticated ? (
+          {isAuthenticated && (
             <>
               <div className="flex justify-between items-center border-b border-color pb-2">
                 <span className="text-xs font-display text-muted uppercase">Signed In</span>
@@ -180,8 +179,6 @@ export default function Header() {
                 <LogOut size={14} /> Sign Out
               </button>
             </>
-          ) : (
-            <LoginPrompt message="Sign in" onSuccess={() => setShowAccountPanel(false)} />
           )}
         </div>
       )}

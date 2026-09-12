@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, HelpCircle, ShieldAlert, CheckCircle, GitMerge } from 'lucide-react';
 import VideoFeed from '../components/VideoFeed';
 import useWebSocket from '../hooks/useWebSocket';
 import useDemoScenario from '../hooks/useDemoScenario';
-import { WS_URL } from '../services/auth';
+import { WS_URL, authFetch } from '../services/auth';
 import { parseUtc } from '../utils/time';
 
 // Parses the REAL decision_reason string edge/reliability/decision.py writes,
@@ -68,16 +68,60 @@ function explainDecision(parsed) {
 }
 
 export default function Dashboard() {
-  const { events, health } = useWebSocket(WS_URL);
+  const { events, health, liveTracks } = useWebSocket(WS_URL);
   const { scenario: demoScenario } = useDemoScenario();
   const [latestEvent, setLatestEvent] = useState(null);
   const [showWhy, setShowWhy] = useState(false);
 
+  // Media upload state — lifted here so the entire dashboard can be gated
+  // behind a video upload. Until the operator loads a demo video, all
+  // WebSocket events are suppressed from the UI so the jury sees a clean
+  // "waiting for feed" state rather than automatic analysis on nothing.
+  const [mediaUrl, setMediaUrl] = useState(null);
+  const [mediaType, setMediaType] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+      setMediaUrl(URL.createObjectURL(file));
+      setMediaType(file.type.startsWith('video/') ? 'video' : 'image');
+      // Reset events so fresh analysis starts from the new upload
+      setLatestEvent(null);
+
+      if (file.type.startsWith('video/')) {
+        setIsUploading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+          const res = await authFetch('/demo/upload', {
+            method: 'POST',
+            body: formData,
+          });
+          
+          if (!res.ok) {
+            console.error('Upload failed:', await res.text());
+          }
+        } catch (error) {
+          console.error('Upload error:', error);
+        } finally {
+          setIsUploading(false);
+        }
+      }
+    }
+  };
+
+  const triggerUpload = () => fileInputRef.current?.click();
+
+  // Only accept events once the operator has loaded a demo feed
   useEffect(() => {
-    if (events.length > 0) {
+    if (mediaUrl && events.length > 0) {
       setLatestEvent(events[0]);
     }
-  }, [events]);
+  }, [events, mediaUrl]);
 
   const parsed = latestEvent ? parseDecisionReason(latestEvent.decision_reason) : null;
   // Prefer the live per-camera health push (real, arrives roughly every 5s
@@ -161,8 +205,26 @@ export default function Dashboard() {
 
         {/* Left Column */}
         <div className="flex-col h-full" style={{ flex: 3, display: 'flex', gap: '0.75rem' }}>
+          {/* Hidden file input — triggered from VideoFeed's upload button */}
+          <input
+            type="file"
+            accept=".mp4,.avi,.mov,.mkv,.webm,.flv,.wmv,.mpeg,.mpg,.3gp,.3gpp,.m4v,.ogv,.ts,.m2ts,.mts,.vob,.rmvb,.rm,.divx,.xvid,.asf,.f4v,.h264,.hevc,.mp2,.mpe,.mpv,.m2v,.svi,.3g2,.mxf,video/*,image/*"
+            onChange={handleFileUpload}
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+          />
+
           <div className="flex-grow" style={{ minHeight: '300px' }}>
-            <VideoFeed eventData={latestEvent} isConnected={true} demoScenario={demoScenario} />
+            <VideoFeed
+              eventData={latestEvent}
+              liveTracksData={liveTracks['cam-border-01']}
+              isConnected={true}
+              demoScenario={demoScenario}
+              mediaUrl={mediaUrl}
+              mediaType={mediaType}
+              onUpload={triggerUpload}
+              isUploading={isUploading}
+            />
           </div>
 
           <div className="bg-panel border rounded flex flex-col" style={{ padding: '0.75rem', minHeight: '10rem' }}>
@@ -181,7 +243,9 @@ export default function Dashboard() {
               </div>
             )}
             <div className="overflow-y-auto flex flex-col gap-2 flex-grow pr-2">
-              {events.length === 0 ? (
+              {!mediaUrl ? (
+                <div className="text-muted text-sm text-center mt-4">Upload a demo video to begin analysis</div>
+              ) : events.length === 0 ? (
                 <div className="text-muted text-sm text-center mt-4">Waiting for events...</div>
               ) : (
                 events.map((ev, i) => (

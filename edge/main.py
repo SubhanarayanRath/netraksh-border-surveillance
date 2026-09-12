@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Dict, List, Optional
 
 # Ensure project root is on path
@@ -143,6 +144,14 @@ class EdgePipeline:
             simulate_frozen=config.get("simulate_frozen", False),
             simulate_night=config.get("simulate_night", False),
         )
+
+        # Telemetry
+        self.telemetry_fps = int(os.environ.get("TELEMETRY_FPS", 10))
+        self.telemetry_interval = 1.0 / self.telemetry_fps if self.telemetry_fps > 0 else 0
+        self._last_telemetry_time = 0.0
+        self._telemetry_sequence = 0
+        self.telemetry_queue = Queue(maxsize=10)
+        self._telemetry_metrics = {"produced": 0, "dropped": 0, "errors": 0}
 
         # Layer 2: Health + Condition
         self.health_monitor = CameraHealthMonitor(
@@ -278,6 +287,14 @@ class EdgePipeline:
         self._running = True
         logger.info(f"[Pipeline] Starting frame loop for camera {self.camera_id}")
 
+        telemetry_thread = threading.Thread(
+            target=self._run_telemetry_loop,
+            daemon=True,
+            name=f"telemetry-{self.camera_id}",
+        )
+        telemetry_thread.start()
+        logger.info("[Pipeline] Telemetry thread started")
+
         try:
             self._run_frame_loop()
         except KeyboardInterrupt:
@@ -285,6 +302,26 @@ class EdgePipeline:
         finally:
             self._running = False
             self.adapter.release()
+
+    def _run_telemetry_loop(self) -> None:
+        """Background thread for pushing live telemetry to the backend."""
+        import httpx
+        client = httpx.Client(timeout=1.0)
+        telemetry_url = f"{self._backend_url}/system/telemetry"
+        while self._running:
+            try:
+                payload = self.telemetry_queue.get(timeout=0.5)
+                try:
+                    client.post(telemetry_url, json=payload)
+                except httpx.RequestError:
+                    self._telemetry_metrics["errors"] += 1
+                self.telemetry_queue.task_done()
+            except Empty:
+                continue
+            except Exception as e:
+                self._telemetry_metrics["errors"] += 1
+                logger.error(f"[Telemetry] Unexpected error: {e}")
+        client.close()
 
     def _run_frame_loop(self) -> None:
         """Main frame processing loop."""
@@ -511,6 +548,44 @@ class EdgePipeline:
             del self._trajectories[k]
             self._known_track_ids.discard(k)
             self._track_last_snapshot.pop(k, None)
+
+        # === Live Telemetry (architecture v4 §16) ===
+        if self.telemetry_fps > 0 and (time.time() - self._last_telemetry_time) >= self.telemetry_interval:
+            self._last_telemetry_time = time.time()
+            self._telemetry_sequence += 1
+            live_tracks = []
+            frame_h, frame_w = frame.shape[:2] if frame is not None else (1, 1)
+            for t in tracks:
+                live_tracks.append({
+                    "track_id": t.track_id,
+                    "detection_class": t.detection_class.value if hasattr(t.detection_class, "value") else str(t.detection_class),
+                    "confidence": t.confidence,
+                    "bbox_x": t.bbox.x1 / frame_w if frame_w > 0 else 0,
+                    "bbox_y": t.bbox.y1 / frame_h if frame_h > 0 else 0,
+                    "bbox_w": t.bbox.width / frame_w if frame_w > 0 else 0,
+                    "bbox_h": t.bbox.height / frame_h if frame_h > 0 else 0,
+                })
+            payload = {
+                "camera_id": self.camera_id,
+                "timestamp": time.time(),
+                "sequence": self._telemetry_sequence,
+                "tracks": live_tracks
+            }
+            try:
+                # Latest-only queue strategy (backpressure):
+                # If queue is full, discard the OLDEST telemetry to make room
+                # for the NEWEST state, rather than discarding the newest.
+                if self.telemetry_queue.full():
+                    try:
+                        self.telemetry_queue.get_nowait()
+                        self.telemetry_queue.task_done()
+                        self._telemetry_metrics["dropped"] += 1
+                    except Empty:
+                        pass
+                self.telemetry_queue.put_nowait(payload)
+                self._telemetry_metrics["produced"] += 1
+            except Exception:
+                pass
 
         # === Layer 3.6: Night-Motion Fallback (architecture v4 §3) ===
         # NightMotionFallback existed in edge/detection/detector.py but was
@@ -763,6 +838,10 @@ class EdgePipeline:
             f"cpu={summary['cpu_percent']} rss_mb={summary['rss_mb']} "
             f"gate={gate_stats['state']} inference_skip_ratio={gate_stats['skip_ratio']:.1%} "
             f"(run={gate_stats['frames_run']},skipped={gate_stats['frames_skipped']})"
+        )
+        logger.info(
+            f"[Telemetry Metrics] fps={self.telemetry_fps} produced={self._telemetry_metrics['produced']} "
+            f"dropped={self._telemetry_metrics['dropped']} errors={self._telemetry_metrics['errors']}"
         )
         self.metrics.dump_json(self._metrics_json_path, extra={"adaptive_gate": gate_stats})
 
