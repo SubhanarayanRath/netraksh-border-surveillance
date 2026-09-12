@@ -2,6 +2,7 @@
 NETRAKSH Backend — Application settings loaded from environment / .env file.
 All secrets come from environment variables. No hardcoded credentials.
 """
+from typing import Any, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -72,13 +73,15 @@ class Settings(BaseSettings):
     FABRIC_ORG_MSP: str = "CommandAMSP"
 
     # --- Frontend CORS ---
-    CORS_ORIGINS: str = ""
+    CORS_ORIGINS: Union[list[str], str] = []
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def assemble_cors_origins(cls, v: str, info) -> list[str]:
+    def assemble_cors_origins(cls, v: Any, info) -> Any:
         # Access the ENV value from the pydantic ValidationInfo
         env = info.data.get("ENV", "production")
+        if isinstance(v, list):
+            return v
         if not v or not v.strip():
             if env == "development":
                 return ["http://localhost:5173", "http://localhost:3000", "https://localhost:5173"]
