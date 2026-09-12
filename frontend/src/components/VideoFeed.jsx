@@ -55,13 +55,27 @@ export default function VideoFeed({ eventData, isConnected, demoScenario = 'norm
     : null;
 
   return (
-    <div className="w-full h-full relative bg-black border rounded overflow-hidden" style={{ backgroundImage: 'url(/mock-fence.jpg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+    <div className="w-full h-full relative border rounded overflow-hidden" style={{ 
+      background: 'radial-gradient(circle at 50% 50%, #064e3b 0%, #020617 100%)',
+      boxShadow: 'inset 0 0 50px rgba(0,0,0,0.8)'
+    }}>
       
-      {/* Fallback pattern if no image */}
+      {/* Procedural tactical HUD / mesh pattern */}
       <div className="absolute inset-0 opacity-20" style={{
-        backgroundImage: 'radial-gradient(var(--text-muted) 1px, transparent 1px)',
-        backgroundSize: '20px 20px'
+        backgroundImage: `
+          linear-gradient(rgba(16, 185, 129, 0.2) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(16, 185, 129, 0.2) 1px, transparent 1px),
+          radial-gradient(var(--text-muted) 1px, transparent 1px)
+        `,
+        backgroundSize: '40px 40px, 40px 40px, 20px 20px',
+        backgroundPosition: 'center center'
       }}></div>
+      
+      {/* Center crosshair */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 opacity-40 pointer-events-none">
+        <div className="absolute top-1/2 left-0 w-full h-[1px] bg-ok -translate-y-1/2"></div>
+        <div className="absolute left-1/2 top-0 h-full w-[1px] bg-ok -translate-x-1/2"></div>
+      </div>
 
       <div className="scanline"></div>
 

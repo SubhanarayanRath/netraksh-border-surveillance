@@ -71,7 +71,7 @@ def _seed_demo_data(db) -> None:
         rtsp_url=None,
         owning_command_id="COMMAND_A",
         latitude=31.6050,
-        longitude=74.5700,
+        longitude=74.6050,  # Shifted East to ensure it's safely inside Indian territory
     )
     cam_b = Camera(
         id="cam-checkpoint-01",
@@ -80,7 +80,7 @@ def _seed_demo_data(db) -> None:
         rtsp_url=None,
         owning_command_id="COMMAND_A",
         latitude=31.6025,
-        longitude=74.5745,
+        longitude=74.6025,  # Shifted East
     )
     db.add_all([cam_a, cam_b])
     db.flush()

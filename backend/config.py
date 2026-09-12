@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
     AUDIT_LOG_ENABLED: bool = True
+    ENV: str = "production"
 
     # --- Database ---
     DATABASE_URL: str = "postgresql://netraksh:netraksh_password@localhost:5432/netraksh"
@@ -53,11 +54,11 @@ class Settings(BaseSettings):
 
     # --- RBAC default users ---
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "CHANGE_ME_admin_password"
+    ADMIN_PASSWORD: str = "admin"
     INITIAL_OPERATOR_USERNAME: str = "operator"
-    INITIAL_OPERATOR_PASSWORD: str = "CHANGE_ME_operator_password"
+    INITIAL_OPERATOR_PASSWORD: str = "operator"
     INITIAL_AUDITOR_USERNAME: str = "auditor"
-    INITIAL_AUDITOR_PASSWORD: str = "CHANGE_ME_auditor_password"
+    INITIAL_AUDITOR_PASSWORD: str = "auditor"
 
     # --- Command identity ---
     COMMAND_ID: str = "COMMAND_A"
@@ -71,7 +72,22 @@ class Settings(BaseSettings):
     FABRIC_ORG_MSP: str = "CommandAMSP"
 
     # --- Frontend CORS ---
-    CORS_ORIGINS: list = ["http://localhost:5173", "http://localhost:3000", "https://localhost:5173"]
+    CORS_ORIGINS: str = ""
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: str, info) -> list[str]:
+        # Access the ENV value from the pydantic ValidationInfo
+        env = info.data.get("ENV", "production")
+        if not v or not v.strip():
+            if env == "development":
+                return ["http://localhost:5173", "http://localhost:3000", "https://localhost:5173"]
+            return []
+        
+        origins = [i.strip() for i in v.split(",") if i.strip()]
+        if "*" in origins:
+            raise ValueError("Wildcard '*' CORS is strictly prohibited.")
+        return origins
 
 
 settings = Settings()

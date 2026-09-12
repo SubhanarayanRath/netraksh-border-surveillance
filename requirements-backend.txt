@@ -9,24 +9,24 @@
 # a deploy that has real free-tier build-time and memory limits. This is
 # the actual import list backend/ and shared/ need — verified by grepping
 # every top-level import in both, not guessed.
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+sqlalchemy==2.0.0
+psycopg2-binary==2.9.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
 # Pinned <4.1: bcrypt 4.1 removed the `__about__.__version__` attribute
 # passlib's backend-detection code reads, causing a trapped-but-noisy
 # warning locally and a hard crash in production (Render resolved an
 # unpinned `bcrypt` to a newer version than this dev machine happened to
 # have installed). See backend/security/auth.py's _truncate_for_bcrypt for
 # the other half of this fix (the 72-byte limit).
-bcrypt<4.1
-python-multipart>=0.0.9
-cryptography>=42.0.0
-pydantic>=2.9.0
-pydantic-settings>=2.6.0
-python-dotenv>=1.0.0
+bcrypt==4.0.1
+python-multipart==0.0.9
+cryptography==42.0.0
+pydantic==2.9.0
+pydantic-settings==2.6.0
+python-dotenv==1.0.0
 # backend/services/webhook_delivery.py (real external C2 integration, SIH
 # PS 26187) makes a real outbound HTTP POST to admin-registered webhooks.
 # The import is inside a try/except (non-fatal by design if missing), so
@@ -35,4 +35,4 @@ python-dotenv>=1.0.0
 # feature. Caught by re-checking this file's own "verified by grepping
 # every top-level import" claim above after adding a new backend service,
 # not assumed still true.
-httpx>=0.27.0
+httpx==0.27.0

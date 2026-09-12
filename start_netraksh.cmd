@@ -6,9 +6,10 @@ echo  NETRAKSH Command Center — SIH 2026 Prototype
 echo  CPU-only prototype: no Jetson / GPU / TensorRT
 echo ========================================================
 
-set PYTHON=python
+set PYTHON=py
 set PYTHONPATH=%cd%
 set BACKEND_URL=http://localhost:8443
+set SYNC_INTERVAL_SECONDS=2
 
 :: -------------------------------------------------------
 :: 1. Start the backend (also serves the built frontend)

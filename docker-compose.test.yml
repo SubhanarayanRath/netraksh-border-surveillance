@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  backend_test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-runner
+    environment:
+      - DATABASE_URL=sqlite:///./test.db
+      - ENV=development
+      - BLOCKCHAIN_MODE=mock
+    ports:
+      - "8443:8443"
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8443"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  frontend_test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend-builder
+    # Because we're in a CI test phase, we can serve the built static files 
+    # using a simple python http server or vite preview
+    command: ["npm", "run", "preview", "--", "--port", "5173", "--host", "0.0.0.0"]
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend_test:
+        condition: service_healthy
+
+  test_runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend-builder
+    environment:
+      - BACKEND_URL=http://backend_test:8443
+    depends_on:
+      backend_test:
+        condition: service_healthy
+      frontend_test:
+        condition: service_started
+    # Run the pytest suite, then E2E poll
+    command: >
+      sh -c "
+      pytest tests/test_reliability_degradation.py tests/test_hash_chain.py tests/test_edge_pipeline.py tests/test_backend_api.py -v &&
+      python tests/e2e_poll.py
+      "

@@ -110,26 +110,26 @@ export default function Dashboard() {
     }
 
     return (
-      <div className={`flex flex-col p-4 rounded ${colors} transition-all ${active ? 'shadow-lg scale-105' : ''}`}>
-        <div className="flex items-center gap-2 mb-1">
+      <div className={`flex flex-col rounded ${colors} transition-all ${active ? 'shadow-lg scale-105' : ''}`} style={{ padding: '0.75rem' }}>
+        <div className="flex items-center" style={{ gap: '0.5rem', marginBottom: '0.1rem' }}>
           {icon}
-          <span className="font-display font-bold text-lg">{title}</span>
+          <span className="font-display font-bold text-base">{title}</span>
         </div>
-        <span className="text-xs font-body opacity-80">{desc}</span>
+        <span className="text-[10px] font-body opacity-80">{desc}</span>
       </div>
     );
   };
 
   const LogicGate = ({ num, title, stats, active }) => (
-    <div className={`flex gap-4 p-4 rounded border ${active ? 'border-ok bg-[rgba(74,222,128,0.05)]' : 'border-color opacity-50'} relative`}>
+    <div className={`flex rounded border ${active ? 'border-ok bg-[rgba(74,222,128,0.05)]' : 'border-color opacity-50'} relative`} style={{ padding: '0.5rem', gap: '0.75rem' }}>
       <div className="flex-shrink-0 mt-1">
-        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${active ? 'border-ok text-ok' : 'border-muted text-muted'}`}>
-          {active && <CheckCircle size={12} />}
+        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${active ? 'border-ok text-ok' : 'border-muted text-muted'}`}>
+          {active && <CheckCircle size={10} />}
         </div>
       </div>
       <div className="flex flex-col w-full">
-        <span className="text-sm font-display text-muted uppercase tracking-wider mb-2">Gate {num} — {title}</span>
-        <div className="flex justify-between items-center bg-dark p-2 rounded border border-color">
+        <span className="text-[11px] font-display text-muted uppercase tracking-wider mb-1" style={{ marginBottom: '0.25rem' }}>Gate {num} — {title}</span>
+        <div className="flex justify-between items-center bg-dark rounded border border-color" style={{ padding: '0.35rem' }}>
           {stats}
         </div>
       </div>
@@ -143,7 +143,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="h-full flex flex-col gap-6">
+    <div className="h-full flex flex-col" style={{ gap: '1rem' }}>
       <div className="flex-col">
         <h2 className="text-xl font-display text-main tracking-widest uppercase">Border Intelligence Center</h2>
         <span className="text-sm text-muted font-display tracking-widest uppercase">Active Monitoring Zone: Sector Alpha</span>
@@ -157,16 +157,16 @@ export default function Dashboard() {
           .absolute/.relative were fixed and stopped accidentally
           contributing document-flow height. Converted to real inline
           styles. */}
-      <div className="flex gap-6" style={{ height: 'calc(100% - 80px)' }}>
+      <div className="flex" style={{ height: 'calc(100% - 60px)', gap: '1rem' }}>
 
         {/* Left Column */}
-        <div className="flex-col gap-4 h-full" style={{ flex: 3 }}>
-          <div className="flex-grow" style={{ minHeight: '400px' }}>
+        <div className="flex-col h-full" style={{ flex: 3, display: 'flex', gap: '0.75rem' }}>
+          <div className="flex-grow" style={{ minHeight: '300px' }}>
             <VideoFeed eventData={latestEvent} isConnected={true} demoScenario={demoScenario} />
           </div>
 
-          <div className="bg-panel border rounded p-4 h-48 flex flex-col">
-            <div className="flex justify-between items-center border-b border-color pb-2 mb-2">
+          <div className="bg-panel border rounded flex flex-col" style={{ padding: '0.75rem', minHeight: '10rem' }}>
+            <div className="flex justify-between items-center border-b border-color pb-1 mb-1" style={{ paddingBottom: '0.25rem', marginBottom: '0.25rem' }}>
               <span className="text-sm font-display text-muted uppercase tracking-widest">Event Timeline</span>
               <button
                 onClick={() => setShowWhy((v) => !v)}
@@ -176,7 +176,7 @@ export default function Dashboard() {
               </button>
             </div>
             {showWhy && (
-              <div className="text-xs font-body text-main bg-dark border border-color rounded p-2 mb-2">
+              <div className="text-xs font-body text-main bg-dark border border-color rounded mb-2" style={{ padding: '0.5rem', marginBottom: '0.5rem' }}>
                 {whyExplanation || 'No real event yet to explain — this fills in from the same decision_reason data the Reliability Decision panel shows, once one arrives.'}
               </div>
             )}
@@ -198,17 +198,17 @@ export default function Dashboard() {
         </div>
 
         {/* Right Column */}
-        <div className="flex-col gap-4 h-full" style={{ flex: 2 }}>
-          <div className="bg-panel border rounded p-6 flex flex-col gap-6 flex-grow">
+        <div className="flex-col h-full" style={{ flex: 2, display: 'flex', gap: '0.75rem' }}>
+          <div className="bg-panel border rounded flex flex-col flex-grow" style={{ padding: '1rem', gap: '0.75rem' }}>
             <div className="flex justify-between items-start">
               <div className="flex-col">
-                <span className="text-lg font-display text-main uppercase">Reliability Decision</span>
-                <span className="text-xs font-display text-muted uppercase tracking-widest">Logic Pipeline</span>
+                <span className="text-[15px] font-display text-main uppercase">Reliability Decision</span>
+                <span className="text-[10px] font-display text-muted uppercase tracking-widest">Logic Pipeline</span>
               </div>
-              <ShieldCheck size={24} className="text-muted" />
+              <ShieldCheck size={20} className="text-muted" />
             </div>
 
-            <div className="flex flex-col gap-4 relative">
+            <div className="flex flex-col relative" style={{ gap: '0.5rem' }}>
               <LogicGate
                 num={1} title="Camera Health (hard override)"
                 active={!!latestEvent}
@@ -288,14 +288,14 @@ export default function Dashboard() {
                 states implying it did something on click when it never
                 did. Changed to a <div role="status"> — same visual
                 treatment, honestly non-interactive. */}
-            <div className="mt-auto">
+            <div className="mt-auto" style={{ marginTop: 'auto' }}>
               {decisionMeta ? (
-                <div role="status" className={`w-full border py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 ${decisionMeta.colorClass}`}>
-                  <decisionMeta.icon size={24} /> [{decisionMeta.label}]
+                <div role="status" className={`w-full border rounded font-display text-sm tracking-widest flex items-center justify-center ${decisionMeta.colorClass}`} style={{ padding: '0.75rem 0', gap: '0.5rem' }}>
+                  <decisionMeta.icon size={18} /> [{decisionMeta.label}]
                 </div>
               ) : (
-                <div role="status" className="w-full border border-color text-muted py-4 rounded font-display text-xl tracking-widest flex items-center justify-center gap-2 opacity-60">
-                  <HelpCircle size={24} /> [AWAITING EVENT]
+                <div role="status" className="w-full border border-color text-muted rounded font-display text-sm tracking-widest flex items-center justify-center opacity-60" style={{ padding: '0.75rem 0', gap: '0.5rem' }}>
+                  <HelpCircle size={18} /> [AWAITING EVENT]
                 </div>
               )}
             </div>

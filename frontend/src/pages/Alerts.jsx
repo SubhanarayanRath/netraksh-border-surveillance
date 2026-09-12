@@ -151,7 +151,7 @@ export default function Alerts() {
         // has the same latent bug and is not touched here — see
         // docs/LIMITATIONS.md.
         <div className="flex gap-6 flex-grow" style={{ minHeight: 0 }}>
-          <div className="flex flex-col gap-4 overflow-y-auto pr-2" style={{ flex: '1 1 0%', minWidth: 0 }}>
+          <div className="flex flex-col overflow-y-auto pr-2 custom-scrollbar" style={{ flex: '1 1 0%', minWidth: 0, gap: '1rem' }}>
             {status === 'loading' && <div className="text-muted text-sm text-center mt-4">Loading real alerts…</div>}
             {status === 'error' && <div className="text-danger text-sm text-center mt-4">Could not reach the backend.</div>}
             {realAlerts.length === 0 && status === 'ready' && (
@@ -160,16 +160,36 @@ export default function Alerts() {
               </div>
             )}
             {displayAlerts.map(alert => (
-              <div key={alert.alert_id} className="bg-panel border border-danger rounded p-4 flex flex-col gap-3 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-1 h-full bg-danger"></div>
+              <div 
+                key={alert.alert_id} 
+                className="bg-panel border border-danger rounded flex flex-col relative overflow-hidden glow-danger"
+                style={{ 
+                  flexShrink: 0, 
+                  padding: '1.25rem', 
+                  gap: '0.75rem',
+                  background: 'linear-gradient(145deg, rgba(239,68,68,0.05) 0%, rgba(15,23,42,0.6) 100%)',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 8px 25px rgba(239,68,68,0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
+                }}
+              >
+                <div className="absolute top-0 left-0 w-1 h-full bg-danger" style={{ boxShadow: '0 0 10px rgba(239,68,68,0.8)' }}></div>
 
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="text-danger" size={20} />
                     <span className="text-danger font-display tracking-widest">#{alert.alert_id.split('-')[0]}</span>
-                    {alert.isMock && <span className="text-[9px] border border-muted text-muted rounded px-1">DEMO</span>}
+                    {alert.isMock && <span className="text-[9px] border border-muted text-muted rounded px-1" style={{ padding: '0.1rem 0.25rem' }}>DEMO</span>}
                   </div>
-                  <span className="bg-danger text-white text-[10px] px-2 py-1 rounded font-display tracking-widest">{alert.severity}</span>
+                  <span className="bg-danger text-white text-[10px] rounded font-display tracking-widest" style={{ padding: '0.25rem 0.5rem', boxShadow: '0 0 10px rgba(239,68,68,0.4)' }}>{alert.severity}</span>
                 </div>
 
                 <h3 className="text-lg font-display text-main">{alert.isMock ? alert.event_type : alertTitle(alert)}</h3>

@@ -135,8 +135,8 @@ export default function CameraManagement() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-6">
-      <div className="flex-col">
+    <div className="h-full flex flex-col" style={{ gap: '1.5rem', overflow: 'hidden' }}>
+      <div className="flex-col flex-shrink-0">
         <h2 className="text-xl font-display text-main tracking-widest uppercase">Camera Management</h2>
         <p className="text-sm font-body text-muted">
           Register cameras and set their real map coordinates — ADMIN role only, enforced by the
@@ -145,13 +145,13 @@ export default function CameraManagement() {
       </div>
 
       {status === 'auth-required' && (
-        <div className="max-w-xs bg-panel border rounded p-4">
+        <div className="max-w-xs bg-panel border rounded" style={{ padding: '1rem' }}>
           <LoginPrompt message="Sign in as ADMIN" onSuccess={loadCameras} />
         </div>
       )}
 
       {(status === 'forbidden' || (status === 'ready' && role !== 'ADMIN')) && (
-        <div className="max-w-md bg-panel border border-danger rounded p-4 flex items-center gap-3">
+        <div className="max-w-md bg-panel border border-danger rounded flex items-center" style={{ padding: '1rem', gap: '0.75rem' }}>
           <ShieldAlert size={24} className="text-danger flex-shrink-0" />
           <span className="text-sm font-body text-main">
             Signed in as <strong>{role}</strong> — this page is ADMIN-only. The backend already
@@ -165,79 +165,128 @@ export default function CameraManagement() {
       {status === 'error' && <div className="text-danger text-sm text-center mt-8">Could not reach the backend.</div>}
 
       {status === 'ready' && (
-        <div className="flex flex-col gap-6 overflow-y-auto pr-2">
-          <div className="bg-panel border rounded overflow-hidden">
-            <table className="w-full text-sm font-body">
-              <thead>
-                <tr className="text-left text-xs font-display text-muted uppercase border-b border-color">
-                  <th className="p-3">Camera</th>
-                  <th className="p-3">Location</th>
-                  <th className="p-3">Coordinates</th>
-                  <th className="p-3">Health</th>
-                  {role === 'ADMIN' && <th className="p-3"></th>}
-                </tr>
-              </thead>
-              <tbody>
-                {cameras.map((cam) => (
-                  <tr key={cam.camera_id} className="border-b border-color last:border-b-0">
-                    <td className="p-3 text-main">{cam.name}<div className="text-xs text-muted">{cam.camera_id}</div></td>
-                    <td className="p-3 text-muted">{cam.location}</td>
-                    <td className="p-3">
-                      {editingId === cam.camera_id ? (
-                        <div className="flex flex-col gap-1">
-                          <div className="flex gap-1">
-                            <input value={editLat} onChange={(e) => setEditLat(e.target.value)} placeholder="lat" className="w-20 bg-dark border border-color rounded px-1.5 py-1 text-xs text-main" />
-                            <input value={editLon} onChange={(e) => setEditLon(e.target.value)} placeholder="lon" className="w-20 bg-dark border border-color rounded px-1.5 py-1 text-xs text-main" />
-                            <button onClick={() => saveLocation(cam.camera_id)} disabled={saving} className="text-ok border border-ok rounded px-2 hover:bg-[rgba(74,222,128,0.1)] disabled:opacity-50">
-                              <Save size={14} />
-                            </button>
+        <div className="flex h-full min-h-0" style={{ gap: '1.5rem' }}>
+          
+          {/* Main Table Column */}
+          <div className="flex-grow flex flex-col border rounded overflow-hidden" style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="overflow-y-auto h-full relative custom-scrollbar">
+              <table className="w-full text-sm font-body border-collapse">
+                <thead className="sticky top-0 z-10" style={{ background: 'rgba(10,15,13,0.95)', backdropFilter: 'blur(8px)' }}>
+                  <tr className="text-left text-xs font-display text-muted uppercase border-b border-color">
+                    <th style={{ padding: '1rem' }}>Camera Node</th>
+                    <th style={{ padding: '1rem' }}>Location</th>
+                    <th style={{ padding: '1rem' }}>Coordinates (Lat, Lon)</th>
+                    <th style={{ padding: '1rem' }}>Edge Health</th>
+                    {role === 'ADMIN' && <th style={{ padding: '1rem' }}>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cameras.map((cam) => (
+                    <tr key={cam.camera_id} className="border-b border-color last:border-b-0 hover:bg-[rgba(255,255,255,0.02)] transition-colors group">
+                      <td style={{ padding: '1rem' }}>
+                        <div className="font-bold text-main tracking-wide">{cam.name}</div>
+                        <div className="text-xs text-muted font-display tracking-widest uppercase">{cam.camera_id}</div>
+                      </td>
+                      <td className="text-muted" style={{ padding: '1rem' }}>{cam.location}</td>
+                      <td style={{ padding: '1rem' }}>
+                        {editingId === cam.camera_id ? (
+                          <div className="flex flex-col" style={{ gap: '0.5rem' }}>
+                            <div className="flex items-center" style={{ gap: '0.5rem' }}>
+                              <input value={editLat} onChange={(e) => setEditLat(e.target.value)} placeholder="lat" className="w-24 bg-dark border border-color rounded text-xs text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.35rem 0.5rem' }} />
+                              <input value={editLon} onChange={(e) => setEditLon(e.target.value)} placeholder="lon" className="w-24 bg-dark border border-color rounded text-xs text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.35rem 0.5rem' }} />
+                              <button onClick={() => saveLocation(cam.camera_id)} disabled={saving} className="text-ok border border-ok rounded hover:bg-[rgba(74,222,128,0.1)] transition-colors disabled:opacity-50 flex items-center justify-center" style={{ padding: '0.35rem 0.75rem', gap: '0.25rem' }}>
+                                <Save size={14} /> <span className="text-xs uppercase font-display">Save</span>
+                              </button>
+                            </div>
+                            {saveError && <span className="text-[10px] text-danger font-display tracking-widest uppercase">{saveError}</span>}
                           </div>
-                          {saveError && <span className="text-[10px] text-danger">{saveError}</span>}
-                        </div>
-                      ) : (
-                        <span className="text-muted">
-                          {cam.latitude != null ? `${cam.latitude.toFixed(4)}, ${cam.longitude.toFixed(4)}` : 'not set'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <span className={cam.health_state === 'OK' ? 'text-ok' : cam.health_state === 'DEGRADED' ? 'text-warning' : cam.health_state === 'FAILED' ? 'text-danger' : 'text-muted'}>
-                        {cam.health_state || 'no data yet'}
-                      </span>
-                    </td>
-                    {role === 'ADMIN' && (
-                      <td className="p-3">
-                        {editingId !== cam.camera_id && (
-                          <button onClick={() => startEdit(cam)} className="text-muted hover:text-main flex items-center gap-1 text-xs">
-                            <MapPin size={14} /> Set location
-                          </button>
+                        ) : (
+                          <span className="text-muted font-mono text-xs opacity-80 group-hover:opacity-100 transition-opacity">
+                            {cam.latitude != null ? `${cam.latitude.toFixed(4)}, ${cam.longitude.toFixed(4)}` : '— not set —'}
+                          </span>
                         )}
                       </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <td style={{ padding: '1rem' }}>
+                        <div className="flex items-center">
+                          <div className={`px-2 py-0.5 rounded text-[10px] font-display uppercase tracking-widest border ${
+                            cam.health_state === 'OK' ? 'bg-[rgba(74,222,128,0.1)] text-ok border-ok' : 
+                            cam.health_state === 'DEGRADED' ? 'bg-[rgba(251,191,36,0.1)] text-warning border-warning' : 
+                            cam.health_state === 'FAILED' ? 'bg-[rgba(248,113,113,0.1)] text-danger border-danger' : 
+                            'bg-[rgba(255,255,255,0.05)] text-muted border-muted'
+                          }`}>
+                            {cam.health_state || 'NO DATA'}
+                          </div>
+                        </div>
+                      </td>
+                      {role === 'ADMIN' && (
+                        <td style={{ padding: '1rem' }}>
+                          <div className="flex items-center justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                            {editingId !== cam.camera_id && (
+                              <button onClick={() => startEdit(cam)} className="text-ok hover:text-main flex items-center gap-1 text-xs border border-transparent hover:border-color rounded px-2 py-1 transition-all">
+                                <MapPin size={14} /> Set Location
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {/* Empty state padding row to ensure nothing is clipped at the bottom */}
+                  {cameras.length > 0 && (
+                    <tr><td colSpan={5} style={{ height: '2rem' }}></td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
+          {/* Right Side Panel - Registration */}
           {role === 'ADMIN' && (
-            <div className="bg-panel border rounded p-6 max-w-lg">
-              <div className="flex items-center gap-2 mb-4">
-                <Plus size={18} className="text-ok" />
-                <span className="font-display text-main uppercase">Register New Camera</span>
-              </div>
-              <form onSubmit={registerCamera} className="flex flex-col gap-3">
-                <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name (e.g. Border Post Gamma)" className="bg-dark border border-color rounded px-3 py-2 text-sm text-main" />
-                <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Location (e.g. Sector 9)" className="bg-dark border border-color rounded px-3 py-2 text-sm text-main" />
-                <div className="flex gap-2">
-                  <input value={newLat} onChange={(e) => setNewLat(e.target.value)} placeholder="Latitude (optional)" className="flex-1 bg-dark border border-color rounded px-3 py-2 text-sm text-main" />
-                  <input value={newLon} onChange={(e) => setNewLon(e.target.value)} placeholder="Longitude (optional)" className="flex-1 bg-dark border border-color rounded px-3 py-2 text-sm text-main" />
+            <div className="flex-shrink-0 flex flex-col border rounded relative overflow-hidden" style={{ width: '22rem', background: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              {/* Header */}
+              <div className="border-b border-color flex items-center" style={{ padding: '1.25rem', gap: '0.75rem', background: 'rgba(0,0,0,0.2)' }}>
+                <div className="bg-[rgba(74,222,128,0.1)] p-1.5 rounded text-ok">
+                  <Plus size={18} />
                 </div>
-                {registerError && <span className="text-xs text-danger">{registerError}</span>}
-                <button type="submit" disabled={registering} className="bg-white hover:bg-gray-200 text-black py-2 rounded font-display text-sm uppercase tracking-widest disabled:opacity-50">
-                  {registering ? 'Registering…' : 'Register Camera'}
-                </button>
-              </form>
+                <div className="flex flex-col">
+                  <span className="font-display font-bold text-main uppercase tracking-widest text-sm">Register Node</span>
+                  <span className="text-[10px] font-display text-muted uppercase tracking-widest">Provision new camera</span>
+                </div>
+              </div>
+              
+              {/* Form */}
+              <div style={{ padding: '1.5rem' }}>
+                <form onSubmit={registerCamera} className="flex flex-col" style={{ gap: '1rem' }}>
+                  
+                  <div className="flex flex-col" style={{ gap: '0.25rem' }}>
+                    <label className="text-[10px] font-display text-muted uppercase tracking-widest ml-1">Node Identifier</label>
+                    <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Border Post Gamma" className="w-full bg-dark border border-color rounded text-sm text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.6rem 0.75rem' }} />
+                  </div>
+                  
+                  <div className="flex flex-col" style={{ gap: '0.25rem' }}>
+                    <label className="text-[10px] font-display text-muted uppercase tracking-widest ml-1">Physical Location</label>
+                    <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="e.g. Sector 9" className="w-full bg-dark border border-color rounded text-sm text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.6rem 0.75rem' }} />
+                  </div>
+                  
+                  <div className="flex flex-col" style={{ gap: '0.25rem' }}>
+                    <label className="text-[10px] font-display text-muted uppercase tracking-widest ml-1">Initial Coordinates (Optional)</label>
+                    <div className="flex" style={{ gap: '0.5rem' }}>
+                      <input value={newLat} onChange={(e) => setNewLat(e.target.value)} placeholder="Lat" className="flex-1 bg-dark border border-color rounded text-sm text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.6rem 0.75rem' }} />
+                      <input value={newLon} onChange={(e) => setNewLon(e.target.value)} placeholder="Lon" className="flex-1 bg-dark border border-color rounded text-sm text-main focus:outline-none focus:border-ok transition-colors" style={{ padding: '0.6rem 0.75rem' }} />
+                    </div>
+                  </div>
+
+                  {registerError && (
+                    <div className="text-[10px] font-display text-danger uppercase tracking-widest border border-danger rounded bg-[rgba(248,113,113,0.05)] mt-2" style={{ padding: '0.5rem' }}>
+                      {registerError}
+                    </div>
+                  )}
+                  
+                  <button type="submit" disabled={registering} className="w-full bg-main hover:bg-white text-black transition-colors rounded font-display text-sm font-bold uppercase tracking-widest disabled:opacity-50 mt-2" style={{ padding: '0.75rem' }}>
+                    {registering ? 'Provisioning...' : 'Provision Node'}
+                  </button>
+                </form>
+              </div>
             </div>
           )}
         </div>
