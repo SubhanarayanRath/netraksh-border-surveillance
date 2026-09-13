@@ -20,7 +20,7 @@ This is a **CPU-only software prototype**. It runs entirely on local compute wit
 *   No live physical cameras are used in the demo. Both edge pipelines ingest from a local `vtest.avi` video file to guarantee repeatable detections during judging. The adapter supports RTSP out-of-the-box, but the demo strictly uses static video.
 *   No GPU hardware acceleration. All performance metrics shown in the dashboard are real `perf_counter()` timings measured on the local CPU prototype.
 
-## How to Run the Demo
+## How to  Run the Demo
 
 **Prerequisites:**
 - Python 3.10+ installed and on your `PATH`.
