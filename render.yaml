@@ -37,7 +37,3 @@ services:
         value: "http://localhost:${PORT:-8443}"
       - key: VIDEO_SOURCE
         value: "demo/videos/vtest.avi"
-    disk:
-      name: netraksh-data
-      mountPath: /app/edge/data
-      sizeGB: 1
