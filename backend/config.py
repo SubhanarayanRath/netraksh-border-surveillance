@@ -2,7 +2,7 @@
 NETRAKSH Backend — Application settings loaded from environment / .env file.
 All secrets come from environment variables. No hardcoded credentials.
 """
-from typing import Any, Union
+from typing import Any, Union, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
