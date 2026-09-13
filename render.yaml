@@ -28,10 +28,16 @@ services:
       - key: COMMAND_ID
         value: COMMAND_A
       - key: DATABASE_URL
-        fromDatabase:
-          name: netraksh-db
-          property: connectionString
-
-databases:
-  - name: netraksh-db
-    plan: free
+        value: "postgresql://postgres:Subham987%40%40@db.ngwcqdkmjevfakeclqbz.supabase.co:5432/postgres"
+      - key: CORS_ORIGINS
+        value: "https://netraksh.vercel.app"
+      - key: FRONTEND_ORIGIN
+        value: "https://netraksh.vercel.app"
+      - key: BACKEND_URL
+        value: "http://localhost:${PORT:-8443}"
+      - key: VIDEO_SOURCE
+        value: "demo/videos/vtest.avi"
+    disk:
+      name: netraksh-data
+      mountPath: /app/edge/data
+      sizeGB: 1

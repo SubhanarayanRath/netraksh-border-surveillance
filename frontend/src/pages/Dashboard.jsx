@@ -3,7 +3,7 @@ import { ShieldCheck, HelpCircle, ShieldAlert, CheckCircle, GitMerge } from 'luc
 import VideoFeed from '../components/VideoFeed';
 import useWebSocket from '../hooks/useWebSocket';
 import useDemoScenario from '../hooks/useDemoScenario';
-import { WS_URL, authFetch } from '../services/auth';
+import { WS_URL, BACKEND_URL, authFetch } from '../services/auth';
 import { parseUtc } from '../utils/time';
 
 // Parses the REAL decision_reason string edge/reliability/decision.py writes,
@@ -77,9 +77,10 @@ export default function Dashboard() {
   // behind a video upload. Until the operator loads a demo video, all
   // WebSocket events are suppressed from the UI so the jury sees a clean
   // "waiting for feed" state rather than automatic analysis on nothing.
-  const [mediaUrl, setMediaUrl] = useState(null);
-  const [mediaType, setMediaType] = useState(null);
+  const [mediaUrl, setMediaUrl] = useState(`${BACKEND_URL}/demo/videos/uploaded_demo.mp4`);
+  const [mediaType, setMediaType] = useState('video');
   const [isUploading, setIsUploading] = useState(false);
+  const [sessionStartTime, setSessionStartTime] = useState(0);
   const fileInputRef = useRef(null);
 
   const handleFileUpload = async (e) => {
@@ -89,6 +90,7 @@ export default function Dashboard() {
       setMediaUrl(URL.createObjectURL(file));
       setMediaType(file.type.startsWith('video/') ? 'video' : 'image');
       // Reset events so fresh analysis starts from the new upload
+      setSessionStartTime(Date.now());
       setLatestEvent(null);
 
       if (file.type.startsWith('video/')) {
@@ -117,11 +119,12 @@ export default function Dashboard() {
   const triggerUpload = () => fileInputRef.current?.click();
 
   // Only accept events once the operator has loaded a demo feed
+  const demoEvents = events.filter(e => new Date(e.timestamp).getTime() >= sessionStartTime);
   useEffect(() => {
-    if (mediaUrl && events.length > 0) {
-      setLatestEvent(events[0]);
+    if (mediaUrl && demoEvents.length > 0) {
+      setLatestEvent(demoEvents[0]);
     }
-  }, [events, mediaUrl]);
+  }, [demoEvents, mediaUrl]);
 
   const parsed = latestEvent ? parseDecisionReason(latestEvent.decision_reason) : null;
   // Prefer the live per-camera health push (real, arrives roughly every 5s
@@ -245,10 +248,10 @@ export default function Dashboard() {
             <div className="overflow-y-auto flex flex-col gap-2 flex-grow pr-2">
               {!mediaUrl ? (
                 <div className="text-muted text-sm text-center mt-4">Upload a demo video to begin analysis</div>
-              ) : events.length === 0 ? (
+              ) : demoEvents.length === 0 ? (
                 <div className="text-muted text-sm text-center mt-4">Waiting for events...</div>
               ) : (
-                events.map((ev, i) => (
+                demoEvents.map((ev, i) => (
                   <div key={i} className="flex gap-4 text-sm font-body">
                     <span className="text-muted w-20">{parseUtc(ev.timestamp).toISOString().substring(11, 19)}</span>
                     <span className={i === 0 ? 'text-ok' : 'text-main'}>

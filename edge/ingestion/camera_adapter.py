@@ -86,17 +86,31 @@ class CameraAdapter:
                 return
 
         frame_index = 0
-        interval = 1.0 / self._fps_declared if self._fps_declared > 0 else 0.04
+        start_real_time = time.time()
+        start_video_msec = self._cap.get(cv2.CAP_PROP_POS_MSEC) if self._cap else 0.0
 
         while True:
             ret, frame = self._cap.read()
             if not ret:
                 # End of file — loop for demo purposes
                 self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                start_real_time = time.time()
+                start_video_msec = 0.0
                 ret, frame = self._cap.read()
                 if not ret:
                     logger.warning("Cannot read frame — stream ended")
                     break
+
+            if self._cap:
+                current_msec = self._cap.get(cv2.CAP_PROP_POS_MSEC)
+                expected_msec = start_video_msec + ((time.time() - start_real_time) * 1000.0)
+                
+                # If we are behind real time, drop the frame and read the next one to catch up
+                if current_msec < expected_msec - 50:
+                    continue
+                # If we are ahead of real time, wait
+                elif current_msec > expected_msec + 10:
+                    time.sleep((current_msec - expected_msec) / 1000.0)
 
             # Frozen camera simulation: always return the first frame
             if self.simulate_frozen:
@@ -119,7 +133,6 @@ class CameraAdapter:
             )
             yield frame, meta
             frame_index += 1
-            time.sleep(interval)
 
     def release(self) -> None:
         if self._cap:

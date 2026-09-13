@@ -303,6 +303,11 @@ class EdgePipeline:
             self._running = False
             self.adapter.release()
 
+    def stop(self) -> None:
+        """Gracefully stop the pipeline."""
+        logger.info(f"[Pipeline] Stopping frame loop for camera {self.camera_id}")
+        self._running = False
+
     def _run_telemetry_loop(self) -> None:
         """Background thread for pushing live telemetry to the backend."""
         import httpx
@@ -565,6 +570,11 @@ class EdgePipeline:
                     "bbox_w": t.bbox.width / frame_w if frame_w > 0 else 0,
                     "bbox_h": t.bbox.height / frame_h if frame_h > 0 else 0,
                 })
+            
+            if self._telemetry_sequence % 20 == 0 and tracks:
+                logger.info(f"[DEBUG-TRACE] SEQ={self._telemetry_sequence} FRAME_W={frame_w} FRAME_H={frame_h} VIDEO_TIME={meta.video_time_seconds}")
+                for t in tracks:
+                    logger.info(f"[DEBUG-TRACE] TRACK={t.track_id} ORIGINAL=[{t.bbox.x1:.1f}, {t.bbox.y1:.1f}, {t.bbox.x2:.1f}, {t.bbox.y2:.1f}] NORMALIZED=[{t.bbox.x1/frame_w:.3f}, {t.bbox.y1/frame_h:.3f}, {t.bbox.width/frame_w:.3f}, {t.bbox.height/frame_h:.3f}]")
             payload = {
                 "camera_id": self.camera_id,
                 "timestamp": time.time(),

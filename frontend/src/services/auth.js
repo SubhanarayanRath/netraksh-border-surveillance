@@ -28,11 +28,12 @@ export const AUTH_CHANGE_EVENT = 'netraksh-auth-change';
 // see backend/main.py's StaticFiles mount), so this resolves correctly
 // whether the app is opened as http://localhost:8443 in dev or as a real
 // https://<domain> once deployed, with no build-time config needed.
-export const BACKEND_URL = window.location.origin;
-export const WS_URL =
-  (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
-  window.location.host +
-  '/ws/dashboard';
+// For decoupled deployments (Vercel frontend, Render backend), VITE_ variables are used.
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (isLocal ? window.location.origin : 'https://netraksh.onrender.com');
+export const WS_URL = import.meta.env.VITE_WS_URL || (isLocal ? 
+  ((window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/dashboard') : 
+  'wss://netraksh.onrender.com/ws/dashboard');
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);

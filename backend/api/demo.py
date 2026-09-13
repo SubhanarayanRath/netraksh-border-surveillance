@@ -38,7 +38,7 @@ router = APIRouter(prefix="/demo", tags=["demo"])
 # In-memory scenario state — a plain dict so any import of this module
 # shares the same object.  Resets to 'normal' on each server restart.
 # ---------------------------------------------------------------------------
-_state: dict = {"scenario": "normal", "video_source": None}
+_state: dict = {"scenario": "normal", "video_source": "demo/videos/uploaded_demo.mp4"}
 
 _VALID_SCENARIOS = frozenset({"normal", "fog", "failure", "offline"})
 

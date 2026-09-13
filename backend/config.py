@@ -74,20 +74,29 @@ class Settings(BaseSettings):
 
     # --- Frontend CORS ---
     CORS_ORIGINS: Union[list[str], str] = []
+    FRONTEND_ORIGIN: Optional[str] = None
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Any, info) -> Any:
         # Access the ENV value from the pydantic ValidationInfo
         env = info.data.get("ENV", "production")
+        frontend_origin = info.data.get("FRONTEND_ORIGIN")
+        
+        origins = []
         if isinstance(v, list):
-            return v
-        if not v or not v.strip():
+            origins.extend(v)
+        elif v and v.strip():
+            origins.extend([i.strip() for i in v.split(",") if i.strip()])
+            
+        if frontend_origin and frontend_origin.strip():
+            origins.append(frontend_origin.strip())
+            
+        if not origins:
             if env == "development":
                 return ["http://localhost:5173", "http://localhost:3000", "https://localhost:5173"]
             return []
         
-        origins = [i.strip() for i in v.split(",") if i.strip()]
         if "*" in origins:
             raise ValueError("Wildcard '*' CORS is strictly prohibited.")
         return origins

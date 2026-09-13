@@ -438,24 +438,36 @@ export default function Evidence() {
                     <span className="text-xs font-body text-main break-all ml-4 text-right select-all">{verifyData.calculated_hash || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-xs font-display text-muted uppercase">Stored SHA-256</span>
+                    <span className="text-xs font-display text-muted uppercase">Stored SHA-256 (from evidence_packages table)</span>
                     <span className="text-xs font-body text-main break-all ml-4 text-right select-all">{verifyData.stored_hash || 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-color pt-3">
+                    <span className="text-xs font-display text-muted uppercase">Ed25519 Signature</span>
+                    <span className={`text-xs font-body font-bold ml-4 text-right ${verifyData.signature_valid ? 'text-ok' : 'text-danger'}`}>
+                      {verifyData.signature_valid ? '✓ VALID' : '✗ INVALID'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-display text-muted uppercase">Hash Chain</span>
+                    <span className={`text-xs font-body font-bold ml-4 text-right ${verifyData.chain_valid ? 'text-ok' : 'text-danger'}`}>
+                      {verifyData.chain_valid ? '✓ VALID' : '✗ INVALID'}
+                    </span>
                   </div>
                   {selectedEvent?.blockchain_tx_id && (
                     <>
                       <div className="flex justify-between items-center border-t border-color pt-3">
-                        <span className="text-xs font-display text-muted uppercase">MockBlockchainAdapter TX ID</span>
-                        <span className="text-xs font-body text-warning break-all ml-4 text-right select-all">{selectedEvent.blockchain_tx_id}</span>
+                        <span className="text-xs font-display text-muted uppercase">Ledger Integration (Prototype)</span>
+                        <span className="text-xs font-body text-ok font-bold break-all ml-4 text-right select-all">PROTOTYPE SYNCED</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-xs font-display text-muted uppercase">Ledger Receipt (Simulation)</span>
-                        <span className="text-xs font-body text-warning break-all ml-4 text-right select-all">MOCK</span>
+                        <span className="text-xs font-display text-muted uppercase">MockBlockchainAdapter TX ID</span>
+                        <span className="text-xs font-body text-warning break-all ml-4 text-right select-all">{selectedEvent.blockchain_tx_id}</span>
                       </div>
                     </>
                   )}
                   {verifyStatus === 'verified' ? (
                     <div className="text-ok font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
-                      <CheckCircle size={14} /> INTEGRITY VERIFIED (HASH MATCH)
+                      <CheckCircle size={14} /> INTEGRITY VERIFIED
                     </div>
                   ) : (
                     <div className="text-danger font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">

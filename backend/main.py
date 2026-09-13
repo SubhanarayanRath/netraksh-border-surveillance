@@ -92,8 +92,8 @@ def _seed_demo_data(db) -> None:
         name="Border Fence Zone",
         zone_type="fence",
         polygon_json=json.dumps([
-            {"x": 0.1, "y": 0.4}, {"x": 0.9, "y": 0.4},
-            {"x": 0.9, "y": 0.6}, {"x": 0.1, "y": 0.6}
+            {"x": 0.05, "y": 0.1}, {"x": 0.95, "y": 0.1},
+            {"x": 0.95, "y": 0.9}, {"x": 0.05, "y": 0.9}
         ]),
         owning_command_id="COMMAND_A",
         adjacent_command_id="COMMAND_B",  # → cross-command escalation eligible
@@ -159,6 +159,10 @@ from pathlib import Path
 frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+demo_videos_path = Path(__file__).resolve().parent.parent / "demo" / "videos"
+if demo_videos_path.exists():
+    app.mount("/demo/videos", StaticFiles(directory=demo_videos_path), name="demo_videos")
     
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):

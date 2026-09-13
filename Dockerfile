@@ -14,29 +14,35 @@ COPY frontend/ ./
 RUN ["npm", "run", "build"]
 
 # --- Stage 2: the actual runtime image ---
-# This container only ever runs backend.main:app — it never imports edge
-# code (that runs on a separate physical device in the real architecture).
-# requirements-backend.txt is a verified-minimal subset of the full
-# requirements.txt (which also carries ultralytics/opencv/easyocr/
-# retina-face for the edge process) — confirmed by actually installing it
-# into a clean venv and importing backend.main successfully, not guessed.
-# No CV/ML system deps (libgl1 etc.) needed here for the same reason.
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-COPY requirements-backend.txt ./
-RUN ["pip", "install", "--no-cache-dir", "-r", "requirements-backend.txt"]
+# Install system dependencies required for OpenCV and other edge ML libraries
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install full requirements since the container runs both edge and backend for the prototype demo
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY shared/ ./shared/
+COPY edge/ ./edge/
+COPY demo/ ./demo/
+COPY certs/ ./certs/
+COPY scripts/ ./scripts/
+COPY start.sh ./
+RUN chmod +x start.sh
+
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-# Real secrets (SECRET_KEY, ADMIN_PASSWORD, DATABASE_URL, etc.) MUST be
-# supplied by the hosting platform's environment variables at deploy time —
-# see docs/LIMITATIONS.md's pre-live-deployment checklist. Nothing sensitive
-# is baked into this image.
+# Ensure the data directories exist for the Render Disk mount
+RUN mkdir -p /app/edge/data /app/demo/videos
+
 ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=8443
 EXPOSE 8443
 
-CMD sh -c "python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8443}"
+CMD ["./start.sh"]

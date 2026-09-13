@@ -54,10 +54,16 @@ export default function useWebSocket(url) {
             const tel = data.telemetry;
             const cid = tel.camera_id;
             if (lastSequence.current[cid] && tel.sequence <= lastSequence.current[cid]) {
-              return; // Out of order or duplicate
+              // If the sequence drops significantly (e.g. pipeline restart), accept it and reset
+              if (lastSequence.current[cid] - tel.sequence > 100) {
+                  lastSequence.current[cid] = tel.sequence;
+              } else {
+                  return; // Out of order or duplicate
+              }
+            } else {
+              lastSequence.current[cid] = tel.sequence;
             }
-            lastSequence.current[cid] = tel.sequence;
-            setLiveTracks(prev => ({ ...prev, [cid]: { timestamp: Date.now(), tracks: tel.tracks } }));
+            setLiveTracks(prev => ({ ...prev, [cid]: { timestamp: Date.now(), sequence: tel.sequence, tracks: tel.tracks, video_time: tel.video_time, frame_width: tel.frame_width, frame_height: tel.frame_height } }));
           }
         } catch (err) {
           console.error("WebSocket parsing error", err);
