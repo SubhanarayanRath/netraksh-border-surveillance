@@ -5,6 +5,7 @@
 echo "Starting Edge Pipeline in the background..."
 # We run the demo runner which polls for /demo/scenario changes.
 # This allows video uploads via the frontend to trigger an edge restart.
+export BACKEND_URL="http://localhost:${PORT:-8443}"
 python edge/demo_runner.py &
 
 echo "Starting FastAPI Backend..."
