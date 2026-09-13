@@ -6,15 +6,9 @@
 *.sqlite3
 frontend/node_modules
 frontend/dist
-# The runtime image never copies these in (Dockerfile only COPYs backend/,
-# shared/, and the built frontend) — excluded from the build context too,
-# not just unused, so the context upload itself is fast.
-edge/
-demo/
-scripts/
+# The runtime image copies these in now for the unified prototype demo.
 tests/
 docs/
-certs/
 yolov8n.pt
 .pytest_cache
 __pycache__
