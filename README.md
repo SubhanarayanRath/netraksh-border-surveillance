@@ -10,7 +10,7 @@ This is a **CPU-only software prototype**. It runs entirely on local compute wit
 
 **What is actually implemented:**
 *   **Edge Pipeline:** Runs YOLOv8n object detection on a CPU, followed by ByteTrack for tracking.
-*   **Reliability Engine:** Calculates a dynamic reliability score (`R = 0.40D + 0.20T + 0.20S + 0.20H`) taking into account detection confidence, track continuity, scene conditions (e.g., fog), and hardware health (e.g., frozen frames).
+*   **Reliability Engine:** Calculates a dynamic reliability score (`R = 0.40D + 0.20T + 0.20S + 0.20H`)taking into account detection confidence, track continuity, scene conditions (e.g., fog), and hardware health (e.g., frozen frames).
 *   **Two-Camera Corroboration:** The architecture is built to support multiple cameras. The demo instantiates 2 parallel edge pipelines (`cam-border-01` and `cam-checkpoint-01`). If both cameras detect the same class within a plausible travel-time window, the event receives a cross-camera temporal/spatial corroboration boost (`Tc`). *Note: This is strictly spatial/temporal plausibility, not identity re-identification.*
 *   **Cryptographic Evidence:** Every event is packaged at the edge with its source frame, hashed (SHA-256), and appended to a local SQLite hash-chain ledger to guarantee temporal sequence integrity.
 *   **Offline-First Sync:** If the network fails, events queue locally on the edge. When connectivity is restored, they are uploaded in priority-order (HIGH severity first).
