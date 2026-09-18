@@ -21,13 +21,15 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import httpx
 
-from shared.schemas import EvidencePackage, EventCreateRequest
+from shared.constants import ErrorCategory
+from shared.schemas import EventCreateRequest, EvidencePackage
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,10 @@ class SyncClient:
         client_cert_path: Optional[str] = None,
         client_key_path: Optional[str] = None,
     ):
+        import re
+        if not edge_device_id or not re.match(r"^[A-Za-z0-9_-]+$", edge_device_id):
+            raise ValueError(f"Invalid edge_device_id '{edge_device_id}': must contain only alphanumeric characters, dashes, and underscores.")
+
         self.edge_device_id = edge_device_id
         self.backend_url = backend_url.rstrip("/")
         self.db_path = db_path
@@ -154,6 +160,52 @@ class SyncClient:
             row = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status='QUEUED'").fetchone()
         return row[0] if row else 0
 
+    def get_diagnostics(self) -> dict:
+        """
+        Read-only diagnostic snapshot of the sync queue.
+        NEVER mutates the queue or blocks fairness.
+        """
+        with self._get_conn() as conn:
+            queued = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status='QUEUED'").fetchone()[0]
+            failed = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status='FAILED'").fetchone()[0]
+            synced = conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status='SYNCED'").fetchone()[0]
+            
+            oldest_queued_row = conn.execute(
+                "SELECT sequence_number, queued_at FROM sync_queue WHERE status='QUEUED' ORDER BY queued_at ASC LIMIT 1"
+            ).fetchone()
+            
+            oldest_seq = oldest_queued_row[0] if oldest_queued_row else None
+            oldest_queued_at = oldest_queued_row[1] if oldest_queued_row else None
+            
+            severity_dist = {}
+            for row in conn.execute("SELECT severity_rank, COUNT(*) FROM sync_queue WHERE status='QUEUED' GROUP BY severity_rank").fetchall():
+                severity_dist[row[0]] = row[1]
+                
+            last_failed_row = conn.execute(
+                "SELECT error, last_attempt FROM sync_queue WHERE status IN ('FAILED', 'QUEUED') AND error IS NOT NULL ORDER BY last_attempt DESC LIMIT 1"
+            ).fetchone()
+            last_error = last_failed_row[0] if last_failed_row else None
+            
+            last_synced_row = conn.execute(
+                "SELECT last_attempt FROM sync_queue WHERE status='SYNCED' ORDER BY last_attempt DESC LIMIT 1"
+            ).fetchone()
+            last_synced_at = last_synced_row[0] if last_synced_row else None
+            
+            total_retries = conn.execute("SELECT SUM(attempts) FROM sync_queue WHERE attempts > 1").fetchone()[0] or 0
+            
+        return {
+            "queued_count": queued,
+            "failed_count": failed,
+            "synced_count": synced,
+            "severity_distribution": severity_dist,
+            "oldest_sequence": oldest_seq,
+            "oldest_queued_at": oldest_queued_at,
+            "last_error": last_error,
+            "last_synced_at": last_synced_at,
+            "total_retries": total_retries,
+            "is_online": self.is_online
+        }
+
     def sync_once(self) -> dict:
         """
         Attempt one sync cycle: fetch pending, upload in order.
@@ -172,20 +224,20 @@ class SyncClient:
         failures = 0
 
         for row_id, seq_num, event_id, payload_json in pending:
-            success, error = self._upload(payload_json, seq_num)
-            self._mark(row_id, success, error)
+            success, is_permanent, error = self._upload(payload_json, seq_num)
+            self._mark(row_id, success, error, is_permanent=is_permanent)
             if success:
                 successes += 1
             else:
                 failures += 1
-                # Stop batch on first failure — unchanged behavior, now
-                # applied to the priority-ordered result set: if the
-                # highest-priority pending event fails, lower-priority ones
-                # behind it in this batch are retried next cycle rather than
-                # skipped ahead of. This is a deliberately conservative,
-                # inherited tradeoff, not something this change re-decided.
-                logger.warning(f"[Sync] Upload failed at seq={seq_num} — stopping batch")
-                break
+                if is_permanent:
+                    logger.warning(f"[Sync] Upload permanently failed at seq={seq_num} (Error: {error}) — skipping item but continuing batch")
+                    continue
+                else:
+                    # Stop batch on first transient failure — inherited tradeoff.
+                    # Retries next cycle.
+                    logger.warning(f"[Sync] Upload transiently failed at seq={seq_num} (Error: {error}) — stopping batch")
+                    break
 
         self._is_online = failures == 0
         return {
@@ -209,47 +261,164 @@ class SyncClient:
 
     def _fetch_pending(self) -> list:
         """
-        Priority-ordered (architecture v4 §10): severity_rank DESC first, so
-        a HIGH-severity event queued behind older LOW-severity ones syncs
-        first once bandwidth returns; sequence_number ASC breaks ties within
-        the same severity, preserving FIFO order among equal-priority events.
+        Priority-ordered (architecture v4 §10) with Bounded Fairness:
+        For batch_size >= 2, reserves 1 slot for the absolute oldest QUEUED record
+        (by queued_at ASC, sequence_number ASC) to prevent starvation of lower
+        priority events. The remaining slots use strict priority 
+        (severity_rank DESC, sequence_number ASC).
         """
+        if self.batch_size <= 1:
+            prio_limit = self.batch_size
+            fair_limit = 0
+        else:
+            prio_limit = self.batch_size - 1
+            fair_limit = 1
+
         with self._get_conn() as conn:
-            rows = conn.execute(
+            prio_rows = conn.execute(
                 """SELECT id, sequence_number, event_id, payload_json
                    FROM sync_queue
                    WHERE status='QUEUED'
                    ORDER BY severity_rank DESC, sequence_number ASC
                    LIMIT ?""",
-                (self.batch_size,),
+                (prio_limit,),
             ).fetchall()
-        return rows
 
-    def _upload(self, payload_json: str, seq_num: int) -> tuple[bool, Optional[str]]:
-        """Upload a single event to the backend. Returns (success, error_message)."""
+            if fair_limit > 0:
+                prio_ids = [r[0] for r in prio_rows]
+                if prio_ids:
+                    placeholders = ",".join("?" for _ in prio_ids)
+                    fair_rows = conn.execute(
+                        f"""SELECT id, sequence_number, event_id, payload_json
+                            FROM sync_queue
+                            WHERE status='QUEUED' AND id NOT IN ({placeholders})
+                            ORDER BY queued_at ASC, sequence_number ASC
+                            LIMIT ?""",
+                        prio_ids + [fair_limit],
+                    ).fetchall()
+                else:
+                    fair_rows = conn.execute(
+                        """SELECT id, sequence_number, event_id, payload_json
+                           FROM sync_queue
+                           WHERE status='QUEUED'
+                           ORDER BY queued_at ASC, sequence_number ASC
+                           LIMIT ?""",
+                        (fair_limit,),
+                    ).fetchall()
+            else:
+                fair_rows = []
+
+        return prio_rows + fair_rows
+    def _upload(self, payload_json: str, seq_num: int) -> tuple[bool, bool, Optional[str]]:
+        """Upload a single event to the backend in two stages. Returns (success, is_permanent, error_message)."""
+        import json
+        import hashlib
+        
         try:
-            verify: object = self._ca_cert or True
+            print(f"DEBUG: STARTING UPLOAD seq_num={seq_num}")
+            payload_dict = json.loads(payload_json)
+            ep_dict = payload_dict.get("evidence_package", {})
+            event_id = ep_dict.get("event_id")
+            evidence_clip_ref = ep_dict.get("evidence_clip_ref")
+        except json.JSONDecodeError:
+            return False, True, f"[{ErrorCategory.EVIDENCE_ERROR.value}] Failed to decode payload_json"
+
+        try:
+            # PHASE 4 WP-2: Enforce strict TLS. verify=False is FORBIDDEN.
+            verify: object = self._ca_cert if self._ca_cert else True
+            if verify is False:
+                raise ValueError("Strict TLS enforcement: verify=False is forbidden")
+                
             cert = self._client_cert
             headers = {"Content-Type": "application/json"}
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
+                
+            # STEP 1: Upload Metadata
             with httpx.Client(verify=verify, cert=cert, timeout=30.0) as client:
                 response = client.post(
                     f"{self.backend_url}/events",
                     content=payload_json,
                     headers=headers,
                 )
-            if response.status_code in (200, 201):
-                return True, None
-            else:
-                return False, f"HTTP {response.status_code}: {response.text[:200]}"
+            if response.status_code not in (200, 201):
+                # 408/425/429 are client-visible but transient conditions.
+                # Marking a rate-limited evidence event FAILED permanently
+                # loses real detections during bursts instead of retrying
+                # after the server's window clears.
+                transient_client_statuses = {408, 425, 429}
+                is_permanent = (
+                    400 <= response.status_code < 500
+                    and response.status_code not in transient_client_statuses
+                )
+                category = (
+                    ErrorCategory.BACKEND_4XX.value
+                    if is_permanent
+                    else ErrorCategory.NETWORK_TRANSIENT.value
+                )
+                return False, is_permanent, f"[{category}] Metadata HTTP {response.status_code}: {response.text[:200]}"
+                
+            # STEP 2: Upload Evidence Binary (WP-3.3)
+            if evidence_clip_ref and os.path.exists(evidence_clip_ref):
+                try:
+                    with open(evidence_clip_ref, "rb") as f:
+                        binary_data = f.read()
+                        
+                    binary_hash = hashlib.sha256(binary_data).hexdigest()
+                    files = {
+                        "file": (os.path.basename(evidence_clip_ref), binary_data, "application/octet-stream")
+                    }
+                    data = {
+                        "expected_hash": binary_hash
+                    }
+                    
+                    # We do not send Content-Type header manually here; httpx sets it for multipart/form-data
+                    auth_headers = {}
+                    if self.auth_token:
+                        auth_headers["Authorization"] = f"Bearer {self.auth_token}"
+                        
+                    with httpx.Client(verify=verify, cert=cert, timeout=60.0) as client:
+                        ev_response = client.post(
+                            f"{self.backend_url}/events/{event_id}/evidence",
+                            data=data,
+                            files=files,
+                            headers=auth_headers,
+                        )
+                    if ev_response.status_code not in (200, 201):
+                        logger.error(f"[Sync] Evidence upload failed for {event_id}: HTTP {ev_response.status_code}")
+                        transient_client_statuses = {408, 425, 429}
+                        is_permanent = (
+                            400 <= ev_response.status_code < 500
+                            and ev_response.status_code not in transient_client_statuses
+                        )
+                        category = (
+                            ErrorCategory.BACKEND_4XX.value
+                            if is_permanent
+                            else ErrorCategory.NETWORK_TRANSIENT.value
+                        )
+                        return False, is_permanent, f"[{category}] Evidence HTTP {ev_response.status_code}: {ev_response.text[:200]}"
+                except Exception as e:
+                    logger.error(f"[Sync] Failed to read or upload evidence file {evidence_clip_ref} for {event_id}: {e}")
+                    return False, False, f"[{ErrorCategory.CAMERA_READ_ERROR.value}] Evidence file error: {str(e)}"
+            elif evidence_clip_ref:
+                logger.warning(f"[Sync] Evidence file {evidence_clip_ref} for event {event_id} not found locally.")
+                # We do not fail the upload loop if the physical file is permanently missing from the edge,
+                # otherwise the queue would jam forever. The backend will reconcile this as MISSING.
+                
+            return True, False, None
+            
         except httpx.ConnectError as exc:
-            return False, f"Connection refused — backend may be offline: {exc}"
+            return False, False, f"[{ErrorCategory.NETWORK_TRANSIENT.value}] Connection refused — backend may be offline: {exc}"
         except Exception as exc:
-            return False, str(exc)
+            return False, False, f"[{ErrorCategory.UNKNOWN.value}] {str(exc)}"
 
-    def _mark(self, row_id: int, success: bool, error: Optional[str]) -> None:
-        status = "SYNCED" if success else "QUEUED"  # Keep QUEUED so it retries
+    def _mark(self, row_id: int, success: bool, error: Optional[str], is_permanent: bool = False) -> None:
+        if success:
+            status = "SYNCED"
+        elif is_permanent:
+            status = "FAILED"
+        else:
+            status = "QUEUED"  # Keep QUEUED so it retries
         with self._get_conn() as conn:
             conn.execute(
                 """UPDATE sync_queue

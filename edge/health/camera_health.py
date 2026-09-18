@@ -20,7 +20,7 @@ import time
 import logging
 from collections import deque
 from datetime import datetime
-from typing import Deque, Tuple
+from typing import Deque, Tuple, Optional
 
 import cv2
 import numpy as np
@@ -34,6 +34,7 @@ from shared.constants import (
     FROZEN_FRAME_VARIANCE_THRESHOLD,
     CameraHealthState,
     HealthReason,
+    StreamState,
 )
 from shared.schemas import CameraHealthReport
 
@@ -59,15 +60,16 @@ class CameraHealthMonitor:
         self._last_report_time: float = 0.0
         self._report_interval: float = 2.0  # seconds between health reports
 
-    def update(self, frame: np.ndarray, frame_timestamp: float) -> CameraHealthReport:
+    def update(self, frame: Optional[np.ndarray], frame_timestamp: float, stream_state: Optional[StreamState] = None) -> CameraHealthReport:
         """
-        Process one frame and return a health report.
-        This is called every frame; reporting is rate-limited for efficiency.
+        Process one frame (if available) and return a health report.
+        If frame is None, the stream_state is used to determine health.
         """
-        self._recent_frames.append(frame.copy())
-        self._frame_times.append(frame_timestamp)
+        if frame is not None:
+            self._recent_frames.append(frame.copy())
+            self._frame_times.append(frame_timestamp)
 
-        state, reason, metrics = self._evaluate()
+        state, reason, metrics = self._evaluate(stream_state)
 
         return CameraHealthReport(
             camera_id=self.camera_id,
@@ -82,12 +84,22 @@ class CameraHealthMonitor:
             frame_variance=metrics.get("frame_variance"),
         )
 
-    def _evaluate(self) -> Tuple[CameraHealthState, HealthReason, dict]:
+    def _evaluate(self, stream_state: Optional[StreamState] = None) -> Tuple[CameraHealthState, HealthReason, dict]:
         metrics: dict = {}
-        frame = self._recent_frames[-1]
 
-        # --- Check 1: Stream availability (trivial — we got a frame so it's present) ---
-        # If we're here we have a frame; unavailability is caught in the adapter
+        # --- Check 1: Stream state (WP-4.1 integration) ---
+        if stream_state == StreamState.FAILED:
+            return CameraHealthState.FAILED, HealthReason.STREAM_UNAVAILABLE, metrics
+        elif stream_state in (StreamState.STALLING, StreamState.RECONNECTING):
+            return CameraHealthState.DEGRADED, HealthReason.STREAM_RECONNECTING, metrics
+        elif stream_state in (StreamState.INITIALIZING, StreamState.STOPPED):
+            return CameraHealthState.DEGRADED, HealthReason.STREAM_UNAVAILABLE, metrics
+
+        if not self._recent_frames:
+            # We don't have a stream state that indicates failure, but no frames yet
+            return CameraHealthState.DEGRADED, HealthReason.STREAM_UNAVAILABLE, metrics
+
+        frame = self._recent_frames[-1]
 
         # --- Check 2: Frozen frame detection ---
         if len(self._recent_frames) >= 2:

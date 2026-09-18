@@ -11,8 +11,13 @@ def temp_chain_db(tmp_path):
     store = EvidenceChainStore(str(db_path))
     yield store
     # Teardown
-    if os.path.exists(str(db_path)):
-        os.remove(str(db_path))
+    import gc
+    gc.collect() # Force close any dangling connections
+    try:
+        if os.path.exists(str(db_path)):
+            os.remove(str(db_path))
+    except PermissionError:
+        pass
 
 def test_hash_chain_tamper_detection(temp_chain_db):
     store = temp_chain_db
@@ -32,6 +37,9 @@ def test_hash_chain_tamper_detection(temp_chain_db):
             decision_state="DETECTED"
         )
         # We don't need real Ed25519 signatures to test the linkage itself
+        ep.previous_hash = store.get_latest_hash()[0]
+        # set mock hash
+        ep.hash = f"mock_hash_{i}"
         store.append(ep, signature=f"mock_sig_{i}")
         packages.append(ep)
         

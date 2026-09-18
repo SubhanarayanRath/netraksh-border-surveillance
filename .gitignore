@@ -54,6 +54,8 @@ certs/*.key
 certs/*.crt
 certs/*/*.key
 certs/*/*.crt
+certs/edge/*.aes
+certs/edge/*.pem
 
 # OS / editor / logs
 .DS_Store
@@ -65,3 +67,11 @@ Thumbs.db
 # Machine-local dev-preview config (hardcoded local paths/python.exe location,
 # not portable — see docs/LIMITATIONS.md)
 .claude/
+
+# Temporary / Scratch Outputs
+scratch/
+out*.txt
+docs/benchmark_raw*.json
+docs/*_demo.json
+docs/*_vtest.json
+node_modules

@@ -1,21 +1,13 @@
-import { CheckCircle, Cloud, AlertCircle, WifiOff } from 'lucide-react';
+import { CheckCircle, Cloud, AlertCircle, WifiOff, ChevronRight, ChevronLeft, FlaskConical } from 'lucide-react';
+import { useState } from 'react';
 import useDemoScenario from '../hooks/useDemoScenario';
 import { authFetch } from '../services/auth';
 
-// Was previously local-only state that didn't reach any other component
-// (confirmed: nothing else in the frontend read DemoSidebar's own state),
-// so clicking a button changed nothing except that button's own highlight
-// — a real, non-cosmetic bug for a panel whose whole purpose is to
-// demonstrate the dashboard reacting to a scenario. Also previously called
-// /demo/inject-condition, /demo/trigger-camera-failure, /demo/simulate-offline
-// — none of which exist anywhere in the backend (no backend/api/demo.py or
-// equivalent router) — so every click also silently 401'd/404'd for no
-// benefit. Now uses the shared DemoScenarioProvider (hooks/useDemoScenario.js)
-// so Dashboard/VideoFeed/Header can honestly react to the selected scenario,
-// AND posts to the real /demo/scenario endpoint (backend/api/demo.py) so
-// the edge pipeline can actually change its behaviour.
+// DemoSidebar — floating demo scenario control panel.
+// Collapsed by default, toggled open by the tab button on the left edge.
 export default function DemoSidebar() {
   const { scenario, setScenario } = useDemoScenario();
+  const [open, setOpen] = useState(false);
 
   // What each scenario actually does in the pipeline (not marketing copy):
   const SCENARIO_META = {
@@ -27,24 +19,22 @@ export default function DemoSidebar() {
     fog: {
       icon: Cloud,
       title: 'Dense Fog',
-      desc: 'Frame blurred → SceneConditionClassifier → FOG_RAIN → S drops → may produce UNCERTAIN; IR fallback label shown',
+      desc: 'Frame blurred → FOG_RAIN → S drops → may produce UNCERTAIN',
     },
     failure: {
       icon: AlertCircle,
       title: 'Sensor Failure',
-      desc: 'Frozen frames → CameraHealthMonitor FAILED → Gate 1 hard-override → ABSTAIN (R never computed)',
+      desc: 'Frozen frames → FAILED → Gate 1 hard-override → ABSTAIN',
     },
     offline: {
       icon: WifiOff,
       title: 'Offline State',
-      desc: 'SyncClient pauses outbound → events queue locally → header shows BUFFERING · click Normal to recover',
+      desc: 'SyncClient pauses → events queue locally → header shows BUFFERING',
     },
   };
 
   const handleScenario = async (id) => {
-    // 1. Update local shared state immediately (VideoFeed / Header react)
     setScenario(id);
-    // 2. POST to backend so the polling edge pipeline changes behaviour
     try {
       await authFetch('/demo/scenario', {
         method: 'POST',
@@ -52,44 +42,205 @@ export default function DemoSidebar() {
         body: JSON.stringify({ scenario: id }),
       });
     } catch (e) {
-      // Non-fatal: the visual overlay still works even if the POST fails.
-      // Edge pipeline will pick up the new scenario on its next 5s poll.
       console.debug('[DemoSidebar] POST /demo/scenario failed (non-fatal):', e);
     }
   };
 
-  const SimButton = ({ id }) => {
-    const { icon: Icon, title, desc } = SCENARIO_META[id];
-    const isActive = scenario === id;
-    return (
+  return (
+    <>
+      {/* Toggle Tab */}
       <button
-        onClick={() => handleScenario(id)}
-        className={`flex flex-col text-left p-4 rounded border transition-colors ${isActive ? 'bg-elevated border-ok' : 'bg-transparent border-color hover-bg-elevated'}`}
-        style={{width: '100%', marginBottom: '1rem', position: 'relative'}}
+        onClick={() => setOpen(!open)}
+        title="Demo Scenario Controls"
+        style={{
+          position: 'fixed',
+          right: open ? 260 : 0,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 35,
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border-color)',
+          borderRight: open ? '1px solid var(--border-color)' : 'none',
+          borderRadius: open ? '4px 0 0 4px' : '4px 0 0 4px',
+          padding: '0.75rem 0.375rem',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.5rem',
+          cursor: 'pointer',
+          color: 'var(--text-muted)',
+          transition: 'right 0.25s ease',
+        }}
       >
-        <div className="flex items-center gap-3 w-full">
-          <Icon size={20} className={isActive ? (id === 'normal' ? 'text-ok' : 'text-warning') : 'text-muted'} />
-          <div className="flex-col">
-            <span className={`text-sm font-display ${isActive ? 'text-main' : 'text-muted'}`}>{title}</span>
-            <span className="text-xs text-muted font-body mt-1">{desc}</span>
+        <FlaskConical size={13} style={{ color: 'var(--accent)' }} />
+        <span
+          style={{
+            writingMode: 'vertical-rl',
+            textOrientation: 'mixed',
+            transform: 'rotate(180deg)',
+            fontSize: '0.5rem',
+            fontFamily: 'var(--font-display)',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'var(--text-dim)',
+          }}
+        >
+          Demo
+        </span>
+        {open ? <ChevronRight size={11} /> : <ChevronLeft size={11} />}
+      </button>
+
+      {/* Panel */}
+      <aside
+        style={{
+          position: 'fixed',
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 260,
+          background: 'var(--bg-panel)',
+          borderLeft: '1px solid var(--border-color)',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '1.25rem 1rem',
+          zIndex: 30,
+          transform: open ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 0.25s ease',
+          overflowY: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            marginBottom: '1.25rem',
+            paddingBottom: '1rem',
+            borderBottom: '1px solid var(--border-color)',
+          }}
+        >
+          <FlaskConical size={14} style={{ color: 'var(--accent)' }} />
+          <span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.65rem',
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+            }}
+          >
+            Demo Scenario Control
+          </span>
+          <div
+            style={{
+              marginLeft: 'auto',
+              fontSize: '0.5rem',
+              fontFamily: 'var(--font-display)',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              padding: '0.1rem 0.4rem',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-accent)',
+              color: 'var(--accent)',
+              background: 'var(--accent-dim)',
+            }}
+          >
+            Simulated
           </div>
         </div>
-        {/* This badge is accurate: selecting a scenario really does
-            change pipeline behaviour (edge polls /demo/scenario every 5s)
-            in addition to the client-side visual overlay. */}
-        <span className="text-[10px] text-muted absolute top-2 right-2 border rounded px-1 border-color">Simulated</span>
-      </button>
-    );
-  };
 
-  return (
-    <aside className="sidebar-right">
-      <h3 className="text-sm text-muted font-body mb-6 border-b pb-4">Demo Scenario Control</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+          {Object.entries(SCENARIO_META).map(([id, { icon: Icon, title, desc }]) => {
+            const isActive = scenario === id;
+            return (
+              <button
+                key={id}
+                onClick={() => handleScenario(id)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  textAlign: 'left',
+                  padding: '0.75rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: isActive
+                    ? `1px solid ${id === 'normal' ? 'var(--color-ok)' : 'var(--color-warning)'}`
+                    : '1px solid var(--border-color)',
+                  background: isActive ? 'var(--bg-elevated)' : 'transparent',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  width: '100%',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                  <Icon
+                    size={14}
+                    style={{
+                      color: isActive
+                        ? id === 'normal' ? 'var(--color-ok)' : 'var(--color-warning)'
+                        : 'var(--text-muted)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      color: isActive ? 'var(--text-main)' : 'var(--text-muted)',
+                    }}
+                  >
+                    {title}
+                  </span>
+                  {isActive && (
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        fontSize: '0.5rem',
+                        fontFamily: 'var(--font-display)',
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        padding: '0.1rem 0.3rem',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--color-ok)',
+                        color: 'var(--color-ok)',
+                        background: 'rgba(34,211,164,0.08)',
+                      }}
+                    >
+                      Active
+                    </span>
+                  )}
+                </div>
+                <span
+                  style={{
+                    fontSize: '0.65rem',
+                    color: 'var(--text-dim)',
+                    fontFamily: 'var(--font-body)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {desc}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-      <SimButton id="normal" />
-      <SimButton id="fog" />
-      <SimButton id="failure" />
-      <SimButton id="offline" />
-    </aside>
+        <div
+          style={{
+            marginTop: 'auto',
+            paddingTop: '1rem',
+            borderTop: '1px solid var(--border-color)',
+            fontSize: '0.6rem',
+            color: 'var(--text-dim)',
+            fontFamily: 'var(--font-body)',
+            lineHeight: 1.5,
+          }}
+        >
+          Scenario changes take effect on the next edge polling cycle (~5s).
+          Events generated during simulation are real and persisted.
+        </div>
+      </aside>
+    </>
   );
 }

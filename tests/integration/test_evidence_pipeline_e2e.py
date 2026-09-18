@@ -49,7 +49,7 @@ def _packager(tmp_path, camera_id="test-cam") -> EvidencePackager:
         private_key_path=str(tmp_path / "certs" / f"{camera_id}.key"),
         public_key_path=str(tmp_path / "certs" / f"{camera_id}.pub"),
     )
-    key_manager.load_or_generate()
+    key_manager.load_or_generate(allow_generate=True)
     chain_store = EvidenceChainStore(str(tmp_path / "chain.db"))
     return EvidencePackager(
         camera_id=camera_id, key_manager=key_manager, chain_store=chain_store,

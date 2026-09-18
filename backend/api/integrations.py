@@ -11,7 +11,6 @@ GET    /integrations/events/export         — real, paginated event export
 See backend/services/webhook_delivery.py and backend/models/orm.py's
 WebhookSubscription docstring for the full honest scope.
 """
-from __future__ import annotations
 
 import logging
 from typing import List, Optional
@@ -23,7 +22,7 @@ from sqlalchemy.orm import Session
 from backend.api.events import _event_to_response
 from backend.database.session import get_db
 from backend.models.orm import Event, WebhookSubscription
-from backend.security.auth import require_admin, require_any_role
+from backend.security.auth import require_admin, require_any_role, get_command_filter
 from shared.schemas import (
     EventExportResponse,
     WebhookSubscriptionCreate,
@@ -101,6 +100,11 @@ async def export_events(
     parallel data shape to keep honest and in sync.
     """
     q = db.query(Event)
+    command_filter = get_command_filter(_user)
+    if command_filter:
+        from backend.models.orm import Camera
+        q = q.join(Camera).filter(Camera.owning_command_id == command_filter)
+        
     if since:
         from datetime import datetime
         try:

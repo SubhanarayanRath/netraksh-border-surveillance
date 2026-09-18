@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Dict, List, Optional
@@ -27,7 +28,7 @@ from typing import Dict, List, Optional
 # Ensure project root is on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from edge.condition.preprocessing import enhance_for_detection
+from edge.condition.preprocessing import ConditionRouter, enhance_for_detection
 from edge.condition.scene_condition import SceneConditionClassifier
 from edge.detection.adaptive_gate import AdaptiveComputeGate
 from edge.detection.calibration import CalibrationModule
@@ -130,8 +131,19 @@ class EdgePipeline:
 
     def __init__(self, config: dict):
         self.config = config
-        self.camera_id = config["camera_id"]
+        
+        raw_id = config.get("camera_id", "")
+        if not raw_id:
+            raise ValueError("camera_id is required")
+            
+        import re
+        if not re.match(r"^[A-Za-z0-9_-]+$", raw_id):
+            raise ValueError(f"Invalid camera_id '{raw_id}': must contain only alphanumeric characters, dashes, and underscores.")
+            
+        self.camera_id = raw_id
         self.camera_name = config.get("camera_name", self.camera_id)
+        # A new pipeline instance represents a new video stream/session.
+        self.stream_id = config.get("stream_id") or str(uuid.uuid4())
         self.zone_config_path = config.get("zones_config_path", "demo/scripts/zones_config.json")
         self._running = False
 
@@ -143,6 +155,7 @@ class EdgePipeline:
             source=config.get("video_source"),
             simulate_frozen=config.get("simulate_frozen", False),
             simulate_night=config.get("simulate_night", False),
+            loop_video=config.get("loop_video", True),
         )
 
         # Telemetry
@@ -150,6 +163,9 @@ class EdgePipeline:
         self.telemetry_interval = 1.0 / self.telemetry_fps if self.telemetry_fps > 0 else 0
         self._last_telemetry_time = 0.0
         self._telemetry_sequence = 0
+        self._last_video_time = None
+        self._last_frame_width = None
+        self._last_frame_height = None
         self.telemetry_queue = Queue(maxsize=10)
         self._telemetry_metrics = {"produced": 0, "dropped": 0, "errors": 0}
 
@@ -159,6 +175,7 @@ class EdgePipeline:
             fps_declared=config.get("fps_declared", 25.0),
         )
         self.condition_classifier = SceneConditionClassifier(camera_id=self.camera_id)
+        self.condition_router = ConditionRouter()
 
         # Layer 3: Detection + calibration
         self.calibration = CalibrationModule(
@@ -200,7 +217,8 @@ class EdgePipeline:
         # recognizer -- FaceDetectionModule still runs real detection, just
         # with zero real matches possible until a later sync succeeds.
         self._backend_url = config.get("backend_url", os.environ.get("BACKEND_URL", "http://localhost:8443"))
-        self.face_recognizer = sync_from_backend(self._backend_url)
+        self._edge_auth_token = config.get("auth_token", os.environ.get("EDGE_AUTH_TOKEN", ""))
+        self.face_recognizer = sync_from_backend(self._backend_url, auth_token=self._edge_auth_token)
         self.face_module = FaceDetectionModule(self.zones, recognizer=self.face_recognizer)
 
         # Layer 6: Evidence
@@ -215,17 +233,19 @@ class EdgePipeline:
         self.chain_store = EvidenceChainStore(chain_path)
         self.packager = EvidencePackager(
             camera_id=self.camera_id,
+            stream_id=self.stream_id,
             key_manager=self.key_manager,
             chain_store=self.chain_store,
             clip_storage_dir=config.get("clip_dir", "edge/data/clips"),
         )
+        self._register_crypto_material()
 
         # Layer 7: Sync
         self.sync_client = SyncClient(
             edge_device_id=self.camera_id,
             backend_url=config.get("backend_url", "http://localhost:8443"),
             db_path=config.get("sync_db_path", f"edge/data/sync_{self.camera_id}.db"),
-            auth_token=config.get("auth_token", ""),
+            auth_token=self._edge_auth_token,
             ca_cert_path=config.get("ca_cert_path"),
             client_cert_path=config.get("client_cert_path"),
             client_key_path=config.get("client_key_path"),
@@ -253,6 +273,7 @@ class EdgePipeline:
         self.continuity_guard = TrackContinuityGuard()
         self._known_track_ids: set = set()
         self._track_last_snapshot: Dict[int, dict] = {}
+        self._track_id_map: Dict[int, int] = {}
 
         # Performance instrumentation (architecture v4 §15, MUST HAVE).
         # Real, locally-measured latency/FPS/resource numbers — never invented.
@@ -266,6 +287,44 @@ class EdgePipeline:
         # takes effect within a few minutes without a restart, infrequent
         # enough not to hammer the backend every frame loop tick.
         self._watchlist_sync_interval = config.get("watchlist_sync_interval_seconds", 300.0)
+        
+        # Phase 3 Step 7: Behavioral Intelligence
+        self.behavior_analytics_enabled = str(os.environ.get("BEHAVIOR_ANALYTICS", "false")).lower() == "true"
+        if self.behavior_analytics_enabled:
+            from edge.temporal.trajectory import TrajectoryFeatureLayer
+            from edge.rules.behavior_analytics import BehaviorCorrelationEngine
+            self.trajectory_layer = TrajectoryFeatureLayer()
+            self.behavior_correlation = BehaviorCorrelationEngine(self.zones)
+            logger.info("[Pipeline] Behavior Analytics ENABLED")
+
+    def _register_crypto_material(self) -> None:
+        """Best-effort authenticated bootstrap of the camera's current keys.
+
+        The backend wraps the AES key immediately and stores only the public
+        signing key plus wrapped decryption material.  Values are deliberately
+        never logged; a later event-sync retry remains possible if startup
+        races the command center coming online.
+        """
+        try:
+            import httpx
+            headers = {}
+            if self._edge_auth_token:
+                headers["Authorization"] = f"Bearer {self._edge_auth_token}"
+            response = httpx.put(
+                f"{self._backend_url}/cameras/{self.camera_id}/edge-keys",
+                json={
+                    "public_key_pem": self.key_manager.get_public_key_pem(),
+                    "evidence_key_b64": self.packager.encryptor.get_raw_key_b64(),
+                },
+                headers=headers,
+                timeout=10.0,
+            )
+            if response.status_code == 200:
+                logger.info("[Pipeline] Camera cryptographic material registered")
+            else:
+                logger.warning("[Pipeline] Camera key registration deferred (HTTP %s)", response.status_code)
+        except Exception as exc:
+            logger.warning("[Pipeline] Camera key registration deferred: %s", type(exc).__name__)
 
     def start(self) -> None:
         """
@@ -300,8 +359,17 @@ class EdgePipeline:
         except KeyboardInterrupt:
             logger.info("[Pipeline] Interrupted by user")
         finally:
+            completed = self.adapter.eof_reached
+            if completed:
+                self._flush_event_outbox()
+                # Publish one final metrics snapshot after the drain so the
+                # command-center sync indicator sees the real zero queue.
+                self._report_metrics()
+                self._publish_analysis_state("COMPLETED")
             self._running = False
-            self.adapter.release()
+            self.adapter.stop()
+            self.adapter.join()
+            telemetry_thread.join(timeout=2.0)
 
     def stop(self) -> None:
         """Gracefully stop the pipeline."""
@@ -311,13 +379,21 @@ class EdgePipeline:
     def _run_telemetry_loop(self) -> None:
         """Background thread for pushing live telemetry to the backend."""
         import httpx
-        client = httpx.Client(timeout=1.0)
+        verify: object = self.sync_client._ca_cert if self.sync_client._ca_cert else True
+        if verify is False:
+            verify = True # Should be caught by sync_client, but enforce here
+            
+        client = httpx.Client(
+            timeout=1.0,
+            verify=verify,
+            cert=self.sync_client._client_cert
+        )
         telemetry_url = f"{self._backend_url}/system/telemetry"
         while self._running:
             try:
                 payload = self.telemetry_queue.get(timeout=0.5)
                 try:
-                    client.post(telemetry_url, json=payload)
+                    client.post(telemetry_url, json=payload, headers=self._edge_auth_headers())
                 except httpx.RequestError:
                     self._telemetry_metrics["errors"] += 1
                 self.telemetry_queue.task_done()
@@ -336,16 +412,23 @@ class EdgePipeline:
         last_metrics_report_time = 0.0
         last_watchlist_sync_time = time.time()  # already synced once in __init__
 
-        with self.adapter:
-            for frame, meta in self.adapter.frames():
-                if not self._running:
-                    break
+        self.adapter.start()
+        try:
+            while self._running:
+                frame, meta = self.adapter.get_frame(timeout=0.1)
 
-                frame_count += 1
-                if frame_count % frame_skip != 0:
-                    continue
+                if frame is not None and meta is not None:
+                    frame_count += 1
+                    if frame_count % frame_skip == 0:
+                        self._process_frame(frame, meta)
+                else:
+                    if self.adapter.eof_reached:
+                        logger.info("[Pipeline] Video buffer drained after EOF")
+                        break
+                    # No frame available; update health using stream state so the backend is informed of disconnects
+                    health = self.health_monitor.update(None, time.time(), self.adapter.state)
+                    self._last_health = health
 
-                self._process_frame(frame, meta)
                 if time.time() - last_health_report_time > 5.0:
                     last_health_report_time = time.time()
                     self._report_camera_health()
@@ -355,6 +438,9 @@ class EdgePipeline:
                 if time.time() - last_watchlist_sync_time > self._watchlist_sync_interval:
                     last_watchlist_sync_time = time.time()
                     self._resync_watchlist()
+        finally:
+            self.adapter.stop()
+            self.adapter.join()
 
     def _report_camera_health(self) -> None:
         """
@@ -380,11 +466,14 @@ class EdgePipeline:
             return
         try:
             import httpx
+            verify: object = self.sync_client._ca_cert if self.sync_client._ca_cert else True
             httpx.post(
                 f"{self.sync_client.backend_url}/cameras/{self.camera_id}/health",
                 content=health.model_dump_json(),
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **self._edge_auth_headers()},
                 timeout=3.0,
+                verify=verify,
+                cert=self.sync_client._client_cert
             )
         except Exception as exc:
             logger.debug(f"[Health] Periodic health report failed (non-fatal): {exc}")
@@ -401,30 +490,45 @@ class EdgePipeline:
         """
         now = time.time()
         for track in tracks:
-            if track.track_id in self._known_track_ids:
+            native_id = track.track_id
+            
+            if native_id in self._track_id_map:
+                canonical_id = self._track_id_map[native_id]
+                track.track_id = canonical_id
+                self._known_track_ids.add(canonical_id)
                 continue
+                
+            if native_id in self._known_track_ids:
+                continue
+
             histogram = compute_track_histogram(frame, track.bbox)
             match = self.continuity_guard.resolve_new_track(histogram, track.bbox.centroid, now)
             if match is not None:
                 matched_id, matched_trajectory = match
                 logger.info(
-                    f"[Pipeline] Track {track.track_id} re-associated with recently-lost "
+                    f"[Pipeline] Track {native_id} re-associated with recently-lost "
                     f"track {matched_id} by Continuity Guard — resuming its history"
                 )
+                self._track_id_map[native_id] = matched_id
                 track.track_id = matched_id
                 track.trajectory = list(matched_trajectory) + list(track.trajectory)
-            self._known_track_ids.add(track.track_id)
+                self._known_track_ids.add(matched_id)
+            else:
+                self._known_track_ids.add(native_id)
         return tracks
 
     def _process_frame(self, frame, meta) -> None:
         """Process a single frame through the full pipeline."""
         self._verify_tick += 1
+        self._last_video_time = meta.video_time_seconds
+        self._last_frame_width = meta.width
+        self._last_frame_height = meta.height
 
         # --- Performance instrumentation: t0 (frame received) ---
         t_frame_start = time.perf_counter()
 
         # === Layer 2: Gate 1 — Camera Health ===
-        health = self.health_monitor.update(frame, meta.timestamp)
+        health = self.health_monitor.update(frame, meta.timestamp, self.adapter.state)
         self._last_health = health
 
         # === Layer 2: Gate 2 — Scene Condition ===
@@ -486,7 +590,8 @@ class EdgePipeline:
             # copy for LOW_LIGHT_NIGHT/FOG_RAIN, detector input only — health,
             # condition, evidence snapshots, and ANPR/face crops all keep
             # using the original `frame` so their measurements stay honest.
-            detection_frame = enhance_for_detection(frame, condition.condition)
+            policy = self.condition_router.route(condition.condition)
+            detection_frame = enhance_for_detection(frame, policy)
             try:
                 tracks = self.detector.detect_and_track(
                     detection_frame, condition.condition, calibrated_threshold,
@@ -552,6 +657,9 @@ class EdgePipeline:
                 self.track_feature_tracker.forget(k)
             del self._trajectories[k]
             self._known_track_ids.discard(k)
+            native_to_remove = [n_id for n_id, c_id in self._track_id_map.items() if c_id == k]
+            for n_id in native_to_remove:
+                del self._track_id_map[n_id]
             self._track_last_snapshot.pop(k, None)
 
         # === Live Telemetry (architecture v4 §16) ===
@@ -580,6 +688,10 @@ class EdgePipeline:
                 "timestamp": time.time(),
                 "video_time": meta.video_time_seconds,
                 "sequence": self._telemetry_sequence,
+                "frame_width": frame_w,
+                "frame_height": frame_h,
+                "stream_id": self.stream_id,
+                "analysis_state": "PROCESSING",
                 "tracks": live_tracks
             }
             try:
@@ -596,7 +708,9 @@ class EdgePipeline:
                 self.telemetry_queue.put_nowait(payload)
                 self._telemetry_metrics["produced"] += 1
             except Exception:
-                pass
+                # This is a real telemetry producer failure, distinct from a
+                # deliberate latest-only drop above.
+                self._telemetry_metrics["errors"] += 1
 
         # === Layer 3.6: Night-Motion Fallback (architecture v4 §3) ===
         # NightMotionFallback existed in edge/detection/detector.py but was
@@ -681,8 +795,11 @@ class EdgePipeline:
         frame_height, frame_width = frame.shape[:2]
 
         # Run behavior module (operates on all active tracks)
+        standard_events_this_frame = []
+        
         behavior_events = self.behavior_module.update(tracks, frame_width, frame_height)
         for be in behavior_events:
+            standard_events_this_frame.append(be)
             track = next((t for t in tracks if t.track_id == be.get("track_id")), None)
             conf = be.get("confidence", 0.0)
             reliability = make_reliability_decision(
@@ -695,6 +812,7 @@ class EdgePipeline:
             # Fence crossing
             fence_event = self.fence_module.check(track, frame_width, frame_height)
             if fence_event:
+                standard_events_this_frame.append(fence_event)
                 reliability = make_reliability_decision(
                     health, condition, track.confidence, calibrated_threshold,
                     temporal_score=temporal_score_for(track),
@@ -704,6 +822,7 @@ class EdgePipeline:
             # Line crossing
             line_event = self.line_module.check(track, frame_width, frame_height)
             if line_event:
+                standard_events_this_frame.append(line_event)
                 reliability = make_reliability_decision(
                     health, condition, track.confidence, calibrated_threshold,
                     temporal_score=temporal_score_for(track),
@@ -713,6 +832,7 @@ class EdgePipeline:
             # ANPR
             anpr_result = self.anpr_module.process(track, frame)
             if anpr_result:
+                standard_events_this_frame.append(anpr_result)
                 reliability = make_reliability_decision(
                     health, condition, track.confidence, calibrated_threshold,
                     temporal_score=temporal_score_for(track),
@@ -722,11 +842,30 @@ class EdgePipeline:
             # Face detection
             face_result = self.face_module.detect(track, frame)
             if face_result:
+                standard_events_this_frame.append(face_result)
                 reliability = make_reliability_decision(
                     health, condition, track.confidence, calibrated_threshold,
                     temporal_score=temporal_score_for(track),
                 )
                 submit_candidate(face_result, reliability, track)
+                
+        # --- Phase 3 Step 7: Behavioral Analytics Layer ---
+        t_behavior_start = time.perf_counter()
+        if getattr(self, "behavior_analytics_enabled", False):
+            now = time.time()
+            features = self.trajectory_layer.update(tracks, now)
+            advanced_behavior_events = self.behavior_correlation.update(
+                tracks, features, standard_events_this_frame, now
+            )
+            for be in advanced_behavior_events:
+                track = next((t for t in tracks if t.track_id == be.get("track_id")), None)
+                conf = be.get("confidence", 0.0)
+                reliability = make_reliability_decision(
+                    health, condition, conf, calibrated_threshold,
+                    temporal_score=temporal_score_for(track),
+                )
+                submit_candidate(be, reliability, track)
+        t_behavior_end = time.perf_counter()
 
         # Re-check candidates awaiting >1 confirmation (fence crossing, line
         # crossing) that were NOT touched above this tick — i.e. the task
@@ -775,17 +914,68 @@ class EdgePipeline:
             total_frame_ms=(t_frame_end - t_frame_start) * 1000.0,
         )
 
+    def _flush_event_outbox(self, timeout_seconds: float = 12.0) -> None:
+        """Best-effort bounded drain of evidence created by a finite upload."""
+        deadline = time.time() + timeout_seconds
+        while self.sync_client.get_queue_depth() > 0 and time.time() < deadline:
+            result = self.sync_client.sync_once()
+            if result.get("status") == "simulated_offline":
+                break
+            if result.get("remaining", self.sync_client.get_queue_depth()) == 0:
+                break
+            time.sleep(0.25)
+        remaining = self.sync_client.get_queue_depth()
+        if remaining:
+            logger.warning(f"[Pipeline] EOF flush ended with {remaining} queued event(s)")
+        else:
+            logger.info("[Pipeline] EOF flush complete; event outbox is empty")
+
+    def _publish_analysis_state(self, state: str) -> None:
+        """Publish an explicit lifecycle state after all buffered frames finish."""
+        try:
+            import httpx
+            verify: object = self.sync_client._ca_cert if self.sync_client._ca_cert else True
+            self._telemetry_sequence += 1
+            with httpx.Client(
+                timeout=3.0,
+                verify=verify,
+                cert=self.sync_client._client_cert,
+            ) as client:
+                response = client.post(
+                    f"{self._backend_url}/system/telemetry",
+                    json={
+                        "camera_id": self.camera_id,
+                        "timestamp": time.time(),
+                        "video_time": self._last_video_time,
+                        "sequence": self._telemetry_sequence,
+                        "frame_width": self._last_frame_width,
+                        "frame_height": self._last_frame_height,
+                        "stream_id": self.stream_id,
+                        "analysis_state": state,
+                        "tracks": [],
+                    },
+                    headers=self._edge_auth_headers(),
+                )
+            response.raise_for_status()
+            logger.info(f"[Pipeline] Analysis state published: {state}")
+        except Exception as exc:
+            logger.warning(f"[Pipeline] Failed to publish analysis state {state}: {exc}")
+
     def _emit_event(self, track, reliability, health, condition, zone_id, overrides, frame) -> None:
         """Package and enqueue an event for sync."""
         t_start = time.perf_counter()
         try:
+            event_overrides = dict(overrides or {})
+            # Preserve the source media clock from the exact triggering frame.
+            # Never substitute wall-clock time for finite-video events.
+            event_overrides.setdefault("video_time", self._last_video_time)
             ep, seq_num = self.packager.package(
                 track=track,
                 reliability=reliability,
                 health=health,
                 condition=condition,
                 zone_id=zone_id,
-                event_overrides=overrides,
+                event_overrides=event_overrides,
                 frame=frame,
             )
             t_packaged = time.perf_counter()
@@ -821,7 +1011,7 @@ class EdgePipeline:
         _report_camera_health/_report_metrics.
         """
         try:
-            self.face_recognizer = sync_from_backend(self._backend_url)
+            self.face_recognizer = sync_from_backend(self._backend_url, auth_token=self._edge_auth_token)
             self.face_module._recognizer = self.face_recognizer
             logger.info(
                 f"[Pipeline] Watchlist re-synced (trained={self.face_recognizer.is_trained()})"
@@ -864,29 +1054,45 @@ class EdgePipeline:
         # failed POST here must never interrupt the frame loop, and this is
         # NOT routed through the offline sync queue — it's a heartbeat, not
         # evidence.
+        summary["events"]["queue_depth"] = self.sync_client.get_queue_depth() if hasattr(self, "sync_client") and self.sync_client else 0
+        
         try:
             import httpx
-            httpx.post(
-                f"{self.sync_client.backend_url}/system/metrics",
-                json={
-                    "edge_device_id": self.camera_id,
-                    "uptime_seconds": summary["uptime_seconds"],
-                    "fps": summary["fps"],
-                    "frames": summary["frames"],
-                    "events": summary["events"],
-                    "alerts_generated": summary["alerts_generated"],
-                    "cpu_percent": summary["cpu_percent"],
-                    "rss_mb": summary["rss_mb"],
-                    "psutil_available": summary["psutil_available"],
-                    "adaptive_gate": gate_stats,
-                },
+            verify: object = self.sync_client._ca_cert if self.sync_client._ca_cert else True
+            with httpx.Client(
                 timeout=3.0,
-            )
+                verify=verify,
+                cert=self.sync_client._client_cert,
+            ) as client:
+                response = client.post(
+                    f"{self.sync_client.backend_url}/system/metrics",
+                    json={
+                        "edge_device_id": self.camera_id,
+                        "uptime_seconds": summary["uptime_seconds"],
+                        "fps": summary["fps"],
+                        "frames": summary["frames"],
+                        "events": summary["events"],
+                        "alerts_generated": summary["alerts_generated"],
+                        "telemetry_produced": self._telemetry_metrics["produced"],
+                        "telemetry_dropped": self._telemetry_metrics["dropped"],
+                        "telemetry_errors": self._telemetry_metrics["errors"],
+                        "cpu_percent": summary["cpu_percent"],
+                        "rss_mb": summary["rss_mb"],
+                        "psutil_available": summary["psutil_available"],
+                        "adaptive_gate": gate_stats,
+                    },
+                    headers=self._edge_auth_headers(),
+                )
+                response.raise_for_status()
         except Exception as exc:
             logger.debug(f"[Metrics] Backend report failed (non-fatal): {exc}")
 
     def stop(self) -> None:
         self._running = False
+
+    def _edge_auth_headers(self) -> dict:
+        """Return the configured edge bearer credential without logging it."""
+        return {"Authorization": f"Bearer {self._edge_auth_token}"} if self._edge_auth_token else {}
 
 
 def run_edge(config_path: Optional[str] = None) -> None:

@@ -26,7 +26,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/token", response_model=TokenResponse)
-async def login(
+def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
@@ -47,7 +47,7 @@ async def login(
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
-async def create_user(
+def create_user(
     payload: UserCreate,
     db: Session = Depends(get_db),
     _admin: User = Depends(require_admin),

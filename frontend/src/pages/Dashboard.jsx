@@ -1,34 +1,54 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { ShieldCheck, HelpCircle, ShieldAlert, CheckCircle, GitMerge } from 'lucide-react';
 import VideoFeed from '../components/VideoFeed';
 import useWebSocket from '../hooks/useWebSocket';
 import useDemoScenario from '../hooks/useDemoScenario';
 import { WS_URL, BACKEND_URL, authFetch } from '../services/auth';
+import useAuth from '../hooks/useAuth';
 import { parseUtc } from '../utils/time';
 
-// Parses the REAL decision_reason string edge/reliability/decision.py writes,
-// e.g. "R_ABOVE_THRESHOLD:R=0.907>=0.750 (D=0.80,T=0.85,S=0.93,H=1.00)" or
-// "CAMERA_FAILED:frozen_stream" — the same four formats that function ever
-// produces, not a guess at its shape. Returns null if reason is missing or
-// doesn't match either format (never fabricates a fallback R/D/T/S/H).
-function parseDecisionReason(reason) {
-  if (!reason) return null;
-  if (reason.startsWith('CAMERA_FAILED')) {
-    return { kind: 'abstain', healthReason: reason.split(':')[1] || 'unknown' };
+// Reads structured scores from the event instead of string-parsing the reason.
+function parseDecisionReason(ev) {
+  if (!ev) return null;
+  if (ev.decision_state === 'ABSTAIN') {
+    return { kind: 'abstain', healthReason: ev.decision_reason || 'unknown' };
   }
-  const rMatch = reason.match(/R=([\d.]+)\s*[<>]=?\s*([\d.]+)/);
-  const factorMatch = reason.match(/D=([\d.]+),T=([\d.]+),S=([\d.]+),H=([\d.]+)/);
-  if (!rMatch || !factorMatch) return null;
+  
+  // If the event doesn't have structured scores yet (legacy data), fallback to string parsing
+  if (ev.score_r == null && ev.decision_reason) {
+    const rMatch = ev.decision_reason.match(/R=([\d.]+)\s*[<>]=?\s*([\d.]+)/);
+    const factorMatch = ev.decision_reason.match(/D=([\d.]+),T=([\d.]+),S=([\d.]+),H=([\d.]+)/);
+    if (!rMatch || !factorMatch) return null;
+    return {
+      kind: 'scored',
+      r: parseFloat(rMatch[1]),
+      threshold: parseFloat(rMatch[2]),
+      aboveThreshold: ev.decision_reason.includes('R_ABOVE_THRESHOLD'),
+      degraded: ev.decision_reason.includes('DEGRADED_CAMERA'),
+      d: parseFloat(factorMatch[1]),
+      t: parseFloat(factorMatch[2]),
+      s: parseFloat(factorMatch[3]),
+      h: parseFloat(factorMatch[4]),
+    };
+  }
+
+  // Parse threshold from decision_reason if present, otherwise default 0.75
+  let threshold = 0.75;
+  if (ev.decision_reason) {
+    const rMatch = ev.decision_reason.match(/R=[\d.]+\s*[<>]=?\s*([\d.]+)/);
+    if (rMatch) threshold = parseFloat(rMatch[1]);
+  }
+
   return {
     kind: 'scored',
-    r: parseFloat(rMatch[1]),
-    threshold: parseFloat(rMatch[2]),
-    aboveThreshold: reason.includes('R_ABOVE_THRESHOLD'),
-    degraded: reason.includes('DEGRADED_CAMERA'),
-    d: parseFloat(factorMatch[1]),
-    t: parseFloat(factorMatch[2]),
-    s: parseFloat(factorMatch[3]),
-    h: parseFloat(factorMatch[4]),
+    r: ev.score_r ?? 0,
+    threshold: threshold,
+    aboveThreshold: ev.decision_state === 'DETECTED',
+    degraded: ev.camera_health_state === 'DEGRADED',
+    d: ev.score_d ?? 0,
+    t: ev.score_t ?? 0,
+    s: ev.score_s ?? 0,
+    h: ev.score_h ?? 0,
   };
 }
 
@@ -68,132 +88,376 @@ function explainDecision(parsed) {
 }
 
 export default function Dashboard() {
-  const { events, health, liveTracks } = useWebSocket(WS_URL);
+  const {
+    events, health, metrics, liveTracks, cameras, isConnected,
+    connectionStatus, resetRealtimeState, refreshEventsForContext, refreshTelemetryForContext,
+  } = useWebSocket(WS_URL);
   const { scenario: demoScenario } = useDemoScenario();
   const [latestEvent, setLatestEvent] = useState(null);
   const [showWhy, setShowWhy] = useState(false);
+  const { role } = useAuth();
+  const canUpload = role && (role.toUpperCase() === 'ADMIN' || role.toUpperCase() === 'OPERATOR');
 
   // Media upload state — lifted here so the entire dashboard can be gated
   // behind a video upload. Until the operator loads a demo video, all
   // WebSocket events are suppressed from the UI so the jury sees a clean
   // "waiting for feed" state rather than automatic analysis on nothing.
-  const [mediaUrl, setMediaUrl] = useState(`${BACKEND_URL}/demo/videos/uploaded_demo.mp4`);
+  const [mediaUrl, setMediaUrl] = useState(null);
   const [mediaType, setMediaType] = useState('video');
   const [isUploading, setIsUploading] = useState(false);
   const [sessionStartTime, setSessionStartTime] = useState(0);
+  const [videoSessionId, setVideoSessionId] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
+  const [playbackEnded, setPlaybackEnded] = useState(false);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [now, setNow] = useState(Date.now());
+  const [backendStatus, setBackendStatus] = useState('CHECKING');
   const fileInputRef = useRef(null);
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (mediaUrl) URL.revokeObjectURL(mediaUrl);
-      setMediaUrl(URL.createObjectURL(file));
-      setMediaType(file.type.startsWith('video/') ? 'video' : 'image');
-      // Reset events so fresh analysis starts from the new upload
-      setSessionStartTime(Date.now());
-      setLatestEvent(null);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
-      if (file.type.startsWith('video/')) {
-        setIsUploading(true);
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        try {
-          const res = await authFetch('/demo/upload', {
-            method: 'POST',
-            body: formData,
-          });
-          
-          if (!res.ok) {
-            console.error('Upload failed:', await res.text());
-          }
-        } catch (error) {
-          console.error('Upload error:', error);
-        } finally {
-          setIsUploading(false);
-        }
+  useEffect(() => {
+    let mounted = true;
+    const check = async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/ready`);
+        if (mounted) setBackendStatus(response.ok ? 'HEALTHY' : 'UNAVAILABLE');
+      } catch (_) {
+        if (mounted) setBackendStatus('UNAVAILABLE');
       }
+    };
+    check();
+    const id = setInterval(check, 10000);
+    return () => { mounted = false; clearInterval(id); };
+  }, []);
+
+  const cameraIds = Array.from(new Set([
+    ...cameras.map(camera => camera.camera_id),
+    ...Object.keys(liveTracks),
+    ...Object.keys(metrics),
+    ...events.map(event => event.camera_id).filter(Boolean),
+  ]));
+  const cameraModels = useMemo(() => cameraIds.map(cameraId => {
+    const camera = cameras.find(item => item.camera_id === cameraId) || {};
+    const rawName = String(camera.name || '').trim();
+    const normalizedId = String(cameraId || '').replace(/[_-]+/g, ' ').trim();
+    const parts = normalizedId.split(/\s+/).filter(Boolean);
+    const formattedParts = parts.map((part) => {
+      if (/^cam$/i.test(part)) return 'Camera';
+      if (/^border$/i.test(part)) return 'Border';
+      if (/^checkpoint$/i.test(part)) return 'Checkpoint';
+      if (/^\d+$/.test(part)) return part.padStart(2, '0');
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    });
+    const friendlyFromId = formattedParts.includes('Camera')
+      ? formattedParts.join(' ')
+      : ['Camera', ...formattedParts].join(' ');
+    const friendlyName = rawName && !/^unknown[-_]/i.test(rawName)
+      ? rawName
+      : friendlyFromId || 'Camera';
+    const receivedAt = liveTracks[cameraId]?.timestamp;
+    const age = receivedAt == null ? null : now - receivedAt;
+    const analysisState = liveTracks[cameraId]?.analysis_state;
+    const status = analysisState === 'COMPLETED'
+      ? 'COMPLETED'
+      : age != null && age <= 5000 ? 'LIVE' : age != null && age <= 30000 ? 'STALE' : 'OFFLINE';
+    return {
+      cameraId,
+      friendlyName,
+      displayId: cameraId.toUpperCase(),
+      streamId: liveTracks[cameraId]?.stream_id || null,
+      sourceType: 'EDGE CAMERA',
+      status,
+      lastSeen: receivedAt || null,
+    };
+  }), [cameraIds, cameras, liveTracks, now]);
+  const reportingCameraId = videoSessionId
+    ? Object.entries(liveTracks).find(([, telemetry]) => telemetry?.stream_id === videoSessionId)?.[0]
+    : null;
+  const selectedCameraHasActiveStream = selectedCameraId
+    && (!videoSessionId || liveTracks[selectedCameraId]?.stream_id === videoSessionId);
+  const activeCameraId = (selectedCameraHasActiveStream ? selectedCameraId : reportingCameraId)
+    || selectedCameraId
+    || Object.keys(liveTracks)[0]
+    || cameras.find(camera => camera.health_state)?.camera_id
+    || cameraIds[0]
+    || null;
+  const activeCamera = cameraModels.find(camera => camera.cameraId === activeCameraId) || null;
+  const activeTelemetryReceivedAt = activeCameraId ? liveTracks[activeCameraId]?.timestamp : null;
+  const telemetryAgeMs = activeTelemetryReceivedAt == null ? null : now - activeTelemetryReceivedAt;
+  const analysisState = activeCameraId ? liveTracks[activeCameraId]?.analysis_state : null;
+  const telemetryStatus = !isConnected ? 'DISCONNECTED'
+    : analysisState === 'COMPLETED' ? 'COMPLETED'
+    : telemetryAgeMs == null ? 'WAITING'
+    : telemetryAgeMs > 5000 ? 'STALE'
+    : 'LIVE';
+  const activeMetrics = activeCameraId ? metrics[activeCameraId] : null;
+  const metricTimestampMs = activeMetrics?.timestamp ? Date.parse(activeMetrics.timestamp) : NaN;
+  const metricsFresh = Number.isFinite(metricTimestampMs) && now - metricTimestampMs < 30000;
+
+  const eventTimestampMs = (value) => {
+    if (!value) return NaN;
+    const date = parseUtc(value);
+    return date ? date.getTime() : NaN;
+  };
+
+  useEffect(() => {
+    if (!activeCameraId) return;
+    refreshEventsForContext(activeCameraId, videoSessionId);
+    refreshTelemetryForContext(activeCameraId, videoSessionId);
+  }, [activeCameraId, videoSessionId, refreshEventsForContext, refreshTelemetryForContext]);
+
+
+  // On mount: check if the server already has a browser-playable video
+  // from a previous session.  This avoids the empty-feed state after a
+  // page refresh when the edge runner is still processing the last upload.
+  useEffect(() => {
+    const checkExistingVideo = async () => {
+      try {
+        const res = await authFetch('/api/dashboard/video/current');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.preview_url) {
+          if (data.session_id) {
+            setVideoSessionId(data.session_id);
+          }
+          const mediaRes = await authFetch(data.preview_url);
+          if (mediaRes.ok) {
+            const blob = await mediaRes.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            setMediaUrl(blobUrl);
+            setMediaType('video');
+          }
+        }
+      } catch (_) {/* non-fatal */}
+    };
+    checkExistingVideo();
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('video/')) {
+      setUploadError('Please select a supported video file.');
+      return;
+    }
+
+    resetRealtimeState();
+    setUploadError(null);
+    setPlaybackEnded(false);
+    setSessionStartTime(Date.now());
+    setLatestEvent(null);
+    const nextUrl = URL.createObjectURL(file);
+    if (mediaUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaUrl);
+    // Avoid presenting a known-incompatible AVI/DivX blob while the backend
+    // creates the browser preview. Native MP4 files can still render instantly.
+    setMediaUrl(file.type === 'video/mp4' ? nextUrl : null);
+    setMediaType('video');
+    setIsUploading(true);
+    setVideoSessionId(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await authFetch('/api/dashboard/video/upload', { method: 'POST', body: formData });
+      if (!res.ok) {
+        let detail = 'Video upload failed.';
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* keep concise fallback */ }
+        throw new Error(detail);
+      }
+      const uploaded = await res.json();
+      if (uploaded.status === 'ok_no_preview') {
+        URL.revokeObjectURL(nextUrl);
+        setMediaUrl(null);
+        if (uploaded.session_id) setVideoSessionId(uploaded.session_id);
+        setUploadError(uploaded.message);
+        return;
+      }
+      if (uploaded.session_id) setVideoSessionId(uploaded.session_id);
+      if (uploaded.preview_url) {
+        const mediaRes = await authFetch(uploaded.preview_url);
+        if (mediaRes.ok) {
+            const blob = await mediaRes.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            if (nextUrl !== mediaUrl) URL.revokeObjectURL(nextUrl);
+            setMediaUrl(blobUrl);
+        } else {
+            throw new Error('Failed to load video media.');
+        }
+      } else if (file.type !== 'video/mp4') {
+        throw new Error('This video needs an H.264 MP4 preview, but the server could not create one.');
+      }
+    } catch (error) {
+      console.error('Upload error:', error);
+      URL.revokeObjectURL(nextUrl);
+      setMediaUrl(null);
+      setUploadError(error.message || 'Video upload failed.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
+  useEffect(() => () => {
+    if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+  }, [mediaUrl]);
+
+  const [fleetHealth, setFleetHealth] = useState([]);
+  
+  useEffect(() => {
+    const fetchHealth = async () => {
+      try {
+        const response = await authFetch('/api/nodes/health');
+        if (response.ok) setFleetHealth(await response.json());
+      } catch (e) {
+        console.error("Failed to fetch fleet health", e);
+      }
+    };
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   const triggerUpload = () => fileInputRef.current?.click();
 
-  // Only accept events once the operator has loaded a demo feed
-  const demoEvents = events.filter(e => new Date(e.timestamp).getTime() >= sessionStartTime);
-  useEffect(() => {
-    if (mediaUrl && demoEvents.length > 0) {
-      setLatestEvent(demoEvents[0]);
+  // Events for the selected camera and active uploaded-video context.
+  const contextualEvents = [];
+  const _seenIds = new Set();
+  events.forEach(e => {
+    if (activeCameraId && e.camera_id !== activeCameraId) return;
+    // Prefer the exact stream contract. A camera/time fallback is allowed
+    // only for genuinely legacy events that have no stream_id and only while
+    // this browser has a known upload start time.
+    if (videoSessionId && e.stream_id && e.stream_id !== videoSessionId) return;
+    if (videoSessionId && !e.stream_id) {
+      const timestamp = eventTimestampMs(e.timestamp);
+      if (!sessionStartTime || !Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
     }
-  }, [demoEvents, mediaUrl]);
+    
+    // Deduplication
+    const id = e.event_id || e.id;
+    if (id) {
+      if (_seenIds.has(id)) return;
+      _seenIds.add(id);
+    }
+    
+    // Legacy fallback applies only when no session contract is available.
+    if (!videoSessionId) {
+      const timestamp = eventTimestampMs(e.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
+    }
+    contextualEvents.push(e);
+  });
 
-  const parsed = latestEvent ? parseDecisionReason(latestEvent.decision_reason) : null;
-  // Prefer the live per-camera health push (real, arrives roughly every 5s
-  // independent of whether any event has fired -- see
-  // backend/api/cameras.py's POST /cameras/{id}/health) over the
-  // snapshot embedded in the latest event, which is only as fresh as
-  // whenever that event last fired and could be stale. Falls back to the
-  // event's own recorded value when no live push has arrived yet for this
-  // camera. `health` was previously fetched from the socket and never
-  // actually used here.
-  const healthState = (latestEvent && health[latestEvent.camera_id]?.health_state)
-    || latestEvent?.camera_health_state; // 'OK' | 'DEGRADED' | 'FAILED'
+  useEffect(() => {
+    if (mediaUrl && contextualEvents.length > 0) {
+      setLatestEvent(contextualEvents[0]);
+    }
+  }, [contextualEvents.length, contextualEvents[0]?.event_id, contextualEvents[0]?.id, mediaUrl]);
+
+  const parsed = latestEvent ? parseDecisionReason(latestEvent) : null;
+  // Reliability factors and Gate 1 must describe the same event snapshot.
+  // Live camera health is only a fallback when no event health was recorded.
+  const healthState = latestEvent?.camera_health_state
+    || (latestEvent && health[latestEvent.camera_id]?.health_state); // 'OK' | 'DEGRADED' | 'FAILED'
   const sceneCondition = latestEvent?.scene_condition;
   const decisionMeta = DECISION_META[latestEvent?.decision_state] || null;
   const whyExplanation = explainDecision(parsed);
+  let liveTelemetry = !activeCameraId ? null : liveTracks[activeCameraId];
+  if (liveTelemetry && videoSessionId && liveTelemetry.stream_id && liveTelemetry.stream_id !== videoSessionId) {
+    liveTelemetry = null;
+  }
 
   const StatusPill = ({ title, desc, type, active }) => {
     let colors = '';
     let icon = null;
     
     if (type === 'detected') {
-      colors = active ? 'bg-ok text-black' : 'border border-ok text-ok opacity-50';
-      icon = <CheckCircle size={20} />;
+      colors = active ? 'bg-ok text-black' : 'badge-outline';
+      icon = <CheckCircle size={16} />;
     } else if (type === 'uncertain') {
-      colors = active ? 'bg-warning text-black' : 'border border-warning text-warning opacity-50';
-      icon = <HelpCircle size={20} />;
+      colors = active ? 'bg-warning text-black' : 'badge-outline';
+      icon = <HelpCircle size={16} />;
     } else {
-      colors = active ? 'bg-neutral text-white' : 'border border-neutral text-neutral opacity-50';
-      icon = <HelpCircle size={20} />;
+      colors = active ? 'bg-danger text-white' : 'badge-outline';
+      icon = <ShieldAlert size={16} />;
     }
 
     return (
-      <div className={`flex flex-col rounded ${colors} transition-all ${active ? 'shadow-lg scale-105' : ''}`} style={{ padding: '0.75rem', height: '100%' }}>
-        <div className="flex items-center" style={{ gap: '0.5rem', marginBottom: '0.1rem' }}>
+      <div className={`dashboard-status-pill card ${colors} transition-all ${active ? 'shadow-lg scale-105' : 'opacity-60'}`} style={{ padding: '0.625rem', height: '100%', borderColor: active ? 'transparent' : 'var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+        <div className="flex items-center" style={{ gap: '0.375rem', marginBottom: '0.2rem' }}>
           {icon}
-          <span className="font-display font-bold text-base">{title}</span>
+          <span className="font-display font-bold" style={{ fontSize: '0.7rem', letterSpacing: '0.05em' }}>{title}</span>
         </div>
-        <span className="text-[10px] font-body opacity-80">{desc}</span>
+        <span className="font-body" style={{ fontSize: '0.55rem', opacity: 0.8, lineHeight: 1.2 }}>{desc}</span>
       </div>
     );
   };
 
   const LogicGate = ({ num, title, stats, active }) => (
-    <div className={`flex rounded border ${active ? 'border-ok bg-[rgba(74,222,128,0.05)]' : 'border-color opacity-50'} relative`} style={{ padding: '0.5rem', gap: '0.75rem' }}>
+    <div className={`dashboard-logic-gate flex rounded border ${active ? 'border-ok bg-[rgba(34,211,164,0.05)]' : 'border-color opacity-50'} relative`} style={{ padding: '0.5rem', gap: '0.75rem', borderRadius: 'var(--radius-md)' }}>
       <div className="flex-shrink-0 mt-1">
-        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${active ? 'border-ok text-ok' : 'border-muted text-muted'}`}>
-          {active && <CheckCircle size={10} />}
+        <div className={`w-3 h-3 rounded-full border-2 flex items-center justify-center ${active ? 'border-ok text-ok bg-[rgba(34,211,164,0.2)]' : 'border-color text-muted'}`}>
         </div>
       </div>
       <div className="flex flex-col w-full">
-        <span className="text-[11px] font-display text-muted uppercase tracking-wider mb-1" style={{ marginBottom: '0.25rem' }}>Gate {num} — {title}</span>
-        <div className="flex justify-between items-center bg-dark rounded border border-color" style={{ padding: '0.35rem' }}>
+        <span className="dashboard-gate-title font-display text-muted uppercase tracking-wider" style={{ fontSize: '0.55rem', letterSpacing: '0.1em', marginBottom: '0.25rem' }}>Gate {num} — {title}</span>
+        <div className="flex justify-between items-center rounded border border-color" style={{ padding: '0.35rem', background: 'var(--bg-base)' }}>
           {stats}
         </div>
       </div>
       
-      {/* Connecting line. w-[2px] was a bracket-notation class (see
-          index.css's "looks like Tailwind, isn't real" entry) — never
-          applied any real width, same as every other arbitrary-value class
-          in this file until converted to a real inline style like this. */}
-      {num < 3 && <div className="absolute left-6 top-8 h-12 bg-border-color -z-10" style={{ width: '2px' }}></div>}
+      {num < 3 && <div className="absolute left-6 top-8 h-12 bg-border-color -z-10" style={{ width: '1px' }}></div>}
     </div>
   );
 
   return (
-    <div className="h-full flex flex-col" style={{ gap: '1rem' }}>
-      <div className="flex-col">
-        <h2 className="text-xl font-display text-main tracking-widest uppercase">Border Intelligence Center</h2>
-        <span className="text-sm text-muted font-display tracking-widest uppercase">Active Monitoring Zone: Sector Alpha</span>
+    <div className="dashboard-page h-full flex flex-col" style={{ gap: '1rem' }}>
+      <div className="section-header">
+        <div>
+          <div className="section-title">Border Intelligence Center</div>
+          <div className="section-sub">Real-time camera, edge and reliability monitoring</div>
+        </div>
+        <div className="dashboard-command-status">
+          <label className="dashboard-camera-select">
+            <span>ACTIVE CAMERA</span>
+            <select
+              value={activeCameraId || ''}
+              onChange={(event) => {
+                setSelectedCameraId(event.target.value);
+                setLatestEvent(null);
+                setPlaybackEnded(false);
+              }}
+              disabled={cameraIds.length === 0}
+            >
+              {cameraIds.length === 0 && <option value="">No camera configured</option>}
+              {cameraModels.map(camera => {
+                return <option key={camera.cameraId} value={camera.cameraId}>{camera.friendlyName} · {camera.displayId} · {camera.status}</option>;
+              })}
+            </select>
+          </label>
+          <div className={`dashboard-status-chip status-${backendStatus.toLowerCase()}`}>
+            <span>BACKEND</span><strong>{backendStatus}</strong>
+          </div>
+          <div className={`dashboard-status-chip status-${connectionStatus.toLowerCase()}`}>
+            <span>SOCKET</span><strong>{connectionStatus}</strong>
+          </div>
+          <div className={`dashboard-status-chip status-${telemetryStatus.toLowerCase()}`}>
+            <span>TELEMETRY</span><strong>{telemetryStatus}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="dashboard-live-strip">
+        <div><span>CAMERA</span><strong title={activeCamera?.displayId}>{activeCamera?.friendlyName || 'Not configured'}</strong></div>
+        <div><span>CAMERA HEALTH</span><strong>{health[activeCameraId]?.health_state || 'UNKNOWN'}</strong></div>
+        <div><span>FPS</span><strong>{metricsFresh && Number.isFinite(activeMetrics?.fps) ? activeMetrics.fps.toFixed(2) : 'N/A'}</strong></div>
+        <div><span>LIVE TRACKS</span><strong>{telemetryStatus === 'LIVE' ? (liveTracks[activeCameraId]?.tracks?.length ?? 0) : 'N/A'}</strong></div>
+        <div><span>FRAME</span><strong>{telemetryStatus === 'LIVE' && liveTracks[activeCameraId]?.frame_width ? `${liveTracks[activeCameraId].frame_width}×${liveTracks[activeCameraId].frame_height}` : 'N/A'}</strong></div>
+        <div><span>LAST TELEMETRY</span><strong>{telemetryAgeMs == null ? 'Never' : `${Math.max(0, telemetryAgeMs / 1000).toFixed(1)}s ago`}</strong></div>
       </div>
 
       {/* h-[calc(100%-80px)], flex-[3]/flex-[2] (below), and min-h-[400px]
@@ -204,10 +468,10 @@ export default function Dashboard() {
           .absolute/.relative were fixed and stopped accidentally
           contributing document-flow height. Converted to real inline
           styles. */}
-      <div className="flex" style={{ height: 'calc(100% - 60px)', gap: '1rem' }}>
+      <div className="dashboard-main-grid flex" style={{ flex: 1, minHeight: 0, gap: '1rem' }}>
 
         {/* Left Column */}
-        <div className="flex-col h-full" style={{ flex: 3, display: 'flex', gap: '0.75rem' }}>
+        <div className="dashboard-left-column flex-col h-full" style={{ flex: 3, display: 'flex', gap: '0.75rem' }}>
           {/* Hidden file input — triggered from VideoFeed's upload button */}
           <input
             type="file"
@@ -217,49 +481,122 @@ export default function Dashboard() {
             style={{ display: 'none' }}
           />
 
-          <div className="flex-grow" style={{ minHeight: '300px' }}>
+          <div className="dashboard-video-slot" style={{ minHeight: '300px' }}>
             <VideoFeed
               eventData={latestEvent}
-              liveTracksData={liveTracks['cam-border-01']}
-              isConnected={true}
+              liveTracksData={liveTelemetry}
+              telemetryStatus={telemetryStatus}
+              cameraId={activeCameraId}
+              playbackEnded={playbackEnded}
               demoScenario={demoScenario}
               mediaUrl={mediaUrl}
               mediaType={mediaType}
+              currentFps={metricsFresh ? activeMetrics?.fps : null}
               onUpload={triggerUpload}
               isUploading={isUploading}
+              canUpload={canUpload}
+              uploadError={uploadError}
+              onVideoEnded={() => setPlaybackEnded(true)}
             />
           </div>
 
-          <div className="bg-panel border rounded flex flex-col" style={{ padding: '0.75rem', minHeight: '10rem' }}>
-            <div className="flex justify-between items-center border-b border-color pb-1 mb-1" style={{ paddingBottom: '0.25rem', marginBottom: '0.25rem' }}>
-              <span className="text-sm font-display text-muted uppercase tracking-widest">Event Timeline</span>
+          <div className="dashboard-timeline-card card" style={{ minHeight: '21rem' }}>
+            <div className="card-header">
+              <span className="card-title">Event Timeline</span>
               <button
                 onClick={() => setShowWhy((v) => !v)}
-                className="text-xs text-ok border border-ok rounded px-2 py-1 hover:bg-[rgba(74,222,128,0.1)] transition-colors"
+                className="btn btn-sm btn-outline"
+                style={{ fontSize: '0.5rem', letterSpacing: '0.05em' }}
               >
                 WHY THIS ALERT?
               </button>
             </div>
-            {showWhy && (
-              <div className="text-xs font-body text-main bg-dark border border-color rounded mb-2" style={{ padding: '0.5rem', marginBottom: '0.5rem' }}>
-                {whyExplanation || 'No real event yet to explain — this fills in from the same decision_reason data the Reliability Decision panel shows, once one arrives.'}
-              </div>
-            )}
-            <div className="overflow-y-auto flex flex-col gap-2 flex-grow pr-2">
-              {!mediaUrl ? (
-                <div className="text-muted text-sm text-center mt-4">Upload a demo video to begin analysis</div>
-              ) : demoEvents.length === 0 ? (
-                <div className="text-muted text-sm text-center mt-4">Waiting for events...</div>
-              ) : (
-                demoEvents.map((ev, i) => (
-                  <div key={i} className="flex gap-4 text-sm font-body">
-                    <span className="text-muted w-20">{parseUtc(ev.timestamp).toISOString().substring(11, 19)}</span>
-                    <span className={i === 0 ? 'text-ok' : 'text-main'}>
-                      {ev.decision_state === 'DETECTED' ? `Track #${ev.track_id || ''} established. Crossed virtual fence line.` : `Motion detected in Sector 4`}
-                    </span>
-                  </div>
-                ))
+            
+            <div className="flex flex-col" style={{ padding: '0.75rem', gap: '0.5rem', overflowY: 'auto' }}>
+              {showWhy && (
+                <div className="text-xs font-body text-main border border-color rounded mb-2" style={{ padding: '0.5rem', background: 'var(--bg-base)' }}>
+                  {whyExplanation || 'No real event yet to explain — this fills in from the same decision_reason data the Reliability Decision panel shows, once one arrives.'}
+                </div>
               )}
+              <div className="flex flex-col gap-2 flex-grow pr-2">
+                {!mediaUrl && contextualEvents.length === 0 && !(liveTelemetry?.tracks?.length > 0) ? (
+                  <div className="state-empty" style={{ padding: '1rem' }}>
+                    <div className="state-empty-sub">No events recorded for this camera yet</div>
+                  </div>
+                ) : analysisState === 'COMPLETED' && contextualEvents.length === 0 ? (
+                  <div className="state-empty" style={{ padding: '1rem' }}>
+                    <div className="state-empty-sub">VIDEO COMPLETE — NO RULE EVENTS DETECTED FOR THIS STREAM</div>
+                  </div>
+                ) : contextualEvents.length === 0 && !(liveTelemetry?.tracks?.length > 0) ? (
+                  <div className="state-loading" style={{ padding: '1rem' }}>
+                    <span>PROCESSING — NO RULE EVENT TRIGGERED YET</span>
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        {['TIME','TRACK','TYPE','DECISION','SEVERITY','CONF','VERIFIED'].map(h => (
+                          <th key={h} style={{
+                            fontFamily: 'var(--font-display)', fontSize: '0.75rem',
+                            fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+                            color: 'var(--text-muted)', padding: '0.25rem 0.5rem',
+                            textAlign: 'left', whiteSpace: 'nowrap',
+                          }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Real events from processed video */}
+                      {contextualEvents.map((ev, i) => {
+                        const parsedEv = parseDecisionReason(ev);
+                        const conf = parsedEv?.kind === 'scored'
+                          ? `${Math.round(parsedEv.d * 100)}%`
+                          : 'N/A';
+                        const tsDate = parseUtc(ev.timestamp);
+                        const tsStr = tsDate && !isNaN(tsDate)
+                          ? tsDate.toISOString().substring(11, 19)
+                          : 'N/A';
+                        const decColor =
+                          ev.decision_state === 'DETECTED'  ? 'var(--color-ok)'      :
+                          ev.decision_state === 'UNCERTAIN' ? 'var(--color-warning)'  :
+                          ev.decision_state === 'ABSTAIN'   ? 'var(--color-danger)'   :
+                                                              'var(--text-muted)';
+                        const typeLabel = ev.event_type
+                          ? ev.event_type.replace(/_/g, ' ')
+                          : (ev.detection_class || 'N/A');
+                        return (
+                          <tr key={ev.event_id || ev.id || `${ev.timestamp}-${ev.track_id||''}-${i}`}
+                              style={{ borderBottom: '1px solid rgba(30,48,80,0.4)' }}>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--accent)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{tsStr}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>#{ev.track_id ?? 'N/A'}</td>
+                            <td style={{ fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={typeLabel}>{typeLabel}</td>
+                            <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.8rem', fontWeight: 700, color: decColor, padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.decision_state || 'N/A'}</td>
+                            <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.75rem', color: ev.severity === 'HIGH' || ev.severity === 'CRITICAL' ? 'var(--color-danger)' : 'var(--text-muted)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.severity || 'N/A'}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>{conf}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: ev.verified_ok === true ? 'var(--color-ok)' : 'var(--text-muted)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.verified_ok == null ? 'N/A' : ev.verified_ok ? 'YES' : 'NO'}</td>
+                          </tr>
+                        );
+                      })}
+                      {/* Live telemetry rows when no decisioned events yet */}
+                      {contextualEvents.length === 0 && liveTelemetry?.tracks?.map((track, i) => (
+                        <tr key={`tel-${track.track_id}-${i}`} style={{ borderBottom: '1px solid rgba(30,48,80,0.4)' }}>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--accent)', padding: '0.3rem 0.5rem' }}>
+                            {liveTelemetry.video_time != null ? `${liveTelemetry.video_time.toFixed(1)}s` : 'LIVE'}
+                          </td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>#{track.track_id ?? '—'}</td>
+                          <td style={{ fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>{track.detection_class || 'object'}</td>
+                          <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent)', padding: '0.3rem 0.5rem' }}>TRACKING</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>N/A</td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>
+                            {Number.isFinite(track.confidence) ? `${Math.round(track.confidence * 100)}%` : 'N/A'}
+                          </td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-dim)', padding: '0.3rem 0.5rem' }}>N/A</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
 
@@ -268,59 +605,60 @@ export default function Dashboard() {
               camera has observed the same detection class within the expected
               travel-time window.  This is NOT identity re-identification —
               see backend/services/cross_camera.py for honest scope. */}
-          <div className="bg-panel border rounded p-4 flex flex-col gap-2 mt-2">
-            <div className="flex items-center gap-2 border-b border-color pb-2">
-              <GitMerge size={14} className="text-muted" />
-              <span className="text-xs font-display text-muted uppercase tracking-widest">Cross-Camera Corroboration</span>
-              <span className="text-[10px] text-muted border border-color rounded px-1 ml-auto">temporal/spatial only — not identity</span>
+          <div className="dashboard-cross-camera-card card mt-2">
+            <div className="card-header">
+              <div className="flex items-center gap-2">
+                <GitMerge size={12} className="text-muted" />
+                <span className="card-title">Cross-Camera Corroboration</span>
+              </div>
+              <span className="badge badge-neutral" style={{ fontSize: '0.45rem' }}>temporal/spatial only</span>
             </div>
-            {latestEvent?.corroboration_score != null ? (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-ok text-lg">&#10003;</span>
-                  <span className="text-sm font-display text-ok">
-                    Corroborated by{' '}
-                    <span className="font-bold">{latestEvent.corroborated_by_event_id ? 'cam-checkpoint-01' : 'second camera'}</span>
-                  </span>
+            <div className="flex flex-col" style={{ padding: '0.75rem' }}>
+              {latestEvent?.corroborated_by_event_id ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-ok text-lg">&#10003;</span>
+                    <span className="text-sm font-display text-ok">
+                      Corroborated by{' '}
+                      <span className="font-bold">{latestEvent.corroborating_camera_id || 'second camera'}</span>
+                    </span>
+                  </div>
+                  <div className="flex gap-4 text-xs font-body text-muted">
+                    <span>Tc = <span className="text-main">{Number.isFinite(latestEvent.corroboration_score) ? latestEvent.corroboration_score.toFixed(3) : 'N/A'}</span></span>
+                    {latestEvent.corroboration_delta_t_s != null && (
+                      <span>Δt = <span className="text-main">{latestEvent.corroboration_delta_t_s.toFixed(0)}s</span> apart</span>
+                    )}
+                    {latestEvent.corroboration_distance_m != null && (
+                      <span><span className="text-main">{latestEvent.corroboration_distance_m.toFixed(0)}m</span> separation</span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted italic mt-1">Same detection class appeared at a spatially-plausible camera within expected travel time. No identity re-id claimed.</span>
                 </div>
-                <div className="flex gap-4 text-xs font-body text-muted">
-                  <span>Tc = <span className="text-main">{latestEvent.corroboration_score.toFixed(3)}</span></span>
-                  {latestEvent.corroboration_delta_t_s != null && (
-                    <span>Δt = <span className="text-main">{latestEvent.corroboration_delta_t_s.toFixed(0)}s</span> apart</span>
-                  )}
-                  {latestEvent.corroboration_distance_m != null && (
-                    <span><span className="text-main">{latestEvent.corroboration_distance_m.toFixed(0)}m</span> camera separation</span>
-                  )}
+              ) : latestEvent ? (
+                <div className="flex items-start gap-2">
+                  <span className="text-warning text-base">&#9888;</span>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-display text-warning">NO CORROBORATION / INSUFFICIENT EVIDENCE</span>
+                    <span className="text-xs text-muted">This event has no qualifying second-camera match in the persisted record. A result will appear only when a real spatially and temporally plausible event is available.</span>
+                  </div>
                 </div>
-                <span className="text-[10px] text-muted italic">Same detection class appeared at a spatially-plausible camera within expected travel time. No identity or re-identification claimed.</span>
-              </div>
-            ) : latestEvent ? (
-              <div className="flex items-start gap-2">
-                <span className="text-warning text-base">&#9888;</span>
-                <div className="flex flex-col">
-                  <span className="text-sm font-display text-warning">No corroboration available</span>
-                  <span className="text-xs text-muted">Single-camera observation only — confidence reduced. Either cam-checkpoint-01 has not yet reported a matching event, or spatial/temporal plausibility was below threshold.</span>
-                </div>
-              </div>
-            ) : (
-              <span className="text-xs text-muted">Waiting for a real event…</span>
-            )}
+              ) : (
+                <span className="text-xs text-muted">Waiting for a real event…</span>
+              )}
+            </div>
           </div>
 
         </div>
 
         {/* Right Column */}
-        <div className="flex-col h-full" style={{ flex: 2, display: 'flex', gap: '0.75rem' }}>
-          <div className="bg-panel border rounded flex flex-col" style={{ padding: '1rem', gap: '0.75rem' }}>
-            <div className="flex justify-between items-start">
-              <div className="flex-col">
-                <span className="text-[15px] font-display text-main uppercase">Reliability Decision</span>
-                <span className="text-[10px] font-display text-muted uppercase tracking-widest">Logic Pipeline</span>
-              </div>
-              <ShieldCheck size={20} className="text-muted" />
+        <div className="dashboard-right-column flex-col h-full" style={{ flex: 2, display: 'flex', gap: '0.75rem' }}>
+          <div className="dashboard-reliability-card card">
+            <div className="card-header">
+              <span className="card-title">Reliability Decision Pipeline</span>
+              <ShieldCheck size={14} className="text-muted" />
             </div>
 
-            <div className="flex flex-col relative" style={{ gap: '0.5rem' }}>
+            <div className="flex flex-col relative" style={{ gap: '0.5rem', padding: '0.75rem' }}>
               <LogicGate
                 num={1} title="Camera Health (hard override)"
                 active={!!latestEvent}
@@ -337,7 +675,7 @@ export default function Dashboard() {
                       )}
                     </>
                   ) : (
-                    <span className="text-xs text-muted">Waiting for a real event…</span>
+                    <span className="text-xs text-muted">{liveTelemetry ? 'N/A — no reliability event for current telemetry' : 'Waiting for a real event…'}</span>
                   )
                 }
               />
@@ -351,7 +689,7 @@ export default function Dashboard() {
                       <span className="text-xs border px-1 rounded bg-elevated">{SCENE_CONDITION_LABELS[sceneCondition] || sceneCondition}</span>
                     </>
                   ) : (
-                    <span className="text-xs text-muted">Waiting for a real event…</span>
+                    <span className="text-xs text-muted">{liveTelemetry ? 'N/A — no scene decision for current telemetry' : 'Waiting for a real event…'}</span>
                   )
                 }
               />
@@ -388,7 +726,7 @@ export default function Dashboard() {
                   ) : parsed?.kind === 'abstain' ? (
                     <span className="text-xs text-muted">Gate 1 override — R was never computed for this event</span>
                   ) : (
-                    <span className="text-xs text-muted">Waiting for a real event…</span>
+                    <span className="text-xs text-muted">{liveTelemetry ? 'N/A — reliability is emitted only with a processed event' : 'Waiting for a real event…'}</span>
                   )
                 }
               />
@@ -400,23 +738,23 @@ export default function Dashboard() {
                 states implying it did something on click when it never
                 did. Changed to a <div role="status"> — same visual
                 treatment, honestly non-interactive. */}
-            <div className="mt-auto" style={{ marginTop: 'auto' }}>
+            <div className="mt-auto" style={{ marginTop: 'auto', padding: '0 0.75rem 0.75rem' }}>
               {decisionMeta ? (
-                <div role="status" className={`w-full border rounded font-display text-sm tracking-widest flex items-center justify-center ${decisionMeta.colorClass}`} style={{ padding: '0.75rem 0', gap: '0.5rem' }}>
-                  <decisionMeta.icon size={18} /> [{decisionMeta.label}]
+                <div role="status" className={`w-full border rounded font-display tracking-widest flex items-center justify-center ${decisionMeta.colorClass}`} style={{ padding: '0.5rem 0', gap: '0.5rem', fontSize: '0.75rem' }}>
+                  <decisionMeta.icon size={14} /> [{decisionMeta.label}]
                 </div>
               ) : (
-                <div role="status" className="w-full border border-color text-muted rounded font-display text-sm tracking-widest flex items-center justify-center opacity-60" style={{ padding: '0.75rem 0', gap: '0.5rem' }}>
-                  <HelpCircle size={18} /> [AWAITING EVENT]
+                <div role="status" className="w-full border border-color text-muted rounded font-display tracking-widest flex items-center justify-center opacity-60" style={{ padding: '0.5rem 0', gap: '0.5rem', fontSize: '0.75rem' }}>
+                  <HelpCircle size={14} /> [AWAITING EVENT]
                 </div>
               )}
             </div>
           </div>
 
           {/* Not `grid grid-cols-3` — inert class, see docs/LIMITATIONS.md */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', flexGrow: 1 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
             <StatusPill 
-              title="DETECTED" desc="Evidence Cryptographically Verified" 
+              title="DETECTED" desc="Reliable detection confirmed" 
               type="detected" active={latestEvent?.decision_state === 'DETECTED'} />
             <StatusPill 
               title="UNCERTAIN" desc="Confidence < Threshold" 
@@ -424,6 +762,45 @@ export default function Dashboard() {
             <StatusPill 
               title="ABSTAIN" desc="System Unreliable" 
               type="abstain" active={latestEvent?.decision_state === 'ABSTAIN'} />
+          </div>
+          
+          {/* System Fleet Health Widget */}
+          <div className="dashboard-fleet-card card flex-grow">
+             <div className="card-header">
+                <span className="card-title">System Fleet Health</span>
+                <span className="badge badge-neutral" style={{ fontSize: '0.45rem' }}>{fleetHealth.length} Nodes</span>
+             </div>
+             <div className="overflow-y-auto custom-scrollbar flex flex-col gap-2 flex-grow" style={{ padding: '0.75rem' }}>
+               {fleetHealth.length === 0 && <div className="state-empty-sub">Health data unavailable</div>}
+               {fleetHealth.map(node => {
+                 const lastPingMs = node.last_ping ? Date.parse(node.last_ping) : NaN;
+                 const nodeFresh = Number.isFinite(lastPingMs) && now - lastPingMs < 30000;
+                 const nodeState = nodeFresh ? node.health_state : (node.last_ping ? 'OFFLINE' : 'UNKNOWN');
+                 let color = 'text-warning';
+                 let bgColor = 'bg-[rgba(245,158,11,0.05)]';
+                 if (nodeState === 'FAILED' || nodeState === 'OFFLINE') {
+                   color = 'text-danger';
+                   bgColor = 'bg-[rgba(239,68,68,0.05)]';
+                 } else if (nodeFresh && node.health_state === 'OK') {
+                   color = 'text-ok';
+                   bgColor = 'bg-[rgba(34,211,164,0.05)]';
+                 }
+
+                 return (
+                   <div key={node.camera_id} className={`flex flex-col border rounded p-2 ${bgColor}`} style={{ borderColor: `var(--color-${color.replace('text-','')})` }}>
+                     <div className="flex justify-between items-center mb-1">
+                       <span className={`font-display ${color}`} style={{ fontSize: '0.65rem' }}>{node.name}</span>
+                       <span className={`font-display ${color}`} style={{ fontSize: '0.5rem' }}>{nodeState}</span>
+                     </div>
+                     <div className="flex justify-between text-muted" style={{ fontSize: '0.55rem', fontFamily: 'var(--font-mono)' }}>
+                       <span>FPS: {nodeFresh && Number.isFinite(node.fps) ? node.fps.toFixed(1) : 'N/A'}</span>
+                       <span>CPU: {nodeFresh && Number.isFinite(node.cpu_percent) ? `${node.cpu_percent.toFixed(1)}%` : 'N/A'}</span>
+                       <span>Uptime: {nodeFresh && Number.isFinite(node.uptime_seconds) ? `${Math.floor(node.uptime_seconds / 3600)}h` : 'N/A'}</span>
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
           </div>
         </div>
 

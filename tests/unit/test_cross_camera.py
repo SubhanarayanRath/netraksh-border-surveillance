@@ -75,25 +75,25 @@ class TestTemporalConsistency:
     def test_delta_t_exactly_at_expected_midpoint_is_tc_one(self):
         t_min, t_max = 10.0, 30.0
         t_expected = (t_min + t_max) / 2.0
-        tc = temporal_consistency(t_expected, t_min, t_max)
+        tc, _ = temporal_consistency(t_expected, t_min, t_max)
         assert tc == pytest.approx(1.0, abs=1e-9)
 
     def test_tc_decreases_as_delta_t_moves_away_from_expected(self):
         t_min, t_max = 10.0, 30.0
         t_expected = (t_min + t_max) / 2.0
-        tc_near = temporal_consistency(t_expected + 2, t_min, t_max)
-        tc_far = temporal_consistency(t_expected + 20, t_min, t_max)
+        tc_near, _ = temporal_consistency(t_expected + 2, t_min, t_max)
+        tc_far, _ = temporal_consistency(t_expected + 20, t_min, t_max)
         assert 0.0 <= tc_far < tc_near <= 1.0
 
     def test_tc_bounded_in_zero_one_for_extreme_delta_t(self):
-        tc = temporal_consistency(1_000_000.0, 10.0, 30.0)
+        tc, _ = temporal_consistency(1_000_000.0, 10.0, 30.0)
         assert 0.0 <= tc <= 1.0
 
     def test_zero_width_range_does_not_divide_by_zero(self):
         # Co-located cameras: t_min == t_max == 0. Without the MIN_SIGMA_SECONDS
         # floor this would be a division by zero; the floor keeps it a real,
         # finite, sensible value instead of raising or garbage.
-        tc = temporal_consistency(3.0, 0.0, 0.0)
+        tc, _ = temporal_consistency(3.0, 0.0, 0.0)
         assert 0.0 <= tc <= 1.0
         # sigma is floored at MIN_SIGMA_SECONDS, so this should match the
         # formula computed with that floor directly.
@@ -146,13 +146,13 @@ class TestFindCorroborationHonestlySkips:
         ev = _make_event(db_session, "ev-1", "cam-a", datetime(2026, 1, 1, 12, 0, 0))
         _make_event(db_session, "ev-2", "cam-b", datetime(2026, 1, 1, 12, 0, 5))
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None
 
     def test_no_corroboration_when_only_one_camera_exists(self, db_session):
         _make_camera(db_session, "cam-a", lat=28.60, lon=77.20)
         ev = _make_event(db_session, "ev-1", "cam-a", datetime(2026, 1, 1, 12, 0, 0))
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None
 
     def test_no_corroboration_across_an_implausible_distance(self, db_session):
         # Real, far-apart real-world coordinates (New Delhi <-> Mumbai,
@@ -164,7 +164,7 @@ class TestFindCorroborationHonestlySkips:
         ev = _make_event(db_session, "ev-1", "cam-delhi", datetime(2026, 1, 1, 12, 0, 0))
         _make_event(db_session, "ev-2", "cam-mumbai", datetime(2026, 1, 1, 12, 0, 1))
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None
 
     def test_no_corroboration_when_detection_class_differs(self, db_session):
         _make_camera(db_session, "cam-a", lat=28.6000, lon=77.2000)
@@ -172,7 +172,7 @@ class TestFindCorroborationHonestlySkips:
         ev = _make_event(db_session, "ev-1", "cam-a", datetime(2026, 1, 1, 12, 0, 0), detection_class="person")
         _make_event(db_session, "ev-2", "cam-b", datetime(2026, 1, 1, 12, 0, 30), detection_class="vehicle")
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None
 
     def test_no_corroboration_when_timing_is_implausible(self, db_session):
         # ~111m apart -> expected travel time is on the order of tens of
@@ -182,7 +182,7 @@ class TestFindCorroborationHonestlySkips:
         ev = _make_event(db_session, "ev-1", "cam-a", datetime(2026, 1, 1, 12, 0, 0))
         _make_event(db_session, "ev-2", "cam-b", datetime(2026, 1, 1, 14, 0, 0))
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None
 
 
 class TestFindCorroborationRealMatch:
@@ -197,7 +197,7 @@ class TestFindCorroborationRealMatch:
         ev = _make_event(db_session, "ev-1", "cam-a", t0)
         _make_event(db_session, "ev-2", "cam-b", t0 + timedelta(seconds=t_expected))
 
-        result = find_corroboration(ev, db_session)
+        _, result = find_corroboration(ev, db_session)
         assert result is not None
         assert result.other_event_id == "ev-2"
         assert result.other_camera_id == "cam-b"
@@ -218,7 +218,7 @@ class TestFindCorroborationRealMatch:
         _make_event(db_session, "ev-poor", "cam-b", t0 + timedelta(seconds=t_expected + 500))
         _make_event(db_session, "ev-good", "cam-b", t0 + timedelta(seconds=t_expected))
 
-        result = find_corroboration(ev, db_session)
+        _, result = find_corroboration(ev, db_session)
         assert result is not None
         assert result.other_event_id == "ev-good"
 
@@ -265,4 +265,4 @@ class TestFindCorroborationRealMatch:
         ev = _make_event(db_session, "ev-1", "cam-a", datetime(2026, 1, 1, 12, 0, 0))
         _make_event(db_session, "ev-2", "cam-b", datetime(2026, 1, 1, 12, 0, 15))
 
-        assert find_corroboration(ev, db_session) is None
+        assert find_corroboration(ev, db_session)[1] is None

@@ -1,65 +1,99 @@
-import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck, ShieldAlert, LogOut } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { User, Activity, AlertTriangle, Cpu, ChevronDown, ShieldCheck, ShieldAlert, LogOut, Radio } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import Logo from './Logo';
-import { authFetch, logout } from '../services/auth';
+import { authFetch, logout, BACKEND_URL } from '../services/auth';
 import useAuth from '../hooks/useAuth';
-import useDemoScenario from '../hooks/useDemoScenario';
+
+// Freshness thresholds for edge telemetry
+const EDGE_STALE_MS  = 30_000;   // >30s without telemetry → STALE
+const EDGE_OFFLINE_MS = 120_000; // >2 min → OFFLINE
 
 const ROLE_COLORS = {
-  ADMIN: 'text-danger border-danger',
-  OPERATOR: 'text-ok border-ok',
-  AUDITOR: 'text-warning border-warning',
+  ADMIN:    { text: 'var(--color-danger)', border: 'var(--color-danger)' },
+  OPERATOR: { text: 'var(--color-ok)',     border: 'var(--color-ok)'     },
+  AUDITOR:  { text: 'var(--color-warning)',border: 'var(--color-warning)'},
 };
 
 export default function Header() {
   const { isAuthenticated, role, username } = useAuth();
-  const { scenario } = useDemoScenario();
-  const [timeStr, setTimeStr] = useState('');
-  const [showSyncPanel, setShowSyncPanel] = useState(false);
+  const [timeStr, setTimeStr]           = useState('');
+  const [showSyncPanel, setShowSyncPanel]       = useState(false);
   const [showAccountPanel, setShowAccountPanel] = useState(false);
-  const [syncStatus, setSyncStatus] = useState({ queued: 0, synced: 0, failed: 0 });
-  const [pendingAlerts, setPendingAlerts] = useState(null); // null = not yet known
-  const [chainStatus, setChainStatus] = useState(null); // null = not yet checked
+  const [syncStatus, setSyncStatus]     = useState({ queued: 0, synced: 0, failed: 0 });
+  const [pendingAlerts, setPendingAlerts] = useState(null);
+  const [chainStatus, setChainStatus]   = useState(null);
 
+  // ── Real connectivity & edge freshness ────────────────────────────────────
+  // isWsConnected: set by netraksh-ws-connect / netraksh-ws-disconnect events
+  const [isWsConnected, setIsWsConnected] = useState(false);
+  // lastEdgeTelemetryMs: wall-clock time of most recent live_telemetry packet
+  const [lastEdgeTelemetryMs, setLastEdgeTelemetryMs] = useState(0);
+  // backendHealthy: whether GET /health returned 200 recently
+  const [backendHealthy, setBackendHealthy] = useState(true);
+
+  // ── Live clock ──────────────────────────────────────────────────────────
   useEffect(() => {
     const timer = setInterval(() => {
       const d = new Date();
-      setTimeStr(d.toISOString().substring(11, 19) + " UTC");
+      setTimeStr(d.toISOString().substring(11, 19));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch sync status periodically
+  // ── WS connectivity events (dispatched by useWebSocket.js) ──────────────
   useEffect(() => {
-    // /sync/status requires require_any_role (backend/api/system.py) — an
-    // anonymous viewer will never get anything but 401 from it. Polling it
-    // anyway every 5s regardless of auth state meant every unauthenticated
-    // visit spammed the console with a 401 every 5 seconds forever, for a
-    // request that was never going to succeed. Only poll once signed in.
+    const handleConnect    = () => setIsWsConnected(true);
+    const handleDisconnect = () => setIsWsConnected(false);
+    // Edge telemetry freshness — dispatched by useWebSocket every time
+    // a live_telemetry message is received (independent of WS status itself)
+    const handleEdge = () => setLastEdgeTelemetryMs(Date.now());
+
+    window.addEventListener('netraksh-ws-connect',      handleConnect);
+    window.addEventListener('netraksh-ws-disconnect',   handleDisconnect);
+    window.addEventListener('netraksh-edge-telemetry',  handleEdge);
+    return () => {
+      window.removeEventListener('netraksh-ws-connect',     handleConnect);
+      window.removeEventListener('netraksh-ws-disconnect',  handleDisconnect);
+      window.removeEventListener('netraksh-edge-telemetry', handleEdge);
+    };
+  }, []);
+
+  // ── Backend health check (HTTP GET /health, every 10s) ──────────────────
+  // Distinct from WS — backend may be reachable via HTTP even if WS drops.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const check = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/health`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        setBackendHealthy(res.ok);
+      } catch {
+        setBackendHealthy(false);
+      }
+    };
+    check();
+    const t = setInterval(check, 10_000);
+    return () => clearInterval(t);
+  }, [isAuthenticated]);
+
+  // ── Sync status (real queue size from /sync/status) ─────────────────────
+  useEffect(() => {
     if (!isAuthenticated) return undefined;
     const fetchSync = async () => {
       try {
         const res = await authFetch('/sync/status');
-        if (res.ok) {
-          const data = await res.json();
-          setSyncStatus(data);
-        }
-      } catch (e) {}
+        if (res.ok) setSyncStatus(await res.json());
+      } catch (_) {}
     };
     fetchSync();
     const timer = setInterval(fetchSync, 5000);
     return () => clearInterval(timer);
   }, [isAuthenticated]);
 
-  // The "⚠ 04" badge used to be a hardcoded literal "04" — never reflected
-  // anything real. /system/status already returns a real
-  // pending_acknowledgements count (backend/api/system.py); it just wasn't
-  // being read anywhere in the frontend.
+  // ── Alert count (real from /system/status) ──────────────────────────────
   useEffect(() => {
-    // Same reasoning as the sync-status poll above: /system/status also
-    // requires require_any_role, so this is a guaranteed 401 for anyone not
-    // signed in — only poll once authenticated.
     if (!isAuthenticated) return undefined;
     const fetchAlertCount = async () => {
       try {
@@ -75,12 +109,7 @@ export default function Header() {
     return () => clearInterval(timer);
   }, [isAuthenticated]);
 
-  // The sync panel's "Chain Integrity OK" line was a hardcoded literal,
-  // never actually checked — but GET /system/verify-chain (public, no auth
-  // required — backend/api/system.py) already does a real check across
-  // every EvidencePackage's stored verified_ok flag. Fetched when the panel
-  // opens rather than polled continuously, since this isn't data that
-  // changes on its own between opens.
+  // ── Chain integrity (on panel open) ────────────────────────────────────
   useEffect(() => {
     if (!showSyncPanel) return;
     const fetchChainStatus = async () => {
@@ -92,137 +121,228 @@ export default function Header() {
     fetchChainStatus();
   }, [showSyncPanel]);
 
+  // ── Derived status values ────────────────────────────────────────────────
+  // Each signal is independent:
+
+  // SYSTEM: reflects API/backend reachability + WS state
+  const systemStatus =
+    !backendHealthy  ? 'OFFLINE'     :
+    !isWsConnected   ? 'DEGRADED'    :
+                       'OPERATIONAL';
+  const systemColor =
+    systemStatus === 'OPERATIONAL' ? 'var(--color-ok)'      :
+    systemStatus === 'DEGRADED'    ? 'var(--color-warning)'  :
+                                     'var(--color-danger)';
+
+  // EDGE: reflects actual telemetry freshness — NOT just WS connectivity
+  const edgeAgeMs = lastEdgeTelemetryMs ? (Date.now() - lastEdgeTelemetryMs) : Infinity;
+  const edgeStatus =
+    edgeAgeMs < EDGE_STALE_MS   ? 'ONLINE'  :
+    edgeAgeMs < EDGE_OFFLINE_MS  ? 'STALE'   :
+                                   'OFFLINE';
+  const edgeColor =
+    edgeStatus === 'ONLINE'  ? 'var(--color-ok)'     :
+    edgeStatus === 'STALE'   ? 'var(--color-warning)' :
+                               'var(--text-dim)';
+
+  // SYNC: reflects WS link + queue state
+  const syncBuffering = syncStatus.queued > 0;
+  const syncStatus_val =
+    !isWsConnected ? 'DISCONNECTED' :
+    syncBuffering   ? 'BUFFERING'   :
+                      'CURRENT';
+  const syncColor =
+    syncStatus_val === 'CURRENT'      ? 'var(--color-ok)'     :
+    syncStatus_val === 'BUFFERING'    ? 'var(--color-warning)' :
+                                        'var(--color-danger)';
+
+  const roleStyle = ROLE_COLORS[role] || ROLE_COLORS.OPERATOR;
+
+  const StatusItem = ({ label, value, valueColor }) => (
+    <div className="topbar-status-item">
+      <span className="topbar-status-label">{label}</span>
+      <span className="topbar-status-value" style={{ color: valueColor || 'var(--text-main)' }}>
+        {value}
+      </span>
+    </div>
+  );
+
   return (
     <header className="header-top relative">
-      <div className="flex items-center gap-3">
-        <Logo size={30} />
-        <div className="flex-col">
-          <h1 className="text-lg font-display tracking-widest text-main m-0 p-0" style={{lineHeight: 1}}>NETRAKSH</h1>
-          <span className="text-xs text-muted font-display tracking-widest">BORDER INTELLIGENCE UNIT</span>
+      {/* Left — Brand */}
+      <div className="topbar-brand">
+        <Logo size={28} />
+        <div className="topbar-brand-text">
+          <span className="topbar-title">NETRAKSH</span>
+          <span className="topbar-sub">Border Intelligence Command Center</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-8">
-        <div className="flex-col items-center">
-          <span className="text-lg font-body text-main" style={{lineHeight: 1}}>{timeStr}</span>
-          <span className="text-xs text-muted font-display tracking-widest">SYSTEM TIME</span>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs font-display">
-            {/* Was a hardcoded "EDGE: ONLINE" regardless of any real state.
-                Still not tied to a real edge heartbeat (no such endpoint
-                exists yet — see docs/LIMITATIONS.md), but it now at least
-                honestly reflects the Demo Scenario Control panel's
-                "Offline State" selection instead of always claiming ONLINE
-                no matter what the demo panel next to it says. */}
-            <span className="flex items-center gap-1">
-              <Cpu size={12} className={scenario === 'offline' ? 'text-danger' : 'text-ok'} />
-              EDGE: {scenario === 'offline' ? 'OFFLINE' : 'ONLINE'}
-            </span>
-            <button 
-              onClick={() => {
-                setShowSyncPanel(!showSyncPanel);
-                if (!showSyncPanel) setShowAccountPanel(false);
-              }}
-              className="flex items-center gap-1 hover:text-white transition-colors relative"
-            >
-              <Activity size={12} className={syncStatus.queued > 0 ? "text-warning" : "text-ok"} /> 
-              SYNC: {syncStatus.queued > 0 ? 'BUFFERING' : '100%'}
-              <ChevronDown size={12} />
-            </button>
-          </div>
-          
-          <Link to="/cross-command-alerts" className="badge badge-danger hover:scale-105 transition-transform">
-            <AlertTriangle size={14} /> {pendingAlerts != null ? String(pendingAlerts).padStart(2, '0') : '--'}
-          </Link>
-          
-          {/* Was a purely decorative circle — no click handler, no real
-              session info, no way to sign out anywhere in the app. Every
-              login this whole project does (Evidence/Health/Alerts/
-              Performance's LoginPrompt) had nowhere to show who was
-              actually signed in or let them sign out again. */}
-          <button
-            onClick={() => {
-              setShowAccountPanel(!showAccountPanel);
-              if (!showAccountPanel) setShowSyncPanel(false);
-            }}
-            className={`w-8 h-8 rounded-full bg-elevated flex items-center justify-center border transition-colors ${isAuthenticated ? (ROLE_COLORS[role] || 'text-ok') : 'text-muted'}`}
-            title={isAuthenticated ? `${username} (${role})` : 'Not signed in'}
-          >
-            <User size={16} />
-          </button>
-        </div>
+      {/* Center — Mission Status Strip */}
+      <div className="topbar-status-strip">
+        <StatusItem
+          label="Command Zone"
+          value="Sector Alpha"
+          valueColor="var(--accent)"
+        />
+        <StatusItem
+          label="System"
+          value={systemStatus}
+          valueColor={systemColor}
+        />
+        <StatusItem
+          label="Edge"
+          value={edgeStatus}
+          valueColor={edgeColor}
+        />
+        <StatusItem
+          label="Sync"
+          value={syncStatus_val}
+          valueColor={syncColor}
+        />
       </div>
 
+      {/* Right — Time + Alerts + Account */}
+      <div className="topbar-right">
+        {/* Time */}
+        <div className="topbar-time">
+          <span className="topbar-time-value">{timeStr} UTC</span>
+          <span className="topbar-time-label">System Time</span>
+        </div>
+
+        {/* Sync detail panel toggle */}
+        <button
+          onClick={() => { setShowSyncPanel(!showSyncPanel); setShowAccountPanel(false); }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
+            padding: '0.3rem 0.625rem', borderRadius: 'var(--radius-md)',
+            background: 'transparent', border: '1px solid var(--border-color)',
+            color: 'var(--text-muted)', fontSize: '0.7rem',
+            fontFamily: 'var(--font-display)', letterSpacing: '0.08em',
+            textTransform: 'uppercase', cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          className="hover:text-main"
+          title="Sync Status"
+        >
+          <Activity size={12} style={{ color: syncColor }} />
+          Sync
+          <ChevronDown size={10} />
+        </button>
+
+        {/* Alert Badge */}
+        <Link
+          to="/cross-command-alerts"
+          className="badge badge-danger"
+          style={{ padding: '0.3rem 0.7rem', fontSize: '0.75rem' }}
+          title="Pending alerts"
+        >
+          <AlertTriangle size={12} />
+          {pendingAlerts != null ? String(pendingAlerts).padStart(2, '0') : '--'}
+        </Link>
+
+        {/* Account button */}
+        <button
+          onClick={() => { setShowAccountPanel(!showAccountPanel); setShowSyncPanel(false); }}
+          style={{
+            width: 32, height: 32, borderRadius: '50%',
+            background: 'var(--bg-elevated)',
+            border: `1px solid ${roleStyle.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: roleStyle.text, cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          title={isAuthenticated ? `${username} (${role})` : 'Not signed in'}
+        >
+          <User size={14} />
+        </button>
+      </div>
+
+      {/* Account Dropdown */}
       {showAccountPanel && (
-        // Was a hardcoded "top-[60px]" — assumed the header row is always
-        // exactly 60px tall. It isn't anymore: .header-top's grid row is
-        // "minmax(60px, auto)" (fixed earlier this session specifically so
-        // a wrapped subtitle doesn't clip), so on a real header taller than
-        // 60px this dropdown rendered overlapping the header's own lower
-        // content instead of appearing below it. top: '100%' sticks to the
-        // bottom of the relatively-positioned <header> regardless of its
-        // real height.
-        <div className="absolute right-4 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3" style={{ top: 'calc(100% + 8px)' }}>
+        <div
+          className="absolute bg-panel border rounded shadow-lg flex flex-col gap-3"
+          style={{ top: 'calc(100% + 8px)', right: '1rem', width: 220, padding: '1rem', zIndex: 50 }}
+        >
           {isAuthenticated && (
             <>
               <div className="flex justify-between items-center border-b border-color pb-2">
-                <span className="text-xs font-display text-muted uppercase">Signed In</span>
-                <span className={`text-[10px] font-display border rounded px-1.5 py-0.5 ${ROLE_COLORS[role] || 'text-ok border-ok'}`}>{role}</span>
+                <span className="text-xs font-display text-muted uppercase tracking-widest">Session</span>
+                <span
+                  style={{
+                    fontSize: '0.6rem', fontFamily: 'var(--font-display)',
+                    fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+                    padding: '0.1rem 0.4rem', borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${roleStyle.border}`, color: roleStyle.text,
+                  }}
+                >{role}</span>
               </div>
-              <div className="text-sm font-body text-main">{username}</div>
+              <div style={{ fontSize: '0.875rem', fontFamily: 'var(--font-body)', color: 'var(--text-main)' }}>
+                {username}
+              </div>
               <button
                 onClick={() => { logout(); setShowAccountPanel(false); }}
-                className="flex items-center justify-center gap-2 text-xs font-display text-danger border border-danger rounded py-1.5 hover:bg-[rgba(248,113,113,0.1)] transition-colors"
+                className="btn btn-danger"
+                style={{ justifyContent: 'center' }}
               >
-                <LogOut size={14} /> Sign Out
+                <LogOut size={12} /> Sign Out
               </button>
             </>
           )}
         </div>
       )}
 
-      {/* Expandable Sync Panel — same top-[60px] -> top:100% fix as the
-          account panel above; see that comment for why. */}
+      {/* Sync Panel */}
       {showSyncPanel && (
-        <div className="absolute right-24 w-64 bg-panel border rounded p-4 shadow-lg z-50 flex flex-col gap-3" style={{ top: 'calc(100% + 8px)' }}>
+        <div
+          className="absolute bg-panel border rounded shadow-lg flex flex-col gap-3"
+          style={{ top: 'calc(100% + 8px)', right: '7rem', width: 260, padding: '1rem', zIndex: 50 }}
+        >
           <div className="flex justify-between items-center border-b border-color pb-2">
-            <span className="text-xs font-display text-muted uppercase">Sync Status</span>
-            <div className={`w-2 h-2 rounded-full ${syncStatus.queued > 0 ? 'bg-warning animate-pulse' : 'bg-ok'}`}></div>
+            <span className="text-xs font-display text-muted uppercase tracking-widest">Edge Sync Status</span>
+            <div
+              style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: syncColor,
+                animation: syncBuffering ? 'pulse 2s infinite' : 'none',
+              }}
+            />
           </div>
-          <div className="flex justify-between text-sm font-body">
-            <span className="text-muted">Buffered Events:</span>
-            <span className={syncStatus.queued > 0 ? 'text-warning' : 'text-main'}>{syncStatus.queued}</span>
-          </div>
-          <div className="flex justify-between text-sm font-body">
-            <span className="text-muted">Successfully Synced:</span>
-            <span className="text-ok">{syncStatus.synced}</span>
-          </div>
-          <div className="flex justify-between text-sm font-body">
-            {/* No backend anywhere tracks a real "last successful sync"
-                timestamp (SyncStatusResponse.last_sync_at exists as a schema
-                field but no endpoint ever populates or returns it) — this
-                used to just say "Just now" unconditionally. Showing the
-                honest absence of that data instead of a fabricated one. */}
-            <span className="text-muted">Last Sync:</span>
-            <span className="text-muted">Not tracked</span>
-          </div>
-          <div className="mt-2 pt-2 border-t border-color flex items-center gap-2 text-xs font-display">
-            {/* Was a hardcoded "Chain Integrity OK" regardless of any real
-                state — now calls the real GET /system/verify-chain
-                (backend/api/system.py), which checks every stored
-                EvidencePackage.verified_ok. */}
+
+          {/* Real status rows */}
+          {[
+            { label: 'System',    val: systemStatus,   col: systemColor },
+            { label: 'Edge',      val: edgeStatus,     col: edgeColor   },
+            { label: 'Sync',      val: syncStatus_val, col: syncColor   },
+            { label: 'Buffered',  val: syncStatus.queued,  col: syncBuffering ? 'var(--color-warning)' : 'var(--text-main)' },
+            { label: 'Synced',    val: syncStatus.synced,  col: 'var(--color-ok)' },
+          ].map(({ label, val, col }) => (
+            <div key={label} className="flex justify-between" style={{ fontSize: '0.8rem', fontFamily: 'var(--font-body)' }}>
+              <span className="text-muted">{label}:</span>
+              <span style={{ color: col, fontWeight: 600 }}>{val}</span>
+            </div>
+          ))}
+
+          {/* Edge staleness note */}
+          {edgeStatus !== 'ONLINE' && (
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.4, paddingTop: '0.25rem', borderTop: '1px solid var(--border-color)' }}>
+              {edgeStatus === 'STALE'
+                ? 'No edge telemetry in the last 30s. Edge pipeline may be paused or processing slowly.'
+                : 'No edge telemetry received. Verify edge runner is active and processing the uploaded video.'}
+            </div>
+          )}
+
+          <div className="mt-2 pt-2 border-t border-color flex items-center gap-2" style={{ fontSize: '0.7rem', fontFamily: 'var(--font-display)' }}>
             {chainStatus == null ? (
               <span className="text-muted">Checking chain integrity…</span>
             ) : chainStatus.is_valid ? (
               <>
-                <ShieldCheck size={14} className="text-ok" />
+                <ShieldCheck size={13} className="text-ok" />
                 <span className="text-ok">{chainStatus.message}</span>
               </>
             ) : (
               <>
-                <ShieldAlert size={14} className="text-danger" />
+                <ShieldAlert size={13} className="text-danger" />
                 <span className="text-danger">{chainStatus.message}</span>
               </>
             )}

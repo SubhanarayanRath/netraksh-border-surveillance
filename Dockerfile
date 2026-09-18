@@ -1,9 +1,20 @@
-# NETRAKSH — single-container deploy image.
-# Mirrors the app's real architecture (not a rewrite for containers): one
-# FastAPI process serves both the API/WebSocket and the built React frontend
-# from the same origin (backend/main.py's StaticFiles mount + catch-all),
-# so this is one image, one process, one port — matching how the app has
-# actually run throughout this project, not a new multi-service split.
+# ==============================================================================
+# DEPRECATED: LEGACY MONOLITHIC DEPLOYMENT IMAGE
+# ==============================================================================
+# 
+# WARNING: This Dockerfile represents the WP-1 prototype architecture where
+# the Edge Inference and Central Backend were merged into a single container.
+#
+# DO NOT USE THIS FOR PRODUCTION.
+#
+# Production deployments MUST use the isolated edge-to-cloud topology:
+# - Edge Container:   edge/Dockerfile
+# - Central Backend:  backend/Dockerfile
+#
+# This file is retained ONLY as a compatibility wrapper for legacy CI scripts
+# and local Render-style single-container preview deployments.
+#
+# ==============================================================================
 
 # --- Stage 1: build the frontend ---
 FROM node:20-slim AS frontend-build

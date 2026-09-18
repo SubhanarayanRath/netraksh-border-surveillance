@@ -153,73 +153,67 @@ export default function Health() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-6">
-      <div className="flex justify-between items-start">
-        <div className="flex-col max-w-2xl">
-          <h2 className="text-xl font-display text-main tracking-widest uppercase mb-2">CAMERA HEALTH MATRIX</h2>
-          <p className="text-sm font-body text-muted">
-            Real-time status of all perimeter visual sensors. Highlighting optical clarity, latency drift, and connection state to ensure continuous intelligence gathering.
-          </p>
-          {/* 2-camera demo banner — honest about what is registered vs. what is live hardware */}
-          <div className="mt-3 p-3 border border-color rounded bg-panel text-xs font-display text-muted" style={{ maxWidth: '520px' }}>
-            <span className="text-warning font-bold">DEMO MODE</span>
-            {' — '}
-            2 cameras registered: <span className="text-main">cam-border-01</span> (Border Post Alpha)
-            {' and '}
-            <span className="text-main">cam-checkpoint-01</span> (Checkpoint Bravo).
-            Both run local video files (demo/videos/vtest.avi), not physical CCTV hardware.
-            Architecture supports additional cameras via{' '}
-            <code className="bg-dark px-1 rounded">POST /cameras</code>.
-          </div>
+    <div className="h-full flex flex-col gap-4">
+      <div className="section-header">
+        <div>
+          <div className="section-title">Camera Health Matrix</div>
+          <div className="section-sub">Real-time sensor status · FPS · Optical clarity · Sync drift</div>
         </div>
         {status === 'ready' && (
-          <div className="bg-panel border rounded p-4 flex gap-4 items-center">
-            <div className="relative w-20 h-16 rounded-full border-4 border-ok flex items-center justify-center">
-              <span className="font-display text-main text-lg">{mergedCameras.length > 0 ? `${okCount} / ${mergedCameras.length}` : '-'}</span>
-            </div>
-            <div className="flex flex-col gap-1 text-xs font-display">
-              <span className="text-muted">Healthy Cameras</span>
-              <span className="text-ok flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-ok"></div> {okCount} OK</span>
-              <span className="text-warning flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-warning"></div> {degradedCount} DEGRADED</span>
-              <span className="text-danger flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-danger"></div> {failedCount} FAILED</span>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div className="badge badge-ok">{okCount} OK</div>
+            <div className="badge badge-warning">{degradedCount} Degraded</div>
+            <div className="badge badge-danger">{failedCount} Failed</div>
           </div>
         )}
       </div>
 
-      {status === 'loading' && (
-        <div className="text-muted text-sm text-center mt-8">Loading real camera fleet…</div>
-      )}
+      {/* Honest demo banner */}
+      <div className="card" style={{ padding: '0.625rem 0.875rem', borderColor: 'rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
+        <span style={{ fontSize: '0.65rem', fontFamily: 'var(--font-display)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <span className="text-warning">Demo Mode</span>
+          {' — '}
+          2 cameras registered: <span className="text-main">cam-border-01</span> (Border Post Alpha) and{' '}
+          <span className="text-main">cam-checkpoint-01</span> (Checkpoint Bravo).
+          Both run local video files. Architecture supports additional cameras via <code style={{ background: 'var(--bg-base)', padding: '0 4px', borderRadius: 2 }}>POST /cameras</code>.
+        </span>
+      </div>
 
-      {status === 'error' && (
-        <div className="text-danger text-sm text-center mt-8">Could not reach the backend.</div>
-      )}
-
+      {status === 'loading' && <div className="state-loading"><span>Loading camera fleet…</span></div>}
+      {status === 'error'   && <div className="state-error"><AlertTriangle size={18} /><span>Could not reach the backend.</span></div>}
       {status === 'access-denied' && (
-        <div className="max-w-xs mx-auto mt-8 bg-panel border border-danger p-4 rounded text-center">
-          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+        <div className="card" style={{ maxWidth: 360, borderColor: 'rgba(239,68,68,0.3)' }}>
+          <h3 className="text-danger font-display tracking-widest uppercase" style={{ fontSize: '0.8rem' }}>Access Denied</h3>
           <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 
       {status === 'ready' && (
         <>
-          <div className="flex gap-4">
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button
               onClick={() => setFilter('all')}
-              className={filter === 'all'
-                ? 'bg-ok text-black px-4 py-2 rounded text-sm font-display flex items-center gap-2'
-                : 'bg-transparent border border-color text-muted px-4 py-2 rounded text-sm font-display flex items-center gap-2 hover-bg-elevated'}
+              className="btn btn-sm"
+              style={{
+                border: '1px solid',
+                borderColor: filter === 'all' ? 'var(--accent)' : 'var(--border-color)',
+                background:  filter === 'all' ? 'var(--accent-dim)' : 'transparent',
+                color:       filter === 'all' ? 'var(--accent)' : 'var(--text-muted)',
+              }}
             >
               All Sectors ({mergedCameras.length})
             </button>
             <button
               onClick={() => setFilter('attention')}
-              className={filter === 'attention'
-                ? 'bg-warning text-black px-4 py-2 rounded text-sm font-display flex items-center gap-2'
-                : 'bg-transparent border border-color text-muted px-4 py-2 rounded text-sm font-display flex items-center gap-2 hover-bg-elevated'}
+              className="btn btn-sm"
+              style={{
+                border: '1px solid',
+                borderColor: filter === 'attention' ? 'var(--color-warning)' : 'var(--border-color)',
+                background:  filter === 'attention' ? 'rgba(245,158,11,0.1)' : 'transparent',
+                color:       filter === 'attention' ? 'var(--color-warning)' : 'var(--text-muted)',
+              }}
             >
-              <AlertTriangle size={14} /> Needs Attention ({needsAttentionCount})
+              <AlertTriangle size={12} /> Needs Attention ({needsAttentionCount})
             </button>
           </div>
 

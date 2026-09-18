@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from shared.constants import (
     BlockchainStatus,
@@ -208,6 +208,12 @@ class LiveTelemetryPayload(BaseModel):
     timestamp: float
     video_time: Optional[float] = None
     sequence: int
+    # Dimensions and stream identity let the dashboard map boxes to the
+    # rendered frame and discard delayed telemetry from a previous run.
+    frame_width: Optional[int] = None
+    frame_height: Optional[int] = None
+    stream_id: Optional[str] = None
+    analysis_state: Optional[str] = None
     tracks: List[LiveTrack]
 
 
@@ -233,9 +239,24 @@ class EvidencePackage(BaseModel):
     decision_state: DecisionState
     evidence_clip_ref: Optional[str] = None  # path to snapshot/clip on edge storage
     # Cryptographic fields (set by evidence layer, empty until signed)
+    schema_version: Optional[str] = None
+    crypto_version: Optional[str] = None
     hash: Optional[str] = None          # SHA-256 of serialized mandatory fields
     signature: Optional[str] = None     # Ed25519 signature over hash
+    kid: Optional[str] = None           # Key ID for signature versioning
     previous_hash: Optional[str] = None  # hash of previous record in chain
+    stream_id: Optional[str] = None      # Explicit session linkage
+    # Position in the source video for finite uploads. Wall-clock sources may
+    # legitimately omit this value.
+    video_time: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_crypto_version_metadata(self) -> EvidencePackage:
+        schema = self.schema_version
+        crypto = self.crypto_version
+        if (schema is None) != (crypto is None):
+            raise ValueError("Partial version metadata: schema_version and crypto_version must be both present or both null.")
+        return self
 
     # --- Optional contextual fields (appended per architecture §15) ---
     event_type: Optional[EventType] = None
@@ -253,6 +274,13 @@ class EvidencePackage(BaseModel):
     rule_value: Optional[float] = None   # measured value, e.g. dwell seconds
     plate_text: Optional[str] = None
     plate_confidence: Optional[float] = None
+    raw_plate_text: Optional[str] = None
+    normalized_plate_text: Optional[str] = None
+    localization_confidence: Optional[float] = None
+    ocr_confidence: Optional[float] = None
+    observations_count: Optional[int] = None
+    processing_method: Optional[str] = None
+    fusion_state: Optional[str] = None
     face_bbox: Optional[BoundingBox] = None
     face_confidence: Optional[float] = None
     # Real sub-classification when detection_class == VEHICLE (see
@@ -266,6 +294,19 @@ class EvidencePackage(BaseModel):
     face_match_person_id: Optional[str] = None
     face_match_person_name: Optional[str] = None
     face_match_confidence: Optional[float] = None
+    
+    # Phase 3 Step 2 Advanced Face Recognition metadata
+    face_engine: Optional[str] = None
+    similarity_score: Optional[float] = None
+    recognition_state: Optional[str] = None
+    observation_count: Optional[int] = None
+    alignment_method: Optional[str] = None
+    
+    # Phase 3 Step 7 Behavioral Analytics metadata
+    behavior_type: Optional[str] = None
+    measured_trigger_values: Optional[dict] = None
+    observation_window: Optional[float] = None
+    why: Optional[str] = None
     
     # Bounding box coordinates (normalized 0.0 - 1.0)
     bbox_x: Optional[float] = None
@@ -285,6 +326,9 @@ class EvidencePackage(BaseModel):
 
     def get_signable_fields(self) -> dict:
         """
+        Deprecated as of Phase 8.4 — use `shared.versioning.extract_signable_dict()` for profile-aware extraction.
+        This method is retained for backward compatibility and legacy test harnesses.
+        
         Returns only the mandatory locked fields for hashing.
         Cryptographic fields (hash/signature/previous_hash) are excluded
         from their own hash computation to avoid circular dependency.
@@ -350,7 +394,9 @@ class EventCreateRequest(BaseModel):
 class EventResponse(BaseModel):
     event_id: str
     camera_id: str
+    stream_id: Optional[str] = None
     timestamp: datetime
+    video_time: Optional[float] = None
     event_type: Optional[EventType]
     detection_class: DetectionClass
     confidence: float
@@ -363,6 +409,9 @@ class EventResponse(BaseModel):
     severity: Optional[Severity]
     hash: Optional[str]
     signature: Optional[str]
+    schema_version: Optional[str] = None
+    crypto_version: Optional[str] = None
+    kid: Optional[str] = None
     verified_ok: Optional[bool]
     # Real field, always stored on ingest (backend/api/events.py) but never
     # previously exposed here — the frontend's Evidence page used to show a
@@ -380,6 +429,9 @@ class EventResponse(BaseModel):
     corroboration_delta_t_s: Optional[float] = None
     corroboration_t_expected_s: Optional[float] = None
     corroboration_sigma_s: Optional[float] = None
+    
+    appearance_similarity: Optional[float] = None
+    representation_type: Optional[str] = None
     
     # BBox coordinates
     bbox_x: Optional[float] = None
@@ -404,6 +456,38 @@ class EventResponse(BaseModel):
     face_match_person_id: Optional[str] = None
     face_match_person_name: Optional[str] = None
     face_match_confidence: Optional[float] = None
+    
+    # Phase 4 WP-3.3 Object Storage Metadata
+    storage_provider: Optional[str] = None
+    storage_status: Optional[str] = None
+    content_hash: Optional[str] = None
+    content_size: Optional[int] = None
+    uploaded_at: Optional[datetime] = None
+    failure_reason: Optional[str] = None
+
+    # Enhanced ANPR metadata (added for Phase 3)
+    plate_text: Optional[str] = None
+    plate_confidence: Optional[float] = None
+    raw_plate_text: Optional[str] = None
+    normalized_plate_text: Optional[str] = None
+    localization_confidence: Optional[float] = None
+    ocr_confidence: Optional[float] = None
+    observations_count: Optional[int] = None
+    processing_method: Optional[str] = None
+    fusion_state: Optional[str] = None
+
+    # Phase 3 Step 2 Advanced Face Recognition metadata
+    face_engine: Optional[str] = None
+    similarity_score: Optional[float] = None
+    recognition_state: Optional[str] = None
+    # observation_count already exists as observations_count
+    alignment_method: Optional[str] = None
+
+    # Phase 3 Step 7 Behavioral Analytics metadata
+    behavior_type: Optional[str] = None
+    measured_trigger_values: Optional[dict] = None
+    observation_window: Optional[float] = None
+    why: Optional[str] = None
 
     # Bounding box coordinates (normalized 0.0 - 1.0)
     bbox_x: Optional[float] = None
@@ -583,6 +667,9 @@ class PipelineMetricsReport(BaseModel):
     frames: dict
     events: dict
     alerts_generated: int = 0
+    telemetry_produced: Optional[int] = None
+    telemetry_dropped: Optional[int] = None
+    telemetry_errors: Optional[int] = None
     cpu_percent: Optional[float] = None
     rss_mb: Optional[float] = None
     psutil_available: bool = False
@@ -597,6 +684,9 @@ class PipelineMetricsResponse(BaseModel):
     frames: dict
     events: dict
     alerts_generated: int
+    telemetry_produced: Optional[int] = None
+    telemetry_dropped: Optional[int] = None
+    telemetry_errors: Optional[int] = None
     cpu_percent: Optional[float]
     rss_mb: Optional[float]
     psutil_available: bool

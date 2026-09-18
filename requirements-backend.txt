@@ -36,3 +36,8 @@ python-dotenv==1.0.0
 # every top-level import" claim above after adding a new backend service,
 # not assumed still true.
 httpx==0.27.0
+# Rate limiting — backend/api/rate_limit.py.
+# slowapi is the standard FastAPI/Starlette rate-limiting library.
+# Uses in-memory store by default (sufficient for single-process demo);
+# swap to RedisStore for multi-worker production deployments.
+slowapi==0.1.9

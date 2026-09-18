@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle, Eye } from 'lucide-react';
+import { AlertTriangle, Globe, Crosshair, MapPin, CheckCircle, Eye, Shield } from 'lucide-react';
 import useWebSocket from '../hooks/useWebSocket';
 import { WS_URL, authFetch } from '../services/auth';
 import useAuth from '../hooks/useAuth';
@@ -13,15 +13,40 @@ import { parseUtc } from '../utils/time';
 // ("Multiple Armed Intruders") that was never real.
 const EVENT_TYPE_LABELS = {
   VIRTUAL_FENCE_CROSSING: 'Virtual Fence Crossing',
-  LINE_CROSSING: 'Line Crossing',
-  LOITERING: 'Loitering Detected',
-  ABANDONED_OBJECT: 'Abandoned Object',
-  VEHICLE_DETECTED: 'Vehicle Detected',
+  LINE_CROSSING:          'Line Crossing',
+  LOITERING:              'Loitering Detected',
+  ABANDONED_OBJECT:       'Abandoned Object',
+  VEHICLE_DETECTED:       'Vehicle Detected',
 };
 
 function alertTitle(alert) {
   const type = EVENT_TYPE_LABELS[alert.event_type] || alert.event_type || alert.decision_state || 'Escalated Event';
   return `${alert.severity} — ${type}`;
+}
+
+function severityClass(severity) {
+  if (!severity) return 'severity-medium';
+  const s = severity.toUpperCase();
+  if (s === 'HIGH' || s === 'CRITICAL')    return 'severity-high';
+  if (s === 'MEDIUM' || s === 'ELEVATED')  return 'severity-medium';
+  return 'severity-low';
+}
+
+function severityBadgeColor(severity) {
+  const s = (severity || '').toUpperCase();
+  if (s === 'CRITICAL') return { color: '#dc2626', bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.3)' };
+  if (s === 'HIGH')     return { color: 'var(--color-danger)',  bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.3)' };
+  if (s === 'MEDIUM' || s === 'ELEVATED')
+                        return { color: 'var(--color-warning)', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' };
+  return               { color: 'var(--text-muted)', bg: 'rgba(77,96,128,0.1)', border: 'rgba(77,96,128,0.2)' };
+}
+
+function formatAge(ts) {
+  if (!ts) return '—';
+  const diff = Math.floor((Date.now() - (parseUtc(ts) || new Date())) / 60000);
+  if (diff < 1) return 'just now';
+  if (diff < 60) return `${diff}m ago`;
+  return `${Math.floor(diff / 60)}h ${diff % 60}m ago`;
 }
 
 export default function Alerts() {
@@ -36,6 +61,8 @@ export default function Alerts() {
   const [status, setStatus] = useState('loading'); // loading | ready | auth-required | error
   const [ackingId, setAckingId] = useState(null);
   const [closingId, setClosingId] = useState(null);
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const loadAlerts = useCallback(async () => {
     setStatus('loading');
@@ -46,7 +73,6 @@ export default function Alerts() {
         return;
       }
       if (!res.ok) {
-        // 401 is handled globally by authFetch interceptor
         setStatus('error');
         return;
       }
@@ -59,10 +85,7 @@ export default function Alerts() {
 
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
-  // Real alerts only, from two sources: GET /alerts (whatever existed
-  // before this page was opened) and live WS new_alert pushes (whatever
-  // arrives while it's open) — deduped by alert_id, since the same alert
-  // can appear in both once the REST list is next refreshed.
+  // Real alerts only — deduped by alert_id from REST + WS
   const realAlerts = useMemo(() => {
     const byId = new Map();
     for (const a of restAlerts) byId.set(a.alert_id, a);
@@ -72,11 +95,15 @@ export default function Alerts() {
     );
   }, [restAlerts, wsAlerts]);
 
-  // Previously: 2 hardcoded fake alerts were ALWAYS concatenated onto real
-  // ones, indistinguishable from them. Now they only appear as a fallback
-  // when there are zero real alerts, clearly labeled as such — the same
-  // convention Evidence.jsx already uses for its own placeholder events.
-  const displayAlerts = realAlerts;
+  const displayAlerts = useMemo(() => {
+    return realAlerts.filter(a => {
+      if (severityFilter !== 'all' && (a.severity || '').toUpperCase() !== severityFilter) return false;
+      if (statusFilter === 'open' && (a.acknowledged_at || a.closed_at)) return false;
+      if (statusFilter === 'ack' && !a.acknowledged_at) return false;
+      if (statusFilter === 'closed' && !a.closed_at) return false;
+      return true;
+    });
+  }, [realAlerts, severityFilter, statusFilter]);
 
   const handleAcknowledge = async (alertId) => {
     setAckingId(alertId);
@@ -88,16 +115,13 @@ export default function Alerts() {
       });
       if (res.ok) await loadAlerts();
     } catch (_e) {
-      // best-effort — the button just stops spinning below
+      // best-effort
     } finally {
       setAckingId(null);
     }
   };
 
-  // Real terminal close action (POST /alerts/{id}/close) — SIH PS 26187
-  // audit finding: EventState.CLOSED was defined but never actually set
-  // anywhere. Only reachable once an alert is already acknowledged, same
-  // real lifecycle order the backend itself enforces.
+  // Real terminal close action (POST /alerts/{id}/close)
   const handleClose = async (alertId) => {
     setClosingId(alertId);
     try {
@@ -108,146 +132,245 @@ export default function Alerts() {
       });
       if (res.ok) await loadAlerts();
     } catch (_e) {
-      // best-effort — the button just stops spinning below
+      // best-effort
     } finally {
       setClosingId(null);
     }
   };
 
+  const FilterBtn = ({ value, label, current, onChange }) => (
+    <button
+      onClick={() => onChange(value)}
+      style={{
+        padding: '0.3rem 0.75rem',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid',
+        borderColor: current === value ? 'var(--accent)' : 'var(--border-color)',
+        background: current === value ? 'var(--accent-dim)' : 'transparent',
+        color: current === value ? 'var(--accent)' : 'var(--text-muted)',
+        fontFamily: 'var(--font-display)',
+        fontSize: '0.6rem',
+        fontWeight: 700,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        cursor: 'pointer',
+        transition: 'all 0.15s ease',
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <div className="h-full flex flex-col gap-6">
-      <div className="flex justify-between items-start">
-        <div className="flex-col">
-          <h2 className="text-xl font-display text-main tracking-widest uppercase mb-2">Cross-Command Alerts</h2>
-          <p className="text-sm font-body text-muted">
-            High-severity incidents broadcasted across the blockchain network from neighboring nodes.
-          </p>
+    <div className="h-full flex flex-col" style={{ gap: '1rem' }}>
+      {/* Page Header */}
+      <div className="section-header">
+        <div>
+          <div className="section-title">Alerts &amp; Incidents</div>
+          <div className="section-sub">
+            Cross-command escalated events · Temporal/spatial corroboration active
+          </div>
         </div>
-        <div className="bg-[rgba(239,68,68,0.1)] border border-danger text-danger px-4 py-2 rounded font-display tracking-widest flex items-center gap-2 glow-danger">
-          <Globe size={18} /> NETWORK SECURE
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.375rem',
+              padding: '0.3rem 0.75rem',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid rgba(34,211,164,0.25)',
+              background: 'rgba(34,211,164,0.06)',
+              fontSize: '0.6rem',
+              fontFamily: 'var(--font-display)',
+              letterSpacing: '0.1em',
+              color: 'var(--color-ok)',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+            }}
+          >
+            <Shield size={11} />
+            Network Secure
+          </div>
+          <div className="badge badge-outline">
+            {realAlerts.length} Total
+          </div>
         </div>
       </div>
 
+      {/* Filters */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.6rem', fontFamily: 'var(--font-display)', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: '0.25rem' }}>Severity:</span>
+        {['all', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map(v => (
+          <FilterBtn key={v} value={v} label={v === 'all' ? 'All' : v} current={severityFilter} onChange={setSeverityFilter} />
+        ))}
+        <div style={{ width: 1, height: 18, background: 'var(--border-color)', margin: '0 0.25rem' }} />
+        <span style={{ fontSize: '0.6rem', fontFamily: 'var(--font-display)', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: '0.25rem' }}>Status:</span>
+        {[['all', 'All'], ['open', 'Open'], ['ack', 'Acknowledged'], ['closed', 'Closed']].map(([v, l]) => (
+          <FilterBtn key={v} value={v} label={l} current={statusFilter} onChange={setStatusFilter} />
+        ))}
+      </div>
+
       {status === 'access-denied' && (
-        <div className="max-w-xs bg-panel border border-danger p-4 rounded text-center">
-          <h3 className="text-danger font-display tracking-widest uppercase">Access Denied</h3>
+        <div className="card" style={{ maxWidth: 380, borderColor: 'rgba(239,68,68,0.3)' }}>
+          <h3 className="text-danger font-display tracking-widest uppercase" style={{ fontSize: '0.8rem' }}>Access Denied</h3>
           <p className="text-muted text-sm mt-2">You do not have permission to access this module.</p>
         </div>
       )}
 
       {status !== 'access-denied' && (
-        // NOT `grid grid-cols-1 lg:grid-cols-2` — found while building the
-        // real map that neither class does anything in this project: there
-        // is no Tailwind compiler here, only a small hand-written CSS
-        // subset (index.css), and `.grid`/`grid-cols-*`/`@media` breakpoints
-        // were never defined in it at all (confirmed via
-        // getComputedStyle — gridTemplateColumns came back "none"). Same
-        // root cause as the earlier `text-center` bug (Sidebar.jsx). This
-        // one specific layout is fixed with real, working flex classes;
-        // every other `grid`/`grid-cols-*` usage elsewhere in this codebase
-        // has the same latent bug and is not touched here — see
-        // docs/LIMITATIONS.md.
-        <div className="flex gap-6 flex-grow" style={{ minHeight: 0 }}>
-          <div className="flex flex-col overflow-y-auto pr-2 custom-scrollbar" style={{ flex: '1 1 0%', minWidth: 0, gap: '1rem' }}>
-            {status === 'loading' && <div className="text-muted text-sm text-center mt-4">Loading real alerts…</div>}
-            {status === 'error' && <div className="text-danger text-sm text-center mt-4">Could not reach the backend.</div>}
+        <div className="flex gap-4 flex-grow" style={{ minHeight: 0 }}>
+          {/* Alert List */}
+          <div className="flex flex-col overflow-y-auto pr-1" style={{ flex: '1 1 0%', minWidth: 0, gap: '0.625rem' }}>
+            {status === 'loading' && (
+              <div className="state-loading"><span>Loading incidents…</span></div>
+            )}
+            {status === 'error' && (
+              <div className="state-error"><AlertTriangle size={20} /><span>Could not reach the backend.</span></div>
+            )}
             {displayAlerts.length === 0 && status === 'ready' && (
-              <div className="text-[10px] font-display text-muted uppercase tracking-widest border border-color rounded px-2 py-1 text-center">
-                No alerts available
+              <div className="state-empty">
+                <CheckCircle size={28} className="state-empty-icon" />
+                <div className="state-empty-title">No Active Incidents</div>
+                <div className="state-empty-sub">No alerts match the current filters. The sector is clear.</div>
               </div>
             )}
-            {displayAlerts.map(alert => (
-              <div 
-                key={alert.alert_id} 
-                className="bg-panel border border-danger rounded flex flex-col relative overflow-hidden glow-danger"
-                style={{ 
-                  flexShrink: 0, 
-                  padding: '1.25rem', 
-                  gap: '0.75rem',
-                  background: 'linear-gradient(145deg, rgba(239,68,68,0.05) 0%, rgba(15,23,42,0.6) 100%)',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
-                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                  cursor: 'pointer'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 8px 25px rgba(239,68,68,0.15)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.2)';
-                }}
-              >
-                <div className="absolute top-0 left-0 w-1 h-full bg-danger" style={{ boxShadow: '0 0 10px rgba(239,68,68,0.8)' }}></div>
 
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="text-danger" size={20} />
-                    <span className="text-danger font-display tracking-widest">#{alert.alert_id.split('-')[0]}</span>
-                    {alert.isMock && <span className="text-[9px] border border-muted text-muted rounded px-1" style={{ padding: '0.1rem 0.25rem' }}>DEMO</span>}
-                  </div>
-                  <span className="bg-danger text-white text-[10px] rounded font-display tracking-widest" style={{ padding: '0.25rem 0.5rem', boxShadow: '0 0 10px rgba(239,68,68,0.4)' }}>{alert.severity}</span>
-                </div>
-
-                <h3 className="text-lg font-display text-main">{alert.isMock ? alert.event_type : alertTitle(alert)}</h3>
-                {alert.crosses_jurisdiction_boundary && (
-                  <p className="text-sm font-body text-muted">Crosses jurisdiction boundary — escalated cross-command.</p>
-                )}
-                {/* Real, set only when backend/services/escalation.py's cross-camera
-                    corroboration boost is why this alert exists at all — a MEDIUM-severity
-                    event that reached alert-worthy status via real corroboration from
-                    another camera, not from its own severity alone. */}
-                {!alert.isMock && alert.escalated_via_corroboration && (
-                  <p className="text-sm font-body text-ok">Escalated via cross-camera corroboration (MEDIUM severity, strong real corroborating sighting).</p>
-                )}
-
-                <div className="flex gap-6 mt-2 pt-3 border-t border-[rgba(239,68,68,0.2)] text-xs font-display text-muted">
-                  <span className="flex items-center gap-1"><MapPin size={14}/> {alert.camera_id || alert.zone_id || 'Unknown'}</span>
-                  <span className="flex items-center gap-1"><Crosshair size={14}/> T - {Math.floor((Date.now() - (parseUtc(alert.timestamp || alert.created_at) || new Date())) / 60000)} MINS</span>
-                  {!alert.isMock && (
-                    alert.closed_at ? (
-                      <span className="flex items-center gap-1 text-muted"><CheckCircle size={14}/> Closed{alert.closed_by ? ` by ${alert.closed_by}` : ''}</span>
-                    ) : alert.acknowledged_at ? (
-                      <span className="flex items-center gap-2 ml-auto">
-                        <span className="flex items-center gap-1 text-ok"><CheckCircle size={14}/> Acknowledged{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}</span>
-                        {canAcknowledge && (
-                          <button
-                            onClick={() => handleClose(alert.alert_id)}
-                            disabled={closingId === alert.alert_id}
-                            className="text-muted border border-color rounded px-2 py-0.5 hover-bg-elevated disabled:opacity-50"
-                          >
-                            {closingId === alert.alert_id ? 'Closing…' : 'Close'}
-                          </button>
-                        )}
-                      </span>
-                    ) : canAcknowledge ? (
-                      <button
-                        onClick={() => handleAcknowledge(alert.alert_id)}
-                        disabled={ackingId === alert.alert_id}
-                        className="ml-auto text-ok border border-ok rounded px-2 py-0.5 hover:bg-[rgba(74,222,128,0.1)] disabled:opacity-50"
+            {displayAlerts.map(alert => {
+              const sc = severityBadgeColor(alert.severity);
+              const isOpen = !alert.acknowledged_at && !alert.closed_at;
+              return (
+                <div
+                  key={alert.alert_id}
+                  className={`incident-card ${severityClass(alert.severity)}`}
+                >
+                  {/* Header row */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <AlertTriangle size={14} style={{ color: sc.color, flexShrink: 0 }} />
+                      <span
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '0.65rem',
+                          color: 'var(--text-dim)',
+                          letterSpacing: '0.06em',
+                        }}
                       >
-                        {ackingId === alert.alert_id ? 'Acknowledging…' : 'Acknowledge'}
-                      </button>
-                    ) : (
-                      // Real backend RBAC (require_operator_or_admin) would
-                      // reject an AUDITOR's acknowledge attempt with a 403 —
-                      // shown here as a real, honest read-only indicator
-                      // instead of a button that was always going to fail.
-                      <span className="ml-auto flex items-center gap-1 text-muted" title="AUDITOR role is read-only for acknowledgements">
-                        <Eye size={14}/> View only
+                        #{alert.alert_id?.substring(0, 8)}
                       </span>
-                    )
+                      {alert.isMock && (
+                        <span className="badge badge-outline" style={{ fontSize: '0.5rem' }}>DEMO</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flexShrink: 0 }}>
+                      <span
+                        style={{
+                          fontSize: '0.6rem', fontFamily: 'var(--font-display)',
+                          fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
+                          padding: '0.15rem 0.5rem', borderRadius: 'var(--radius-sm)',
+                          color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`,
+                        }}
+                      >
+                        {alert.severity}
+                      </span>
+                      {alert.closed_at ? (
+                        <span className="badge badge-neutral" style={{ fontSize: '0.55rem' }}>CLOSED</span>
+                      ) : alert.acknowledged_at ? (
+                        <span className="badge badge-ok" style={{ fontSize: '0.55rem' }}>ACK</span>
+                      ) : (
+                        <span className="badge badge-danger" style={{ fontSize: '0.55rem', animation: 'pulse 2s infinite' }}>OPEN</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Title */}
+                  <div
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: '0.875rem',
+                      fontWeight: 700,
+                      color: 'var(--text-main)',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    {alert.isMock ? alert.event_type : alertTitle(alert)}
+                  </div>
+
+                  {/* Corroboration */}
+                  {!alert.isMock && alert.escalated_via_corroboration && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-ok)', fontFamily: 'var(--font-body)' }}>
+                      Escalated via temporal/spatial corroboration — multi-camera corroborated event.
+                    </div>
                   )}
+                  {alert.crosses_jurisdiction_boundary && (
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'var(--font-body)' }}>
+                      Crosses jurisdiction boundary — cross-command escalation.
+                    </div>
+                  )}
+
+                  {/* Meta row */}
+                  <div
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '1rem',
+                      paddingTop: '0.625rem',
+                      borderTop: '1px solid var(--border-color)',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>
+                      <MapPin size={11} /> {alert.camera_id || alert.zone_id || 'Unknown'}
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem', color: 'var(--text-muted)', fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>
+                      <Crosshair size={11} /> {formatAge(alert.timestamp || alert.created_at)}
+                    </span>
+
+                    {!alert.isMock && (
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        {alert.closed_at ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.65rem', color: 'var(--text-muted)', fontFamily: 'var(--font-display)' }}>
+                            <CheckCircle size={11} /> Closed{alert.closed_by ? ` by ${alert.closed_by}` : ''}
+                          </span>
+                        ) : alert.acknowledged_at ? (
+                          <>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.65rem', color: 'var(--color-ok)', fontFamily: 'var(--font-display)' }}>
+                              <CheckCircle size={11} /> Ack{alert.acknowledged_by ? ` by ${alert.acknowledged_by}` : ''}
+                            </span>
+                            {canAcknowledge && (
+                              <button
+                                onClick={() => handleClose(alert.alert_id)}
+                                disabled={closingId === alert.alert_id}
+                                className="btn btn-outline btn-sm"
+                                style={{ opacity: closingId === alert.alert_id ? 0.5 : 1 }}
+                              >
+                                {closingId === alert.alert_id ? 'Closing…' : 'Close'}
+                              </button>
+                            )}
+                          </>
+                        ) : canAcknowledge ? (
+                          <button
+                            onClick={() => handleAcknowledge(alert.alert_id)}
+                            disabled={ackingId === alert.alert_id}
+                            className="btn btn-ok btn-sm"
+                            style={{ opacity: ackingId === alert.alert_id ? 0.5 : 1 }}
+                          >
+                            {ackingId === alert.alert_id ? 'Acknowledging…' : 'Acknowledge'}
+                          </button>
+                        ) : (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'var(--font-display)' }} title="AUDITOR role is read-only">
+                            <Eye size={11} /> View only
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          <div className="bg-panel border rounded p-2 relative h-full" style={{ flex: '1 1 0%', minWidth: 0, minHeight: '400px' }}>
-            {/* Real geospatial map — replaces what used to be a fully
-                decorative <div> (static background image, 3 hardcoded pixel
-                positions named "SECTOR 7"/"HQ"/"NODE C", tied to nothing
-                real). See components/TacticalMap.jsx. */}
+          {/* Map Panel */}
+          <div
+            className="card"
+            style={{ flex: '1 1 0%', minWidth: 0, minHeight: '400px', padding: '0.5rem' }}
+          >
             <TacticalMap alerts={realAlerts} />
           </div>
         </div>

@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections import defaultdict
 from typing import Dict, List, Optional
 
 import numpy as np
+
+from edge.detection.anpr import EnhancedANPRModule
 
 from shared.constants import (
     ABANDONED_DISAPPEAR_FRAMES,
@@ -373,6 +376,11 @@ class ANPRModule:
         self._checkpoint_zones = [z for z in zones if z.zone_type == "checkpoint"]
         self._languages = languages or ["en"]
         self._reader = None
+        
+        self._pipeline = os.environ.get("ANPR_PIPELINE", "legacy").lower()
+        if self._pipeline == "enhanced":
+            self._enhanced_module = EnhancedANPRModule()
+
 
     def _load_reader(self):
         if self._reader is None:
@@ -410,6 +418,29 @@ class ANPRModule:
             "unknown"
         )
 
+        if self._pipeline == "enhanced":
+            res = self._enhanced_module.process(track, frame)
+            # If no read or unstable, return None to avoid polluting the pipeline with bad events.
+            if not res or res.get("fusion_state") == "NO_VALID_READ" or not res.get("plate_text"):
+                return None
+            return {
+                "event_type": EventType.ANPR_READ,
+                "zone_id": zone_id,
+                "track_id": track.track_id,
+                "detection_class": DetectionClass.VEHICLE,
+                "confidence": track.confidence,
+                "plate_text": res.get("plate_text"),
+                "plate_confidence": res.get("plate_confidence"),
+                "raw_plate_text": res.get("raw_plate_text"),
+                "normalized_plate_text": res.get("normalized_plate_text"),
+                "localization_confidence": res.get("localization_confidence"),
+                "ocr_confidence": res.get("ocr_confidence"),
+                "observations_count": res.get("observations_count"),
+                "processing_method": res.get("processing_method"),
+                "fusion_state": res.get("fusion_state"),
+            }
+
+        # Legacy ANPR path below:
         # Crop: lower-middle third of vehicle bbox (typical plate location)
         x1, y1, x2, y2 = int(track.bbox.x1), int(track.bbox.y1), int(track.bbox.x2), int(track.bbox.y2)
         h = y2 - y1
@@ -490,7 +521,34 @@ class FaceDetectionModule:
         self._verification_zones = [z for z in zones if z.zone_type == "verification"]
         self._face_cascade = None
         self._retinaface_available = False
-        self._recognizer = recognizer  # Optional[WatchlistFaceRecognizer]
+        
+        # Phase 3 Step 2: Recognition Engine Selection
+        self._engine_type = os.environ.get("FACE_RECOGNITION_ENGINE", "lbph").lower()
+        self._recognizer = recognizer  # Optional[WatchlistFaceRecognizer] for LBPH
+        
+        self._embedding_engine = None
+        self._embedding_watchlist = None
+        self._temporal_fusion = None
+        self._face_aligner = None
+        self._embedding_unavailable_reason = None
+        
+        if self._engine_type == "embedding":
+            from edge.detection.face_align import FaceAligner
+            from edge.detection.face_embedding import ONNXFaceEmbeddingEngine
+            from edge.detection.face_watchlist import EmbeddingWatchlistIndex
+            from edge.detection.face_fusion import TemporalFaceFusion
+            
+            self._face_aligner = FaceAligner()
+            self._embedding_watchlist = EmbeddingWatchlistIndex()
+            self._temporal_fusion = TemporalFaceFusion()
+            
+            model_path = os.environ.get("FACE_EMBEDDING_MODEL_PATH", "")
+            try:
+                self._embedding_engine = ONNXFaceEmbeddingEngine(model_path)
+            except Exception as e:
+                self._embedding_unavailable_reason = str(e)
+                logger.error(f"[Face] Embedding engine unavailable: {e}")
+
         self._load_detectors()
 
     def _load_detectors(self):
@@ -572,10 +630,13 @@ class FaceDetectionModule:
             result = self._detect_haar(track, person_crop, zone_id)
 
         if result is not None:
-            self._attempt_recognition(result, person_crop)
+            if self._engine_type == "embedding":
+                self._attempt_embedding_recognition(result, person_crop)
+            else:
+                self._attempt_lbph_recognition(result, person_crop)
         return result
 
-    def _attempt_recognition(self, result: dict, person_crop: np.ndarray) -> None:
+    def _attempt_lbph_recognition(self, result: dict, person_crop: np.ndarray) -> None:
         """
         Mutates `result` in place, adding face_match_* keys on a real
         match. No-op (result unchanged) if no recognizer was supplied, the
@@ -604,10 +665,57 @@ class FaceDetectionModule:
         result["face_match_person_id"] = match["person_id"]
         result["face_match_person_name"] = match["name"]
         result["face_match_confidence"] = match["confidence"]
+        result["face_engine"] = "lbph"
+        result["recognition_state"] = "MATCH"
         logger.info(
             f"[Face] Watchlist match: track {result.get('track_id')} -> "
             f"{match['name']} (confidence={match['confidence']:.1f}, lower=stronger)"
         )
+
+    def _attempt_embedding_recognition(self, result: dict, person_crop: np.ndarray) -> None:
+        result["face_engine"] = "embedding"
+        
+        if self._embedding_engine is None:
+            result["recognition_state"] = "EMBEDDING_ENGINE_UNAVAILABLE"
+            return
+            
+        face_bbox = result.get("face_bbox")
+        if face_bbox is None:
+            result["recognition_state"] = "ERROR"
+            return
+            
+        # 1. Align face
+        align_res = self._face_aligner.align(person_crop, face_bbox, result.get("landmarks"))
+        result["alignment_method"] = align_res.get("alignment_method", "UNKNOWN")
+        if not align_res.get("success"):
+            result["recognition_state"] = "ALIGNMENT_FAILED"
+            return
+            
+        aligned_face = align_res["aligned_face"]
+        
+        # 2. Embed face
+        embedding = self._embedding_engine.embed(aligned_face)
+        if embedding is None:
+            result["recognition_state"] = "EMBEDDING_FAILED"
+            return
+            
+        # 3. Search Watchlist
+        search_res = self._embedding_watchlist.search(embedding)
+        state = search_res.get("state", "ERROR")
+        person_id = search_res.get("person_id")
+        score = search_res.get("similarity")
+        
+        # 4. Temporal Fusion
+        track_id = result.get("track_id")
+        fusion_res = self._temporal_fusion.add_observation(track_id, person_id, state, score)
+        
+        result["recognition_state"] = fusion_res.get("fusion_state", "UNKNOWN")
+        if fusion_res.get("person_id"):
+            result["face_match_person_id"] = fusion_res["person_id"]
+            result["face_match_person_name"] = search_res.get("name") # From current search
+            
+        if fusion_res.get("confidence") is not None:
+            result["similarity_score"] = float(fusion_res["confidence"])
 
     def _detect_retinaface(self, track: TrackData, crop: np.ndarray, zone_id: str) -> Optional[dict]:
         try:
@@ -621,6 +729,20 @@ class FaceDetectionModule:
             facial_area = best_face.get("facial_area", [0, 0, 0, 0])
             face_bbox = BoundingBox(x1=facial_area[0], y1=facial_area[1],
                                     x2=facial_area[2], y2=facial_area[3])
+                                    
+            landmarks = best_face.get("landmarks", {})
+            lm_array = None
+            if landmarks:
+                # Typically keys are right_eye, left_eye, nose, mouth_right, mouth_left
+                # Format to 5x2 array [left_eye, right_eye, nose, mouth_left, mouth_right]
+                lm_array = np.array([
+                    landmarks.get("left_eye", [0, 0]),
+                    landmarks.get("right_eye", [0, 0]),
+                    landmarks.get("nose", [0, 0]),
+                    landmarks.get("mouth_left", [0, 0]),
+                    landmarks.get("mouth_right", [0, 0])
+                ], dtype=np.float32)
+
             return {
                 "event_type": EventType.FACE_DETECTED,
                 "zone_id": zone_id,
@@ -630,6 +752,7 @@ class FaceDetectionModule:
                 "face_confidence": face_conf,
                 "face_bbox": face_bbox,
                 "detector": "retinaface",
+                "landmarks": lm_array,
             }
         except Exception as exc:
             logger.debug(f"[Face] RetinaFace error: {exc}")

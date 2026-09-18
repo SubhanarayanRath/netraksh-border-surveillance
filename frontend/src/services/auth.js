@@ -28,12 +28,24 @@ export const AUTH_CHANGE_EVENT = 'netraksh-auth-change';
 // see backend/main.py's StaticFiles mount), so this resolves correctly
 // whether the app is opened as http://localhost:8443 in dev or as a real
 // https://<domain> once deployed, with no build-time config needed.
-// For decoupled deployments (Vercel frontend, Render backend), VITE_ variables are used.
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (isLocal ? window.location.origin : 'https://netraksh.onrender.com');
-export const WS_URL = import.meta.env.VITE_WS_URL || (isLocal ? 
-  ((window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/dashboard') : 
-  'wss://netraksh.onrender.com/ws/dashboard');
+let backendUrl = import.meta.env.VITE_BACKEND_URL;
+if (!backendUrl) {
+  if (import.meta.env.PROD) {
+    throw new Error("VITE_BACKEND_URL must be configured in production.");
+  }
+  backendUrl = 'http://localhost:8000';
+}
+export const BACKEND_URL = backendUrl;
+
+// Keep WebSocket authentication on the same backend as /auth/token.  A
+// separately configured VITE_WS_URL remains supported for intentional
+// split deployments, but the default now follows VITE_BACKEND_URL in both
+// development and production.
+const wsBaseUrl = import.meta.env.VITE_WS_URL ||
+  BACKEND_URL.replace(/^http/, 'ws');
+export const WS_URL = wsBaseUrl.endsWith('/ws/dashboard')
+  ? wsBaseUrl
+  : `${wsBaseUrl.replace(/\/$/, '')}/ws/dashboard`;
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -57,13 +69,28 @@ export async function login(username, password) {
   body.set('username', username);
   body.set('password', password);
 
-  const res = await fetch(`${BACKEND_URL}/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
+  let res;
+  try {
+    res = await fetch(`${BACKEND_URL}/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+  } catch (err) {
+    throw new Error('Unable to reach the authentication server.');
+  }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('Invalid username or password.');
+    }
+    if (res.status === 403) {
+      throw new Error('Your account is not authorized to access this system.');
+    }
+    if (res.status >= 500) {
+      throw new Error('Authentication service error. Please try again.');
+    }
+    
     let detail = 'Login failed';
     try {
       const data = await res.json();

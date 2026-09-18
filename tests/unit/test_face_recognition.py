@@ -100,7 +100,7 @@ class TestRealTrainingAndRecognition:
         class _FakePredict:
             def predict(self, face):
                 return (0, LBPH_MATCH_THRESHOLD + 0.01)
-        recognizer._recognizer = _FakePredict()
+        recognizer._lbph_recognizer = _FakePredict()
         assert recognizer.recognize(_synthetic_face(2)) is None
 
     def test_threshold_logic_accepts_a_match_at_or_below_the_real_disclosed_threshold(self, monkeypatch):
@@ -110,7 +110,7 @@ class TestRealTrainingAndRecognition:
         class _FakePredict:
             def predict(self, face):
                 return (0, LBPH_MATCH_THRESHOLD)
-        recognizer._recognizer = _FakePredict()
+        recognizer._lbph_recognizer = _FakePredict()
         result = recognizer.recognize(_synthetic_face(2))
         assert result is not None
         assert result["person_id"] == "p1"

@@ -15,6 +15,7 @@ rather than reimplemented.
 from __future__ import annotations
 
 import uuid
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -24,8 +25,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend.services.verification import compute_sha256
 from shared.schemas import EvidencePackage
+from shared.versioning import canonicalize, CRYPTO_VERSION_V1
 
 
 @pytest.fixture
@@ -38,6 +39,9 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr("backend.database.session.engine", engine)
     monkeypatch.setattr("backend.database.session.SessionLocal", TestSessionLocal)
+    # Edge ingestion is intentionally authenticated in test mode as well.
+    from backend.config import settings
+    monkeypatch.setattr(settings, "EDGE_AUTH_TOKEN", "test-edge-auth-token-0123456789abcdef")
 
     import backend.main as main_module  # may already be cached from an
     # earlier test in this session -- backend.main does
@@ -81,6 +85,11 @@ def _register_camera_with_real_key(client: TestClient, admin_token: str, name="e
     return camera_id, priv
 
 
+def _edge_headers() -> dict:
+    from backend.config import settings
+    return {"Authorization": f"Bearer {settings.EDGE_AUTH_TOKEN}"}
+
+
 def _signed_event_payload(camera_id: str, priv: Ed25519PrivateKey, seq: int, prev_hash, **fields) -> dict:
     base = dict(
         camera_id=camera_id, zone_id="zone-1", event_type="VIRTUAL_FENCE_CROSSING",
@@ -90,8 +99,17 @@ def _signed_event_payload(camera_id: str, priv: Ed25519PrivateKey, seq: int, pre
     base.update(fields)
     event_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
-    ep = EvidencePackage(event_id=event_id, timestamp=timestamp, previous_hash=prev_hash, **base)
-    real_hash = compute_sha256(ep.get_signable_fields())
+    ep = EvidencePackage(
+        event_id=event_id,
+        timestamp=timestamp,
+        previous_hash=prev_hash,
+        schema_version="1.0",
+        crypto_version="crypto-v1",
+        **base,
+    )
+    real_hash = hashlib.sha256(
+        canonicalize(ep.model_dump(mode="json"), CRYPTO_VERSION_V1)
+    ).hexdigest()
     signature = priv.sign(real_hash.encode("utf-8")).hex()
     return {
         "edge_device_id": camera_id,
@@ -99,6 +117,7 @@ def _signed_event_payload(camera_id: str, priv: Ed25519PrivateKey, seq: int, pre
         "evidence_package": {
             "event_id": event_id, "timestamp": timestamp, "hash": real_hash,
             "signature": signature, "previous_hash": prev_hash, **base,
+            "schema_version": "1.0", "crypto_version": "crypto-v1",
         },
     }, real_hash
 
@@ -113,7 +132,7 @@ class TestRealSignedEventIngestAndVerify:
         camera_id, priv = _register_camera_with_real_key(client, token)
 
         payload, _ = _signed_event_payload(camera_id, priv, seq=0, prev_hash=None)
-        resp = client.post("/events", json=payload)
+        resp = client.post("/events", json=payload, headers=_edge_headers())
         assert resp.status_code == 201, resp.text
         event_id = payload["evidence_package"]["event_id"]
 
@@ -133,11 +152,11 @@ class TestRealSignedEventIngestAndVerify:
         headers = {"Authorization": f"Bearer {token}"}
 
         payload1, hash1 = _signed_event_payload(camera_id, priv, seq=0, prev_hash=None)
-        r1 = client.post("/events", json=payload1)
+        r1 = client.post("/events", json=payload1, headers=_edge_headers())
         assert r1.status_code == 201
 
         payload2, hash2 = _signed_event_payload(camera_id, priv, seq=1, prev_hash=hash1)
-        r2 = client.post("/events", json=payload2)
+        r2 = client.post("/events", json=payload2, headers=_edge_headers())
         assert r2.status_code == 201
 
         event_id_2 = payload2["evidence_package"]["event_id"]
@@ -147,7 +166,7 @@ class TestRealSignedEventIngestAndVerify:
         # Now forge a THIRD event claiming a previous_hash that doesn't match
         # the real chain (the concrete attack chain continuity detects).
         payload3, _ = _signed_event_payload(camera_id, priv, seq=2, prev_hash="f" * 64)
-        r3 = client.post("/events", json=payload3)
+        r3 = client.post("/events", json=payload3, headers=_edge_headers())
         assert r3.status_code == 201  # ingest never rejects -- verify does
         event_id_3 = payload3["evidence_package"]["event_id"]
         vr3 = client.post(f"/events/{event_id_3}/verify", headers=headers)
@@ -165,7 +184,7 @@ class TestRealSignedEventIngestAndVerify:
         forged_sig = other_priv.sign(real_hash.encode("utf-8")).hex()
         payload["evidence_package"]["signature"] = forged_sig
 
-        resp = client.post("/events", json=payload)
+        resp = client.post("/events", json=payload, headers=_edge_headers())
         assert resp.status_code == 201  # ingest stores it regardless -- integrity is checked on verify
         event_id = payload["evidence_package"]["event_id"]
 
@@ -179,7 +198,7 @@ class TestRealSignedEventIngestAndVerify:
         payload, real_hash = _signed_event_payload(camera_id, priv, seq=0, prev_hash=None)
         payload["evidence_package"]["hash"] = "0" * 64  # tampered post-signing
 
-        resp = client.post("/events", json=payload)
+        resp = client.post("/events", json=payload, headers=_edge_headers())
         assert resp.status_code == 201
         event_id = payload["evidence_package"]["event_id"]
 
@@ -276,7 +295,7 @@ class TestOfflineOutboxToRealBackend:
             key_manager = EdgeKeyManager(
                 private_key_path=str(tmp_path / "e.key"), public_key_path=str(tmp_path / "e.pub"),
             )
-            key_manager.load_or_generate()
+            key_manager.load_or_generate(allow_generate=True)
             # Register the real public key with the real, now-running backend
             # so the eventual /events/{id}/verify path (not exercised by this
             # test directly, but by the real ingest handler's camera lookup)
@@ -293,7 +312,8 @@ class TestOfflineOutboxToRealBackend:
                                          chain_store=chain_store, clip_storage_dir=str(tmp_path / "clips"))
             sync_client = SyncClient(
                 edge_device_id=camera_id, backend_url=f"http://127.0.0.1:{port}",
-                db_path=str(tmp_path / "sync.db"), auth_token="",
+                db_path=str(tmp_path / "sync.db"),
+                auth_token=__import__("backend.config", fromlist=["settings"]).settings.EDGE_AUTH_TOKEN,
             )
 
             health = CameraHealthReport(camera_id=camera_id, health_state=CameraHealthState.OK, health_reason="ok")

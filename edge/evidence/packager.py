@@ -54,14 +54,31 @@ class EdgeKeyManager:
         self.public_key_path = public_key_path
         self._private_key: Optional[Ed25519PrivateKey] = None
         self._public_key: Optional[Ed25519PublicKey] = None
+        self.kid: Optional[str] = None
 
-    def load_or_generate(self) -> None:
+    def load_or_generate(self, allow_generate: bool = False) -> None:
         """Load existing keys or generate new ones."""
         os.makedirs(os.path.dirname(self.private_key_path) or ".", exist_ok=True)
         if os.path.exists(self.private_key_path):
             self._load()
         else:
+            if not allow_generate:
+                raise FileNotFoundError(f"Private key not found: {self.private_key_path}. Silently generating an unintended identity is prohibited in production.")
             self._generate()
+            
+        self._derive_kid()
+
+    def _derive_kid(self) -> None:
+        if not self._public_key:
+            return
+        # Canonicalize public key bytes (DER SubjectPublicKeyInfo)
+        canonical_bytes = self._public_key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        digest = hashlib.sha256(canonical_bytes).hexdigest().lower()
+        self.kid = f"ed25519-{digest[:32]}"
+        logger.info(f"[KeyMgr] Derived Key ID (kid): {self.kid}")
 
     def _generate(self) -> None:
         logger.info("[KeyMgr] Generating new Ed25519 keypair...")
@@ -344,8 +361,14 @@ class EvidencePackager:
         chain_store: EvidenceChainStore,
         clip_storage_dir: str = "edge/data/clips",
         encryptor: Optional[EvidenceEncryptor] = None,
+        stream_id: Optional[str] = None,
     ):
+        import re
+        if not camera_id or not re.match(r"^[A-Za-z0-9_-]+$", camera_id):
+            raise ValueError(f"Invalid camera_id '{camera_id}': must contain only alphanumeric characters, dashes, and underscores.")
+
         self.camera_id = camera_id
+        self.stream_id = stream_id
         self.key_manager = key_manager
         self.chain_store = chain_store
         self.clip_dir = clip_storage_dir
@@ -392,6 +415,8 @@ class EvidencePackager:
         ep = EvidencePackage(
             event_id=str(uuid.uuid4()),
             camera_id=self.camera_id,
+            stream_id=self.stream_id,
+            video_time=overrides.get("video_time"),
             timestamp=datetime.utcnow(),
             zone_id=zone_id,
             detection_class=overrides.get("detection_class", track.detection_class if track else "unknown"),
@@ -425,6 +450,9 @@ class EvidencePackager:
             face_match_confidence=overrides.get("face_match_confidence"),
         )
         
+        # Inject the key ID so the backend can verify the signature properly
+        ep.kid = self.key_manager.kid
+        
         if track and hasattr(track, "bbox"):
             if frame is not None and hasattr(frame, 'shape'):
                 h, w = frame.shape[:2]
@@ -448,12 +476,24 @@ class EvidencePackager:
         previous_hash, _ = self.chain_store.get_latest_hash()
         ep.previous_hash = previous_hash
 
-        # Compute hash of signable fields
-        ep.hash = compute_sha256(ep.get_signable_fields())
+        # PHASE 8.4: Add cryptographic version fields for V1 Generation
+        ep.schema_version = "1.0"
+        ep.crypto_version = "crypto-v1"
+
+        # Compute hash using V1 canonicalization
+        from shared.versioning import canonicalize, CRYPTO_VERSION_V1
+        ep_dict = ep.model_dump() if hasattr(ep, "model_dump") else ep.dict()
+        canonical_bytes = canonicalize(ep_dict, CRYPTO_VERSION_V1)
+        ep.hash = hashlib.sha256(canonical_bytes).hexdigest()
 
         # Sign with edge private key
         signature = self.key_manager.sign(ep.hash.encode("utf-8"))
         ep.signature = signature
+
+        # Re-instantiate to ensure Pydantic serializes the mutated fields
+        ep_dict = ep.model_dump() if hasattr(ep, "model_dump") else ep.dict()
+        ep = EvidencePackage(**ep_dict)
+
         _t2 = time.perf_counter()
 
         # Append to local hash-chain

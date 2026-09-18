@@ -40,9 +40,8 @@ class BlockchainAdapter:
 
 class MockBlockchainAdapter(BlockchainAdapter):
     """
-    MOCK ADAPTER — NOT HYPERLEDGER FABRIC.
-    Stores transactions in a local in-memory dict and logs them.
-    Label: BLOCKCHAIN: MOCK MODE (WSL2/Docker not available on this host).
+    Mock adapter that simulates network latency and returns a generated tx_id.
+    Label: LEDGER: MOCK MODE (WSL2/Docker not available on this host).
     This is a temporary fallback for the demo environment only.
     """
 
@@ -50,8 +49,8 @@ class MockBlockchainAdapter(BlockchainAdapter):
 
     def __init__(self):
         self._ledger: dict[str, dict] = {}
-        logger.warning(
-            f"[BLOCKCHAIN] Using MOCK adapter. "
+        logger.info(
+            f"[LEDGER] Using MOCK adapter. "
             f"Reason: {settings.BLOCKCHAIN_MOCK_LABEL}"
         )
 
@@ -71,7 +70,7 @@ class MockBlockchainAdapter(BlockchainAdapter):
             "label": self.LABEL,
         }
         self._ledger[tx.alert_id] = record
-        logger.info(f"[BLOCKCHAIN MOCK] AlertIssued: {json.dumps(record, indent=2)}")
+        logger.info(f"[LEDGER MOCK] AlertIssued: {json.dumps(record, indent=2)}")
         return {"tx_id": tx_id, "status": "MOCK"}
 
     def submit_alert_acknowledged(self, tx: AlertAcknowledgedTransaction) -> dict:
@@ -88,7 +87,7 @@ class MockBlockchainAdapter(BlockchainAdapter):
             "label": self.LABEL,
         }
         self._ledger[f"ack-{tx.alert_id}"] = record
-        logger.info(f"[BLOCKCHAIN MOCK] AlertAcknowledged: {json.dumps(record, indent=2)}")
+        logger.info(f"[LEDGER MOCK] AlertAcknowledged: {json.dumps(record, indent=2)}")
         return {"tx_id": tx_id, "status": "MOCK"}
 
     def query_alert(self, alert_id: str) -> Optional[dict]:

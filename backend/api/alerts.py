@@ -7,7 +7,6 @@ POST /alerts/{id}/close        — real terminal close action (SIH PS 26187
                                   audit finding: EventState.CLOSED was
                                   defined but never actually set anywhere)
 """
-from __future__ import annotations
 
 import logging
 from datetime import datetime
@@ -19,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from backend.database.session import get_db
 from backend.models.orm import Alert, AlertAcknowledgement, User
-from backend.security.auth import audit, require_any_role, require_operator_or_admin
+from backend.security.auth import audit, require_any_role, require_operator_or_admin, get_command_filter, enforce_command_access
 from backend.services.blockchain import get_blockchain_client
 from shared.constants import EventState
 from shared.schemas import (
@@ -45,6 +44,12 @@ async def list_alerts(
     _user = Depends(require_any_role),
 ):
     q = db.query(Alert)
+    command_filter = get_command_filter(_user)
+    if command_filter:
+        q = q.filter(
+            (Alert.command_id_issuing == command_filter) | (Alert.command_id_receiving == command_filter)
+        )
+        
     if command_id:
         q = q.filter(
             (Alert.command_id_issuing == command_id) | (Alert.command_id_receiving == command_id)
@@ -77,6 +82,11 @@ async def get_alert(
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+        
+    command_filter = get_command_filter(_user)
+    if command_filter and command_filter not in [alert.command_id_issuing, alert.command_id_receiving]:
+        raise HTTPException(status_code=403, detail="Access denied: command isolation boundary.")
+        
     return _alert_to_response(alert)
 
 
@@ -95,23 +105,41 @@ async def acknowledge_alert(
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    if alert.acknowledged_at:
-        raise HTTPException(status_code=400, detail="Alert already acknowledged")
+        
+    # Isolation: Operator cannot spoof receiving_command_id or acknowledge alerts outside their scope.
+    command_filter = get_command_filter(current_user)
+    target_receiving_command = payload.receiving_command_id
+    if command_filter:
+        target_receiving_command = command_filter
+        if command_filter not in [alert.command_id_issuing, alert.command_id_receiving]:
+            raise HTTPException(status_code=403, detail="Access denied: command isolation boundary.")
+            
+    # Atomic state transition
+    now = datetime.utcnow()
+    rows_affected = db.query(Alert).filter(
+        Alert.id == alert_id,
+        Alert.lifecycle_state == EventState.ALERTED.value
+    ).update({
+        Alert.acknowledged_at: now,
+        Alert.acknowledged_by: current_user.username,
+        Alert.command_id_receiving: target_receiving_command,
+        Alert.lifecycle_state: EventState.ACKNOWLEDGED.value
+    })
+    
+    if rows_affected == 0:
+        raise HTTPException(status_code=409, detail="Alert already acknowledged or conflicted")
+
+    db.refresh(alert)
 
     # Record acknowledgement
     ack = AlertAcknowledgement(
         alert_id=alert_id,
-        receiving_command_id=payload.receiving_command_id,
-        ack_timestamp=datetime.utcnow(),
+        receiving_command_id=target_receiving_command,
+        ack_timestamp=now,
         status=payload.status,
         notes=payload.notes,
     )
     db.add(ack)
-
-    alert.acknowledged_at = datetime.utcnow()
-    alert.acknowledged_by = current_user.username
-    alert.command_id_receiving = payload.receiving_command_id
-    alert.lifecycle_state = EventState.ACKNOWLEDGED.value
 
     # Submit AlertAcknowledged to blockchain (non-blocking — failure doesn't block dashboard)
     if alert.blockchain_status == "CONFIRMED" or alert.blockchain_status == "MOCK":
@@ -155,15 +183,30 @@ async def close_alert(
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+        
+    command_filter = get_command_filter(current_user)
+    if command_filter and command_filter not in [alert.command_id_issuing, alert.command_id_receiving]:
+        raise HTTPException(status_code=403, detail="Access denied: command isolation boundary.")
+        
     if not alert.acknowledged_at:
         raise HTTPException(status_code=400, detail="Alert must be acknowledged before it can be closed")
-    if alert.closed_at:
-        raise HTTPException(status_code=400, detail="Alert already closed")
-
-    alert.closed_at = datetime.utcnow()
-    alert.closed_by = current_user.username
-    alert.resolution_notes = payload.get("resolution_notes")
-    alert.lifecycle_state = EventState.CLOSED.value
+        
+    # Atomic transition for closing
+    now = datetime.utcnow()
+    rows_affected = db.query(Alert).filter(
+        Alert.id == alert_id,
+        Alert.lifecycle_state == EventState.ACKNOWLEDGED.value
+    ).update({
+        Alert.closed_at: now,
+        Alert.closed_by: current_user.username,
+        Alert.resolution_notes: payload.get("resolution_notes"),
+        Alert.lifecycle_state: EventState.CLOSED.value
+    })
+    
+    if rows_affected == 0:
+        raise HTTPException(status_code=409, detail="Alert already closed or conflicted")
+        
+    db.refresh(alert)
 
     db.commit()
     audit(db, "ALERT_CLOSED", user_id=current_user.id, resource_type="alert", resource_id=alert_id)

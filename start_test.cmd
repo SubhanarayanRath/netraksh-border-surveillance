@@ -8,15 +8,15 @@ echo ========================================================
 
 set PYTHON=py
 set PYTHONPATH=%cd%
-set BACKEND_URL=http://localhost:8443
+set BACKEND_URL=http://localhost:8000
 set SYNC_INTERVAL_SECONDS=2
 
 :: -------------------------------------------------------
-:: 1. Start the backend (also serves the built frontend)
+:: 1. Start the backend
 :: -------------------------------------------------------
 echo.
-echo [1/3] Starting Backend + Frontend Server on port 8443...
-start "NETRAKSH-Backend" /b cmd /c "%PYTHON% -m uvicorn backend.main:app --host 0.0.0.0 --port 8443 > backend.log 2>&1"
+echo [1/3] Starting Backend Server on port 8000...
+start "NETRAKSH-Backend" /b cmd /c "%PYTHON% -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1"
 
 :: Wait for backend to initialise
 timeout /t 4 /nobreak > nul

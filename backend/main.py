@@ -8,10 +8,11 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api import alerts, auth, cameras, demo, events, integrations, system, watchlist, websocket
+from backend.api import alerts, analytics, audit, auth, cameras, dashboard, demo, events, integrations, system, watchlist, websocket
+from backend.api.rate_limit import limiter, RateLimitExceeded, _rate_limit_exceeded_handler
 from backend.config import settings
 from backend.database.session import SessionLocal, init_db
 from backend.security.auth import bootstrap_users
@@ -43,6 +44,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"Blockchain mode: {settings.BLOCKCHAIN_MODE.upper()}")
     if settings.BLOCKCHAIN_MODE == "mock":
         logger.warning(f"  -> {settings.BLOCKCHAIN_MOCK_LABEL}")
+    # Start WebSocket background tasks (telemetry batcher + heartbeat).
+    # Must be called inside the async lifespan context so the asyncio
+    # event loop is running when create_task is called.
+    await websocket.manager.start_background_tasks()
+    
+    # Phase 6: Start Async Webhook Worker
+    from backend.services.escalation import start_webhook_worker
+    start_webhook_worker()
+    
     yield
     logger.info("NETRAKSH backend shutting down.")
 
@@ -57,12 +67,10 @@ def _seed_demo_data(db) -> None:
 
     logger.info("Seeding demo camera and zone data...")
 
-    # Coordinates placed near the real Attari-Wagah border checkpoint,
-    # Punjab (a real, publicly-known India-Pakistan border crossing) for
-    # geographic plausibility on the geospatial map — these are NOT real
-    # deployed camera positions or an implied actual MHA installation,
-    # same "realistic but clearly a demo" spirit as the rest of this
-    # project's seed data (e.g. scripts/seed_demo_events.py).
+    # Seed cameras intentionally have no coordinates.  A geospatial command
+    # map must not present plausible demo coordinates as deployed hardware;
+    # an administrator supplies the real site position through the location
+    # endpoint when one is genuinely known.
     # Command A — main camera
     cam_a = Camera(
         id="cam-border-01",
@@ -70,8 +78,8 @@ def _seed_demo_data(db) -> None:
         location="Sector 7, Border Post Alpha",
         rtsp_url=None,
         owning_command_id="COMMAND_A",
-        latitude=31.6050,
-        longitude=74.6050,  # Shifted East to ensure it's safely inside Indian territory
+        latitude=None,
+        longitude=None,
     )
     cam_b = Camera(
         id="cam-checkpoint-01",
@@ -79,8 +87,8 @@ def _seed_demo_data(db) -> None:
         location="Main checkpoint, Sector 7",
         rtsp_url=None,
         owning_command_id="COMMAND_A",
-        latitude=31.6025,
-        longitude=74.6025,  # Shifted East
+        latitude=None,
+        longitude=None,
     )
     db.add_all([cam_a, cam_b])
     db.flush()
@@ -136,16 +144,79 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+# ── Security response headers ────────────────────────────────────────────────────────
+# Defense-in-depth: add standard security headers to every HTTP response.
+# These do not replace proper CORS or auth, but reduce the impact of XSS
+# and clickjacking against the operator's browser session.
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    # Prevents browsers from MIME-sniffing a response away from the declared
+    # Content-Type. Blocks CSS injection via image-upload if ever added.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    # Deny embedding in any <iframe> / <frame> / <object> — anti-clickjacking.
+    response.headers["X-Frame-Options"] = "DENY"
+    # Legacy XSS filter (Chrome 57+, IE 8+) — belt-and-suspenders; CSP is
+    # the primary protection.
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    # Only send the origin in the Referer header, never the full path —
+    # prevents leaking event IDs to any third-party resources.
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Permissions Policy: this dashboard needs no camera/microphone/geolocation
+    # access from the browser (video is always server-side). Deny all.
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Content-Security-Policy:
+    # - default-src 'self': baseline allow-list
+    # - script-src 'self': no inline scripts, no external script CDNs
+    # - style-src 'self' 'unsafe-inline': React/Vite inject inline style tags;
+    #   required for the current frontend build. Removing 'unsafe-inline'
+    #   requires a full build-system change (nonce injection) — out of scope here.
+    # - font-src 'self' https://fonts.gstatic.com: Google Fonts files
+    # - img-src 'self' data: blob:: data URIs used for canvas exports;
+    #   blob: for video object URLs from URL.createObjectURL()
+    # - connect-src 'self' ws: wss:: WebSocket connections to the backend
+    # - frame-ancestors 'none': supersedes X-Frame-Options: DENY
+    # - object-src 'none': disables Flash/plugin embedding
+    # - base-uri 'self': prevents base-tag injection
+    # Note: this CSP applies to the backend-served frontend (single-container).
+    # For the Vercel-hosted frontend, set CSP via vercel.json headers config.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; "
+        "object-src 'none'; "
+        "base-uri 'self'"
+    )
+    return response
+
+# ── Rate limiter ────────────────────────────────────────────────────────────────
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Include all routers
 app.include_router(system.router)
 app.include_router(auth.router)
 app.include_router(cameras.router)
 app.include_router(events.router)
 app.include_router(alerts.router)
+app.include_router(analytics.router)
+app.include_router(audit.router)
 app.include_router(watchlist.router)
 app.include_router(integrations.router)
 app.include_router(websocket.router)
-app.include_router(demo.router)  # Local prototype only — no auth
+# Dashboard video router — always mounted (authenticated, no scenario switching).
+# Provides POST /api/dashboard/video/upload and GET /api/dashboard/video/current
+# for the SIH presentation video workflow in all environments.
+app.include_router(dashboard.router)
+
+if settings.ENV == "development":
+    app.include_router(demo.router)
+else:
+    logger.info("Demo scenario-control API is disabled outside development mode.")
 
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
@@ -161,17 +232,15 @@ if frontend_dist.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
 
 demo_videos_path = Path(__file__).resolve().parent.parent / "demo" / "videos"
-if demo_videos_path.exists():
-    app.mount("/demo/videos", StaticFiles(directory=demo_videos_path), name="demo_videos")
     
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        # Allow API routes to pass through if they 404 (handled before this catch-all)
-        # But for anything else, serve index.html for SPA routing
-        file_path = frontend_dist / full_path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(file_path)
-        return FileResponse(frontend_dist / "index.html")
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    # Allow API routes to pass through if they 404 (handled before this catch-all)
+    # But for anything else, serve index.html for SPA routing
+    file_path = frontend_dist / full_path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(frontend_dist / "index.html")
 
 
 if __name__ == "__main__":

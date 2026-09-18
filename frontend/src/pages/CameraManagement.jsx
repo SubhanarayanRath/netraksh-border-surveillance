@@ -130,13 +130,15 @@ export default function CameraManagement() {
   };
 
   return (
-    <div className="h-full flex flex-col" style={{ gap: '1.5rem', overflow: 'hidden' }}>
-      <div className="flex-col flex-shrink-0">
-        <h2 className="text-xl font-display text-main tracking-widest uppercase">Camera Management</h2>
-        <p className="text-sm font-body text-muted">
-          Register cameras and set their real map coordinates — ADMIN role only, enforced by the
-          real backend (not just hidden here for other roles).
-        </p>
+    <div className="h-full flex flex-col gap-4 overflow-hidden">
+      <div className="section-header flex-shrink-0">
+        <div>
+          <h2 className="section-title">Camera Management</h2>
+          <div className="section-sub">
+            Register cameras and set their real map coordinates — ADMIN role only, enforced by the
+            real backend.
+          </div>
+        </div>
       </div>
 
       {status === 'access-denied' && (
@@ -238,15 +240,17 @@ export default function CameraManagement() {
 
           {/* Right Side Panel - Registration */}
           {role === 'ADMIN' && (
-            <div className="flex-shrink-0 flex flex-col border rounded relative overflow-hidden" style={{ width: '22rem', background: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="card flex-shrink-0 h-min" style={{ width: '22rem' }}>
               {/* Header */}
-              <div className="border-b border-color flex items-center" style={{ padding: '1.25rem', gap: '0.75rem', background: 'rgba(0,0,0,0.2)' }}>
-                <div className="bg-[rgba(74,222,128,0.1)] p-1.5 rounded text-ok">
-                  <Plus size={18} />
-                </div>
-                <div className="flex flex-col">
-                  <span className="font-display font-bold text-main uppercase tracking-widest text-sm">Register Node</span>
-                  <span className="text-[10px] font-display text-muted uppercase tracking-widest">Provision new camera</span>
+              <div className="card-header border-b border-color" style={{ paddingBottom: '1rem' }}>
+                <div className="flex items-center gap-3">
+                  <div className="bg-[rgba(74,222,128,0.1)] p-1.5 rounded text-ok">
+                    <Plus size={16} />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="card-title">Register Node</span>
+                    <span className="font-display text-muted uppercase tracking-widest" style={{ fontSize: '0.6rem' }}>Provision new camera</span>
+                  </div>
                 </div>
               </div>
               
@@ -278,7 +282,7 @@ export default function CameraManagement() {
                     </div>
                   )}
                   
-                  <button type="submit" disabled={registering} className="w-full bg-main hover:bg-white text-black transition-colors rounded font-display text-sm font-bold uppercase tracking-widest disabled:opacity-50 mt-2" style={{ padding: '0.75rem' }}>
+                  <button type="submit" disabled={registering} className="btn btn-primary w-full flex justify-center mt-2">
                     {registering ? 'Provisioning...' : 'Provision Node'}
                   </button>
                 </form>

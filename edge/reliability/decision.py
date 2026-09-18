@@ -51,6 +51,8 @@ from __future__ import annotations
 
 import logging
 import os
+import pickle
+from abc import ABC, abstractmethod
 
 from shared.constants import (
     BRIGHTNESS_NIGHT_THRESHOLD,
@@ -273,6 +275,222 @@ def _health_quality_score(
     return _HEALTH_QUALITY_SCORE.get(health_report.health_state, 0.5)
 
 
+class ReliabilityEngine(ABC):
+    """Abstract base class for the Reliability Engine."""
+
+    @abstractmethod
+    def evaluate(
+        self,
+        health_report: CameraHealthReport,
+        condition_report: SceneConditionReport,
+        detector_confidence: float,
+        calibration_threshold: float,
+        temporal_score: float = 1.0,
+    ) -> ReliabilityDecision:
+        pass
+
+
+class LegacyReliabilityEngine(ReliabilityEngine):
+    """
+    Preserves the exact behavior of the v4 Hybrid Reliability Engine.
+    """
+    def evaluate(
+        self,
+        health_report: CameraHealthReport,
+        condition_report: SceneConditionReport,
+        detector_confidence: float,
+        calibration_threshold: float,
+        temporal_score: float = 1.0,
+    ) -> ReliabilityDecision:
+        condition = condition_report.condition
+        d = max(0.0, min(1.0, detector_confidence))
+        t = max(0.0, min(1.0, temporal_score))
+        s = _scene_quality_score(condition_report)
+        h = _health_quality_score(health_report, condition_report)
+
+        r = (
+            RELIABILITY_WEIGHT_D * d
+            + RELIABILITY_WEIGHT_T * t
+            + RELIABILITY_WEIGHT_S * s
+            + RELIABILITY_WEIGHT_H * h
+        )
+        factor_detail = f"D={d:.2f},T={t:.2f},S={s:.2f},H={h:.2f}"
+
+        if r < RELIABILITY_R_THRESHOLD:
+            reason = f"R_BELOW_THRESHOLD:R={r:.3f}<{RELIABILITY_R_THRESHOLD:.3f} ({factor_detail})"
+            logger.debug(f"[Reliability] UNCERTAIN — {reason}")
+            return ReliabilityDecision(
+                decision_state=DecisionState.UNCERTAIN,
+                decision_reason=reason,
+                camera_health=health_report.health_state,
+                scene_condition=condition,
+                detector_confidence=detector_confidence,
+                applied_threshold=calibration_threshold,
+                score_d=d,
+                score_t=t,
+                score_s=s,
+                score_h=h,
+                score_r=r,
+            )
+
+        # R above threshold — DETECTED, flag health context
+        if health_report.health_state == CameraHealthState.DEGRADED:
+            reason = (
+                f"R_ABOVE_THRESHOLD_DEGRADED_CAMERA:R={r:.3f}>={RELIABILITY_R_THRESHOLD:.3f} "
+                f"({factor_detail}),health={health_report.health_reason}"
+            )
+            logger.info(f"[Reliability] DETECTED (DEGRADED CAMERA) — R={r:.3f}, health={health_report.health_reason}")
+            return ReliabilityDecision(
+                decision_state=DecisionState.DETECTED,
+                decision_reason=reason,
+                camera_health=CameraHealthState.DEGRADED,
+                scene_condition=condition,
+                detector_confidence=detector_confidence,
+                applied_threshold=calibration_threshold,
+                score_d=d,
+                score_t=t,
+                score_s=s,
+                score_h=h,
+                score_r=r,
+            )
+
+        # Full DETECTED
+        reason = f"R_ABOVE_THRESHOLD:R={r:.3f}>={RELIABILITY_R_THRESHOLD:.3f} ({factor_detail})"
+        logger.info(f"[Reliability] DETECTED — R={r:.3f}")
+        return ReliabilityDecision(
+            decision_state=DecisionState.DETECTED,
+            decision_reason=reason,
+            camera_health=CameraHealthState.OK,
+            scene_condition=condition,
+            detector_confidence=detector_confidence,
+            applied_threshold=calibration_threshold,
+            score_d=d,
+            score_t=t,
+            score_s=s,
+            score_h=h,
+            score_r=r,
+        )
+
+
+class CalibratedReliabilityEngine(ReliabilityEngine):
+    """
+    Interface for a future data-driven Reliability Engine (e.g., LogisticRegression).
+    Currently implemented as a safe fallback because a verified model does not exist.
+    """
+    def __init__(self, model_path: str = "models/reliability_calibration.pkl"):
+        self.model_path = model_path
+        self.model = self._load_and_validate_model()
+        self.threshold = float(os.environ.get("RELIABILITY_CALIBRATED_THRESHOLD", "0.75"))
+
+    def _load_and_validate_model(self):
+        """Safely validate the model artifact if it exists."""
+        if not os.path.exists(self.model_path):
+            logger.warning(f"[Reliability] Calibrated model artifact not found at {self.model_path}. Engine UNAVAILABLE.")
+            return None
+        
+        try:
+            with open(self.model_path, "rb") as f:
+                model = pickle.load(f)
+            
+            # Validation: Expected type and feature count
+            expected_features = 4
+            if not hasattr(model, "coef_") or not hasattr(model, "predict_proba"):
+                logger.error("[Reliability] Invalid model type: missing expected scikit-learn methods.")
+                return None
+                
+            if model.coef_.shape[1] != expected_features:
+                logger.error(f"[Reliability] Feature schema mismatch: expected {expected_features}, got {model.coef_.shape[1]}")
+                return None
+                
+            logger.info(f"[Reliability] Successfully loaded CalibratedReliabilityEngine model from {self.model_path}")
+            return model
+            
+        except Exception as e:
+            logger.error(f"[Reliability] Failed to load/validate calibrated model: {e}")
+            return None
+
+    def evaluate(
+        self,
+        health_report: CameraHealthReport,
+        condition_report: SceneConditionReport,
+        detector_confidence: float,
+        calibration_threshold: float,
+        temporal_score: float = 1.0,
+    ) -> ReliabilityDecision:
+        condition = condition_report.condition
+        d = max(0.0, min(1.0, detector_confidence))
+        t = max(0.0, min(1.0, temporal_score))
+        s = _scene_quality_score(condition_report)
+        h = _health_quality_score(health_report, condition_report)
+
+        if self.model is None:
+            # Safe Fallback: DO NOT SILENTLY GENERATE A SCORE OR USE LEGACY
+            reason = "UNCERTAIN_CALIBRATED_ENGINE_UNAVAILABLE"
+            return ReliabilityDecision(
+                decision_state=DecisionState.UNCERTAIN,
+                decision_reason=reason,
+                camera_health=health_report.health_state,
+                scene_condition=condition,
+                detector_confidence=detector_confidence,
+                applied_threshold=calibration_threshold,
+                score_d=d,
+                score_t=t,
+                score_s=s,
+                score_h=h,
+                score_r=None,
+            )
+
+        import numpy as np
+        X = np.array([[d, t, s, h]])
+        
+        try:
+            prob = float(self.model.predict_proba(X)[0][1])
+        except Exception as e:
+            logger.error(f"[Reliability] Prediction failed: {e}")
+            return ReliabilityDecision(
+                decision_state=DecisionState.UNCERTAIN,
+                decision_reason=f"CALIBRATED_ENGINE_ERROR:{e}",
+                camera_health=health_report.health_state,
+                scene_condition=condition,
+                detector_confidence=detector_confidence,
+                applied_threshold=calibration_threshold,
+                score_d=d,
+                score_t=t,
+                score_s=s,
+                score_h=h,
+                score_r=None,
+            )
+
+        if prob < self.threshold:
+            state = DecisionState.UNCERTAIN
+            reason = f"CALIBRATED_PROBABILITY_BELOW_THRESHOLD:P={prob:.3f}<{self.threshold:.3f}"
+        else:
+            state = DecisionState.DETECTED
+            reason = f"CALIBRATED_PROBABILITY_ABOVE_THRESHOLD:P={prob:.3f}>={self.threshold:.3f}"
+            
+        return ReliabilityDecision(
+            decision_state=state,
+            decision_reason=reason,
+            camera_health=health_report.health_state,
+            scene_condition=condition,
+            detector_confidence=detector_confidence,
+            applied_threshold=calibration_threshold,
+            score_d=d,
+            score_t=t,
+            score_s=s,
+            score_h=h,
+            score_r=prob,
+        )
+
+
+def get_reliability_engine() -> ReliabilityEngine:
+    engine_type = os.environ.get("RELIABILITY_ENGINE", "legacy").lower()
+    if engine_type == "calibrated":
+        return CalibratedReliabilityEngine()
+    else:
+        return LegacyReliabilityEngine()
+
+
 def make_reliability_decision(
     health_report: CameraHealthReport,
     condition_report: SceneConditionReport,
@@ -282,30 +500,20 @@ def make_reliability_decision(
 ) -> ReliabilityDecision:
     """
     The one function that implements the Hybrid Reliability Engine.
-    This is a pure function — no side effects, fully unit-testable.
+    Gate 1 is processed strictly here before the engine sees it.
 
     Args:
         health_report: output of Gate 1 (Camera Health Monitor)
         condition_report: output of Gate 2 (Scene Condition Classifier)
         detector_confidence: raw confidence from YOLO for the highest-confidence
-                             detection in this frame (0.0 if no detection) — this is D
-        calibration_threshold: per-condition confidence threshold from
-                             edge.detection.calibration — still controls what
-                             YOLO itself reports as a candidate detection at
-                             all, and is echoed into `applied_threshold` for
-                             context, but no longer directly gates the
-                             DETECTED/UNCERTAIN banding (RELIABILITY_R_THRESHOLD
-                             does that now)
-        temporal_score: T in [0,1] from edge.temporal.track_features.
-                             TrackFeatureTracker. Defaults to a neutral 1.0
-                             when no track context is available (e.g. an
-                             abandoned-object event whose track has already
-                             disappeared) or the caller hasn't computed one.
+                             detection in this frame (0.0 if no detection)
+        calibration_threshold: per-condition confidence threshold
+        temporal_score: T in [0,1] from track_features.
 
     Returns:
         ReliabilityDecision with decision_state, decision_reason, and context
     """
-    # === GATE 1: Camera Health (hard override, unchanged) ===
+    # === GATE 1: Camera Health (hard override, unchanged, absolute safety gate) ===
     if health_report.health_state == CameraHealthState.FAILED:
         reason = f"CAMERA_FAILED:{health_report.health_reason}"
         logger.warning(
@@ -321,74 +529,9 @@ def make_reliability_decision(
             applied_threshold=calibration_threshold,
         )
 
-    # === Hybrid Reliability Engine: weighted-sum R ===
-    condition = condition_report.condition
-    d = max(0.0, min(1.0, detector_confidence))
-    t = max(0.0, min(1.0, temporal_score))
-    s = _scene_quality_score(condition_report)
-    h = _health_quality_score(health_report, condition_report)
-
-    r = (
-        RELIABILITY_WEIGHT_D * d
-        + RELIABILITY_WEIGHT_T * t
-        + RELIABILITY_WEIGHT_S * s
-        + RELIABILITY_WEIGHT_H * h
-    )
-    factor_detail = f"D={d:.2f},T={t:.2f},S={s:.2f},H={h:.2f}"
-
-    if r < RELIABILITY_R_THRESHOLD:
-        reason = f"R_BELOW_THRESHOLD:R={r:.3f}<{RELIABILITY_R_THRESHOLD:.3f} ({factor_detail})"
-        logger.debug(f"[Reliability] UNCERTAIN — {reason}")
-        return ReliabilityDecision(
-            decision_state=DecisionState.UNCERTAIN,
-            decision_reason=reason,
-            camera_health=health_report.health_state,
-            scene_condition=condition,
-            detector_confidence=detector_confidence,
-            applied_threshold=calibration_threshold,
-            score_d=d,
-            score_t=t,
-            score_s=s,
-            score_h=h,
-            score_r=r,
-        )
-
-    # R above threshold — DETECTED, flag health context
-    if health_report.health_state == CameraHealthState.DEGRADED:
-        reason = (
-            f"R_ABOVE_THRESHOLD_DEGRADED_CAMERA:R={r:.3f}>={RELIABILITY_R_THRESHOLD:.3f} "
-            f"({factor_detail}),health={health_report.health_reason}"
-        )
-        logger.info(f"[Reliability] DETECTED (DEGRADED CAMERA) — R={r:.3f}, health={health_report.health_reason}")
-        return ReliabilityDecision(
-            decision_state=DecisionState.DETECTED,
-            decision_reason=reason,
-            camera_health=CameraHealthState.DEGRADED,
-            scene_condition=condition,
-            detector_confidence=detector_confidence,
-            applied_threshold=calibration_threshold,
-            score_d=d,
-            score_t=t,
-            score_s=s,
-            score_h=h,
-            score_r=r,
-        )
-
-    # Full DETECTED
-    reason = f"R_ABOVE_THRESHOLD:R={r:.3f}>={RELIABILITY_R_THRESHOLD:.3f} ({factor_detail})"
-    logger.info(f"[Reliability] DETECTED — R={r:.3f}")
-    return ReliabilityDecision(
-        decision_state=DecisionState.DETECTED,
-        decision_reason=reason,
-        camera_health=CameraHealthState.OK,
-        scene_condition=condition,
-        detector_confidence=detector_confidence,
-        applied_threshold=calibration_threshold,
-        score_d=d,
-        score_t=t,
-        score_s=s,
-        score_h=h,
-        score_r=r,
+    engine = get_reliability_engine()
+    return engine.evaluate(
+        health_report, condition_report, detector_confidence, calibration_threshold, temporal_score
     )
 
 

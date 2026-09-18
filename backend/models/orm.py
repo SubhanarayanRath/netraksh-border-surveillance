@@ -65,6 +65,31 @@ class Camera(Base):
     zones: Mapped[List["Zone"]] = relationship(
         "Zone", back_populates="camera", cascade="all, delete-orphan"
     )
+    keys: Mapped[List["CameraKey"]] = relationship(
+        "CameraKey", back_populates="camera", cascade="all, delete-orphan"
+    )
+
+
+# ---------------------------------------------------------------------------
+# CameraKey (Key Registry)
+# ---------------------------------------------------------------------------
+
+class CameraKey(Base):
+    __tablename__ = "camera_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    kid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    camera_id: Mapped[str] = mapped_column(String(36), ForeignKey("cameras.id"), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(32), default="ed25519")
+    purpose: Mapped[str] = mapped_column(String(32), default="EVIDENCE_SIGNING")
+    public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE") # ACTIVE, RETIRED, REVOKED
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    camera: Mapped["Camera"] = relationship("Camera", back_populates="keys")
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +154,9 @@ class Event(Base):
     camera_id: Mapped[str] = mapped_column(String(36), ForeignKey("cameras.id"), nullable=False)
     zone_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("zones.id"))
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Source-video position in seconds. Nullable for live/legacy events where
+    # the edge cannot provide a finite media clock.
+    video_time: Mapped[Optional[float]] = mapped_column(Float)
     event_type: Mapped[Optional[str]] = mapped_column(String(64))
     detection_class: Mapped[str] = mapped_column(String(32), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
@@ -141,6 +169,7 @@ class Event(Base):
     direction: Mapped[Optional[str]] = mapped_column(String(32))
     rule: Mapped[Optional[str]] = mapped_column(String(64))
     rule_value: Mapped[Optional[float]] = mapped_column(Float)
+    stream_id: Mapped[Optional[str]] = mapped_column(String(36))
     plate_text: Mapped[Optional[str]] = mapped_column(String(32))
     plate_confidence: Mapped[Optional[float]] = mapped_column(Float)
     # Real sub-classification when detection_class == "vehicle" (see
@@ -159,6 +188,16 @@ class Event(Base):
     face_match_confidence: Mapped[Optional[float]] = mapped_column(Float)
     evidence_clip_ref: Mapped[Optional[str]] = mapped_column(String(512))
     evidence_image_ref: Mapped[Optional[str]] = mapped_column(String(512))
+    
+    # Phase 4 WP-3.3 Object Storage Metadata
+    storage_provider: Mapped[str] = mapped_column(String(32), default="local")
+    object_key: Mapped[Optional[str]] = mapped_column(String(512))
+    storage_status: Mapped[str] = mapped_column(String(32), default="CREATED")
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    content_size: Mapped[Optional[int]] = mapped_column(Integer)
+    uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    storage_version_id: Mapped[Optional[str]] = mapped_column(String(128))
+    failure_reason: Mapped[Optional[str]] = mapped_column(String(256))
     
     # Bounding box coordinates (normalized 0.0 - 1.0)
     bbox_x: Mapped[Optional[float]] = mapped_column(Float)
@@ -192,6 +231,10 @@ class Event(Base):
     corroboration_sigma_s: Mapped[Optional[float]] = mapped_column(Float)
     corroborating_camera_id: Mapped[Optional[str]] = mapped_column(String(36))
     corroboration_status: Mapped[Optional[str]] = mapped_column(String(32))
+    
+    # Phase 3 Step 8: Multi-Camera Appearance Signals
+    appearance_similarity: Mapped[Optional[float]] = mapped_column(Float)
+    representation_type: Mapped[Optional[str]] = mapped_column(String(64))
 
     camera: Mapped["Camera"] = relationship("Camera", back_populates="events")
     zone: Mapped[Optional["Zone"]] = relationship("Zone", back_populates="events")
@@ -212,6 +255,9 @@ class EvidencePackage(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     event_id: Mapped[str] = mapped_column(String(36), ForeignKey("events.id"), unique=True, nullable=False)
+    schema_version: Mapped[Optional[str]] = mapped_column(String(32))
+    crypto_version: Mapped[Optional[str]] = mapped_column(String(32))
+    kid: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     digital_signature: Mapped[str] = mapped_column(Text, nullable=False)
     previous_hash: Mapped[Optional[str]] = mapped_column(String(64))
@@ -243,6 +289,7 @@ class EvidenceChain(Base):
     event_id: Mapped[str] = mapped_column(String(36), nullable=False)
     previous_hash: Mapped[Optional[str]] = mapped_column(String(64))
     current_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    kid: Mapped[Optional[str]] = mapped_column(String(64))
     signature: Mapped[str] = mapped_column(Text, nullable=False)
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     chain_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
@@ -386,6 +433,30 @@ class AuditLog(Base):
 
 
 # ---------------------------------------------------------------------------
+# AnalysisTelemetrySnapshot — durable latest lifecycle state
+# ---------------------------------------------------------------------------
+
+class AnalysisTelemetrySnapshot(Base):
+    """Latest real telemetry for a camera/stream, retained across restarts."""
+    __tablename__ = "analysis_telemetry"
+    __table_args__ = (
+        Index("ix_analysis_telemetry_camera_stream", "camera_id", "stream_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    camera_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    stream_id: Mapped[Optional[str]] = mapped_column(String(36))
+    timestamp: Mapped[float] = mapped_column(Float, nullable=False)
+    video_time: Mapped[Optional[float]] = mapped_column(Float)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    frame_width: Mapped[Optional[int]] = mapped_column(Integer)
+    frame_height: Mapped[Optional[int]] = mapped_column(Integer)
+    analysis_state: Mapped[Optional[str]] = mapped_column(String(16))
+    tracks_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
 # PipelineMetricsSnapshot — real edge performance telemetry (architecture v4 §15)
 # ---------------------------------------------------------------------------
 
@@ -417,6 +488,12 @@ class PipelineMetricsSnapshot(Base):
     uptime_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     fps: Mapped[float] = mapped_column(Float, nullable=False)
     alerts_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Cumulative counters from EdgePipeline's bounded telemetry producer.
+    # Nullable preserves the truth for snapshots stored before these were
+    # transported to the backend.
+    telemetry_produced: Mapped[Optional[int]] = mapped_column(Integer)
+    telemetry_dropped: Mapped[Optional[int]] = mapped_column(Integer)
+    telemetry_errors: Mapped[Optional[int]] = mapped_column(Integer)
     cpu_percent: Mapped[Optional[float]] = mapped_column(Float)
     rss_mb: Mapped[Optional[float]] = mapped_column(Float)
     psutil_available: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -441,7 +518,24 @@ class WatchlistPerson(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Semi-colon separated list of known aliases / alternate identities.
+    # Stored as a plain string rather than a child table for simplicity;
+    # the UI splits on ";" for display.
+    aliases: Mapped[Optional[str]] = mapped_column(String(512))
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # Threat classification: ELEVATED | SEVERE | CRITICAL
+    # Displayed as Yellow / Orange / Red in the watchlist grid.
+    threat_level: Mapped[Optional[str]] = mapped_column(
+        String(16), default="ELEVATED"
+    )
+    # Category / role (e.g. "Smuggler", "Suspected militant", "Person of interest")
+    category: Mapped[Optional[str]] = mapped_column(String(64))
+    # Last known location as a free-text string ("Sector 7, Post Alpha")
+    last_known_location: Mapped[Optional[str]] = mapped_column(String(256))
+    # Timestamp of last observed sighting (updated when a face-match event fires)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Linked camera_id where last sighting occurred
+    last_seen_camera_id: Mapped[Optional[str]] = mapped_column(String(64))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -501,3 +595,29 @@ class WebhookSubscription(Base):
     last_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_delivery_status: Mapped[Optional[str]] = mapped_column(String(16))  # "SUCCESS" | "FAILED"
     last_delivery_error: Mapped[Optional[str]] = mapped_column(String(512))
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 WP-2: Edge Identity Model
+# ---------------------------------------------------------------------------
+
+class EdgeIdentity(Base):
+    """
+    Edge device identity and revocation registry.
+    Ties the edge device securely to its mTLS client certificate.
+    """
+    __tablename__ = "edge_identities"
+
+    edge_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    certificate_fingerprint: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    certificate_serial: Mapped[Optional[str]] = mapped_column(String(128))
+    
+    # Status: ACTIVE, SUSPENDED, REVOKED, EXPIRED, UNKNOWN
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    
+    issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    
+    device_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

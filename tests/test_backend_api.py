@@ -12,18 +12,18 @@ def test_api_system_health():
 
 def test_api_cameras_unauthorized():
     # Attempting to fetch cameras without auth token should fail with 401
-    response = client.get("/cameras/")
+    response = client.get("/cameras")
     assert response.status_code == 401
 
 def test_api_login_invalid():
-    response = client.post("/security/token", data={"username": "admin", "password": "wrong_password"})
+    response = client.post("/auth/token", data={"username": "admin", "password": "wrong_password"})
     assert response.status_code == 401
     assert "detail" in response.json()
 
 # This harness assumes an admin exists per backend/main.py's bootstrap_users
 def get_admin_token():
-    # Use the default bootstrap credentials. (In real tests this might be mocked)
-    response = client.post("/security/token", data={"username": "admin", "password": "admin"})
+    # Use the strong mock password from conftest.py
+    response = client.post("/auth/token", data={"username": "admin", "password": "StrongAdminTest123!"})
     if response.status_code == 200:
         return response.json()["access_token"]
     return None
@@ -32,7 +32,7 @@ def test_api_cameras_authorized():
     token = get_admin_token()
     # If the database is empty or not seeded, this might fail, but status code should be 200
     if token:
-        response = client.get("/cameras/", headers={"Authorization": f"Bearer {token}"})
+        response = client.get("/cameras", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 

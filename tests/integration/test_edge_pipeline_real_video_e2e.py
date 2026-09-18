@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from edge.main import EdgePipeline
+from edge.evidence.packager import EdgeKeyManager
 
 VIDEO_PATH = Path("demo/videos/vtest.avi")
 ZONES_PATH = "demo/scripts/zones_config.json"
@@ -61,10 +62,14 @@ def test_real_edge_pipeline_processes_real_frames_and_produces_verified_evidence
         "backend_url": "http://127.0.0.1:59999",
     }
 
+    key_manager = EdgeKeyManager(
+        private_key_path=str(tmp_path / "certs" / "e2e-real-cam.key"),
+        public_key_path=str(tmp_path / "certs" / "e2e-real-cam.pub"),
+    )
+    key_manager.load_or_generate(allow_generate=True)
     pipeline = EdgePipeline(config)
     pipeline.detector.load()
 
-    assert pipeline.adapter.open()
     processed = 0
     try:
         for frame, meta in pipeline.adapter.frames():
@@ -73,7 +78,8 @@ def test_real_edge_pipeline_processes_real_frames_and_produces_verified_evidence
             if processed >= FRAMES_TO_PROCESS:
                 break
     finally:
-        pipeline.adapter.release()
+        pipeline.adapter.stop()
+        pipeline.adapter.join()
 
     assert processed == FRAMES_TO_PROCESS
 

@@ -40,7 +40,7 @@ def key_manager(temp_dir):
         private_key_path=os.path.join(temp_dir, "test.key"),
         public_key_path=os.path.join(temp_dir, "test.pub"),
     )
-    km.load_or_generate()
+    km.load_or_generate(allow_generate=True)
     return km
 
 
@@ -97,7 +97,7 @@ class TestKeyManager:
             private_key_path=os.path.join(temp_dir, "new.key"),
             public_key_path=os.path.join(temp_dir, "new.pub"),
         )
-        km.load_or_generate()
+        km.load_or_generate(allow_generate=True)
         assert os.path.exists(km.private_key_path)
         assert os.path.exists(km.public_key_path)
 
@@ -201,33 +201,60 @@ class TestEvidenceChainStore:
         assert broken_at == 1  # Broken at sequence 1
 
     def test_unmodified_chain_passes_verification(self, chain_store, key_manager):
+        last_hash = None
         for i in range(5):
             ep = make_package(event_id=f"evt-v{i}", confidence=0.5)
+            if last_hash:
+                ep.previous_hash = last_hash
             ep.hash = compute_sha256(ep.get_signable_fields())
             sig = key_manager.sign(ep.hash.encode("utf-8"))
             chain_store.append(ep, sig)
+            last_hash = ep.hash
 
         is_valid, broken_at, message = chain_store.verify_chain()
-        assert is_valid
+        assert is_valid, f"Chain verify failed at {broken_at}: {message}"
         assert broken_at is None
 
 
 class TestServerSideVerification:
     """Tests the server-side verification logic (re-computation of hash + sig check)."""
 
+    class MockDB:
+        def __init__(self, key_pem):
+            self.key_pem = key_pem
+        def query(self, *args, **kwargs):
+            return self
+        def filter(self, *args, **kwargs):
+            return self
+        def all(self, *args, **kwargs):
+            class DummyKey:
+                public_key_pem = self.key_pem
+                status = "ACTIVE"
+                camera_id = "cam-001"
+                kid = "mock-kid"
+            return [DummyKey()]
+        def first(self, *args, **kwargs):
+            return self.all()[0]
+
     def test_valid_package_passes_hash_check(self, key_manager):
         from backend.services.verification import verify_hash
         ep = make_package()
         ep.hash = compute_sha256(ep.get_signable_fields())
-        assert verify_hash(ep) is True
+        ep.signature = key_manager.sign(ep.hash.encode("utf-8"))
+        ep.kid = "mock-kid"
+        is_valid, status, _ = verify_hash(ep)
+        assert is_valid
 
     def test_tampered_package_fails_hash_check(self, key_manager):
         from backend.services.verification import verify_hash
         ep = make_package()
         ep.hash = compute_sha256(ep.get_signable_fields())
+        ep.signature = key_manager.sign(ep.hash.encode("utf-8"))
+        ep.kid = "mock-kid"
         # Tamper confidence after hashing
         ep.confidence = 0.10
-        assert verify_hash(ep) is False
+        is_valid, status, _ = verify_hash(ep)
+        assert not is_valid
 
     def test_valid_signature_passes(self, key_manager):
         from backend.services.verification import verify_signature
@@ -235,17 +262,21 @@ class TestServerSideVerification:
         ep.hash = compute_sha256(ep.get_signable_fields())
         ep.signature = key_manager.sign(ep.hash.encode("utf-8"))
         pub_key_pem = key_manager.get_public_key_pem()
-        assert verify_signature(ep, pub_key_pem) is True
+        mock_db = self.MockDB(pub_key_pem)
+        is_valid, _, _ = verify_signature(ep, mock_db)
+        assert is_valid
 
     def test_tampered_hash_fails_signature(self, key_manager):
         from backend.services.verification import verify_signature
         ep = make_package()
         ep.hash = compute_sha256(ep.get_signable_fields())
-        ep.signature = key_manager.sign(ep.hash.encode("utf-8"))
+        ep.signature = key_manager.sign(b"fake hash bytes")
         pub_key_pem = key_manager.get_public_key_pem()
         # Tamper the stored hash (signature is now for a different hash)
         ep.hash = "tampered_hash_value"
-        assert verify_signature(ep, pub_key_pem) is False
+        mock_db = self.MockDB(pub_key_pem)
+        is_valid, _, _ = verify_signature(ep, mock_db)
+        assert not is_valid
 
     def test_missing_public_key_returns_false_not_crash(self):
         from backend.services.verification import verify_signature
@@ -253,8 +284,11 @@ class TestServerSideVerification:
         ep.hash = "some_hash"
         ep.signature = "some_sig"
         # No public key — should gracefully return False, not crash
-        result = verify_signature(ep, None)
-        assert result is False
+        mock_db = self.MockDB(None)
+        mock_db.all = lambda *args, **kwargs: []
+        mock_db.first = lambda *args, **kwargs: None
+        is_valid, _, _ = verify_signature(ep, mock_db)
+        assert not is_valid
 
 
 class TestEvidenceEncryptor:

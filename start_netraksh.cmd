@@ -1,81 +1,59 @@
 @echo off
 setlocal
 
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+set "PYTHON=%ROOT%\venv\Scripts\python.exe"
+set "FRONTEND=%ROOT%\frontend"
+set "VIDEO=%ROOT%\demo\videos\vtest.avi"
+set "BACKEND_URL=http://127.0.0.1:8443"
+
 echo ========================================================
-echo  NETRAKSH Command Center — SIH 2026 Prototype
-echo  CPU-only prototype: no Jetson / GPU / TensorRT
+echo  NETRAKSH local SIH demo launcher
 echo ========================================================
 
-set PYTHON=py
-set PYTHONPATH=%cd%
-set BACKEND_URL=http://localhost:8443
-set SYNC_INTERVAL_SECONDS=2
+if not exist "%PYTHON%" (
+  echo ERROR: Project virtual environment was not found:
+  echo        %PYTHON%
+  exit /b 1
+)
+if not exist "%FRONTEND%\package.json" (
+  echo ERROR: Frontend package.json was not found.
+  exit /b 1
+)
+if not exist "%VIDEO%" (
+  echo ERROR: Bootstrap surveillance video was not found:
+  echo        %VIDEO%
+  exit /b 1
+)
+where npm.cmd >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: npm.cmd is not available on PATH.
+  exit /b 1
+)
 
-:: -------------------------------------------------------
-:: 1. Start the backend (also serves the built frontend)
-:: -------------------------------------------------------
-echo.
-echo [1/3] Starting Backend + Frontend Server on port 8443...
-start "NETRAKSH-Backend" /b cmd /c "%PYTHON% -m uvicorn backend.main:app --host 0.0.0.0 --port 8443 > backend.log 2>&1"
+echo [1/4] Backend       http://127.0.0.1:8443
+start "NETRAKSH Backend" cmd /k "cd /d "%ROOT%" && set "PYTHONPATH=%ROOT%" && "%PYTHON%" -m uvicorn backend.main:app --host 127.0.0.1 --port 8443"
 
-:: Wait for backend to initialise
-timeout /t 4 /nobreak > nul
-echo      Backend ready. Logs: backend.log
+echo [2/4] Frontend      http://127.0.0.1:5173
+start "NETRAKSH Frontend" cmd /k "cd /d "%FRONTEND%" && npm.cmd run dev -- --host 127.0.0.1 --port 5173"
 
-:: -------------------------------------------------------
-:: 2. Start Camera Pipeline A — cam-border-01
-:: -------------------------------------------------------
-echo.
-echo [2/3] Starting Edge Pipeline A: cam-border-01 (Border Post Alpha)
-echo       Source: demo/videos/vtest.avi  [DEMO FEED — not a live RTSP camera]
-set CAMERA_ID=cam-border-01
-set VIDEO_SOURCE=demo/videos/vtest.avi
-start "NETRAKSH-cam-border-01" /b cmd /c "%PYTHON% edge/demo_runner.py --camera-id cam-border-01 --video-source demo/videos/vtest.avi --backend-url %BACKEND_URL% > edge_cam_border_01.log 2>&1"
+echo Waiting briefly for the backend before starting edge workers...
+timeout /t 5 /nobreak >nul
 
-:: Brief stagger so both pipelines don't hammer the model load simultaneously,
-:: and more importantly, so cam-checkpoint-01 is delayed behind cam-border-01.
-:: This ensures cross-camera corroboration isn't just matching identical frames 
-:: at exactly the same timestamp (which looks fake), but actually shows real Δt.
-timeout /t 15 /nobreak > nul
+echo [3/4] Edge worker   cam-border-01
+start "NETRAKSH Edge - cam-border-01" cmd /k "cd /d "%ROOT%" && set "PYTHONPATH=%ROOT%" && set "SYNC_INTERVAL_SECONDS=2" && "%PYTHON%" edge\demo_runner.py --camera-id cam-border-01 --video-source "%VIDEO%" --backend-url %BACKEND_URL%"
 
-:: -------------------------------------------------------
-:: 3. Start Camera Pipeline B — cam-checkpoint-01
-:: -------------------------------------------------------
-echo [3/3] Starting Edge Pipeline B: cam-checkpoint-01 (Checkpoint Bravo)
-echo       Source: demo/videos/vtest.avi  [DEMO FEED — same video, independent pipeline]
-start "NETRAKSH-cam-checkpoint-01" /b cmd /c "%PYTHON% edge/demo_runner.py --camera-id cam-checkpoint-01 --video-source demo/videos/vtest.avi --backend-url %BACKEND_URL% > edge_cam_checkpoint_01.log 2>&1"
+echo [4/4] Edge worker   cam-checkpoint-01
+start "NETRAKSH Edge - cam-checkpoint-01" cmd /k "cd /d "%ROOT%" && set "PYTHONPATH=%ROOT%" && set "SYNC_INTERVAL_SECONDS=2" && "%PYTHON%" edge\demo_runner.py --camera-id cam-checkpoint-01 --video-source "%VIDEO%" --backend-url %BACKEND_URL%"
 
 echo.
-echo ========================================================
-echo  SYSTEM DEPLOYED
+echo All four services were launched in separate windows.
+echo Login:    http://127.0.0.1:5173/login
+echo Backend:  http://127.0.0.1:8443
 echo.
-echo  Dashboard:  http://localhost:8443
-echo  Cameras:    cam-border-01 (Border Post Alpha)
-echo              cam-checkpoint-01 (Checkpoint Bravo)
-echo  Logs:       backend.log
-echo              edge_cam_border_01.log
-echo              edge_cam_checkpoint_01.log
-echo.
-echo  Both camera feeds are demo video files (vtest.avi).
-echo  Cross-camera corroboration fires automatically when
-echo  both cameras detect the same class within the time window.
-echo.
-echo  Demo Scenario Control (in the browser sidebar):
-echo    Normal    -^> full pipeline, DETECTED events
-echo    Dense Fog -^> degraded S, may produce UNCERTAIN
-echo    Failure   -^> ABSTAIN via Gate 1 (frozen frame)
-echo    Offline   -^> local queue, header shows BUFFERING
-echo.
-echo  Press any key to STOP all services...
-pause > nul
-
-:: -------------------------------------------------------
-:: 4. Graceful shutdown
-:: -------------------------------------------------------
-echo Stopping all NETRAKSH processes...
-taskkill /F /IM python.exe /FI "WINDOWTITLE eq NETRAKSH-*" > nul 2>&1
-:: If the windows were started with /b they might not have titles, fallback:
-wmic process where "commandline like '%%backend.main:app%%' or commandline like '%%edge/demo_runner.py%%'" call terminate > nul 2>&1
-echo Done.
+echo The workers use the repository's labelled demo surveillance clip until
+echo Dashboard ADD VIDEO supplies a new real upload session. Close each named
+echo service window to stop it; this launcher never kills unrelated processes.
 
 endlocal

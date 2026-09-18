@@ -1,141 +1,642 @@
-import { CameraOff, CloudFog, AlertTriangle, Upload, Play } from 'lucide-react';
-import { useMemo, useState, useEffect, useRef } from 'react';
+/**
+ * NETRAKSH — LiveVideoFeed Component
+ *
+ * Renders a video element with:
+ *   - Accurate letterbox-aware coordinate mapping for bounding boxes
+ *   - An SVG overlay that draws tactical track boxes at pixel-perfect positions
+ *   - A toggleable corner HUD (replaces the removed [SUPER DEBUG OVERLAY])
+ *   - Graceful fallback states for sensor failure / fog / offline scenarios
+ *
+ * SECURITY: This component receives pre-validated track data from the backend
+ * WebSocket; it never executes dynamic content from track payloads.
+ *
+ * COORDINATE SYSTEM:
+ *   Bounding box values (bbox_x, bbox_y, bbox_w, bbox_h) are normalised
+ *   fractions [0..1] relative to the original camera frame resolution.
+ *   The video element uses object-fit:contain, which letterboxes/pillarboxes
+ *   the frame inside the container. This component measures the actual rendered
+ *   video rect (not the container rect) via a ResizeObserver + intrinsic
+ *   dimensions so SVG paths map 1-to-1 with the on-screen pixels of the frame.
+ */
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { CameraOff, CloudFog, AlertTriangle, Upload, Play, Activity } from 'lucide-react';
 
-export default function VideoFeed({ eventData, liveTracksData, activeEvents = [], isConnected, demoScenario = 'normal', mediaUrl, mediaType, onUpload, isUploading }) {
-  const TRACK_COLORS = [
-    { border: '#4ade80', bg: 'rgba(74,222,128,0.12)', label: '#000' },
-    { border: '#60a5fa', bg: 'rgba(96,165,250,0.12)', label: '#000' },
-    { border: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  label: '#000' },
-    { border: '#f87171', bg: 'rgba(248,113,113,0.12)', label: '#fff' },
-    { border: '#c084fc', bg: 'rgba(192,132,252,0.12)', label: '#fff' },
-    { border: '#fb923c', bg: 'rgba(251,146,60,0.12)',  label: '#000' },
-    { border: '#22d3ee', bg: 'rgba(34,211,238,0.12)',  label: '#000' },
-    { border: '#f472b6', bg: 'rgba(244,114,182,0.12)', label: '#fff' },
+// ─── Threat-aware colour palette ────────────────────────────────────────────
+//
+// Colour meaning (matches NETRAKSH threat doctrine):
+//   CRITICAL / SEVERE  → Crimson red, thick stroke, pulsing label (WL match)
+//   FRIENDLY / CLEARED → Cyan  (explicit friendly tag from operator)
+//   ELEVATED           → Amber (watchlist but not highest threat)
+//   DEFAULT / UNKNOWN  → Neon green (no identity match)
+//
+// The track payload may carry:
+//   track.threat_level   — 'CRITICAL' | 'SEVERE' | 'ELEVATED' | null
+//   track.identity_match — true/false (set when backend WL match fires)
+//   track.is_friendly    — true/false (operator-cleared)
+
+const THREAT_PALETTE = {
+  // Watchlist confirmed hit — red, thick, pulsing
+  CRITICAL: {
+    stroke:     '#ef4444',
+    strokeWidth: 2.5,
+    fill:       'rgba(239,68,68,0.12)',
+    labelFill:  '#ef4444',
+    labelText:  '#fff',
+    pulse:      true,
+    glowColor:  'rgba(239,68,68,0.6)',
+  },
+  SEVERE: {
+    stroke:     '#f97316',
+    strokeWidth: 2.5,
+    fill:       'rgba(249,115,22,0.10)',
+    labelFill:  '#f97316',
+    labelText:  '#fff',
+    pulse:      true,
+    glowColor:  'rgba(249,115,22,0.55)',
+  },
+  // Watchlist match but lower threat tier
+  ELEVATED: {
+    stroke:     '#fbbf24',
+    strokeWidth: 1.5,
+    fill:       'rgba(251,191,36,0.08)',
+    labelFill:  '#fbbf24',
+    labelText:  '#000',
+    pulse:      false,
+    glowColor:  'rgba(251,191,36,0.45)',
+  },
+  // Operator-cleared friendly
+  FRIENDLY: {
+    stroke:     '#22d3ee',
+    strokeWidth: 1.5,
+    fill:       'rgba(34,211,238,0.07)',
+    labelFill:  '#22d3ee',
+    labelText:  '#000',
+    pulse:      false,
+    glowColor:  'rgba(34,211,238,0.4)',
+  },
+  // Default — no identity information
+  UNKNOWN: {
+    stroke:     '#4ade80',
+    strokeWidth: 1.5,
+    fill:       'rgba(74,222,128,0.08)',
+    labelFill:  '#4ade80',
+    labelText:  '#000',
+    pulse:      false,
+    glowColor:  'rgba(74,222,128,0.5)',
+  },
+};
+
+/**
+ * Returns the correct colour config for a track based on threat level and
+ * identity match flags embedded in the telemetry payload.
+ *
+ * @param {object} track - Track object from live_telemetry payload.
+ * @param {number}  trackId - Numeric track ID (used for fallback palette rotation).
+ */
+function getThreatPalette(track, trackId) {
+  if (track?.is_friendly) return THREAT_PALETTE.FRIENDLY;
+  if (track?.identity_match || track?.threat_level) {
+    const level = (track.threat_level || '').toUpperCase();
+    if (level === 'CRITICAL') return THREAT_PALETTE.CRITICAL;
+    if (level === 'SEVERE')   return THREAT_PALETTE.SEVERE;
+    if (level === 'ELEVATED') return THREAT_PALETTE.ELEVATED;
+    // identity_match=true but no explicit level → treat as ELEVATED
+    if (track.identity_match) return THREAT_PALETTE.ELEVATED;
+  }
+  // Fallback for unidentified tracks: cycle through green shades by track ID
+  // so multiple simultaneous unknown tracks are visually distinguishable.
+  const FALLBACK_GREENS = [
+    THREAT_PALETTE.UNKNOWN,
+    { ...THREAT_PALETTE.UNKNOWN, stroke: '#34d399', labelFill: '#34d399', glowColor: 'rgba(52,211,153,0.45)' },
+    { ...THREAT_PALETTE.UNKNOWN, stroke: '#6ee7b7', labelFill: '#6ee7b7', glowColor: 'rgba(110,231,183,0.4)' },
   ];
-  const getTrackColor = (trackId) => TRACK_COLORS[Math.abs(trackId ?? 0) % TRACK_COLORS.length];
+  return FALLBACK_GREENS[Math.abs(trackId ?? 0) % FALLBACK_GREENS.length];
+}
 
+
+// ─── Scenario fallback overlays ───────────────────────────────────────────────
+function ScenarioOverlay({ scenario }) {
+  if (scenario === 'normal') return null;
+
+  const configs = {
+    fog: {
+      icon: CloudFog,
+      label: 'DENSE FOG CONDITION',
+      sub: 'Scene Classifier: FOG_RAIN | IR fallback active',
+      color: '#94a3b8',
+      bg: 'rgba(148,163,184,0.12)',
+      border: 'rgba(148,163,184,0.3)',
+    },
+    sensor_failure: {
+      icon: CameraOff,
+      label: 'SENSOR FAILURE',
+      sub: 'Gate 1 hard-override → ABSTAIN | Camera health: FAILED',
+      color: '#ef4444',
+      bg: 'rgba(239,68,68,0.1)',
+      border: 'rgba(239,68,68,0.4)',
+    },
+    offline: {
+      icon: AlertTriangle,
+      label: 'SYSTEM OFFLINE',
+      sub: 'SyncClient paused | Events queuing locally',
+      color: '#fbbf24',
+      bg: 'rgba(251,191,36,0.1)',
+      border: 'rgba(251,191,36,0.35)',
+    },
+  };
+
+  const cfg = configs[scenario];
+  if (!cfg) return null;
+  const Icon = cfg.icon;
+
+  return (
+    <div
+      style={{
+        position: 'absolute', inset: 0, zIndex: 15,
+        background: cfg.bg,
+        border: `1px solid ${cfg.border}`,
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        gap: '0.5rem', pointerEvents: 'none',
+      }}
+    >
+      <Icon size={32} style={{ color: cfg.color }} />
+      <span style={{ fontFamily: 'var(--font-display)', fontSize: '0.75rem', letterSpacing: '0.1em', color: cfg.color, fontWeight: 700 }}>
+        {cfg.label}
+      </span>
+      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', color: cfg.color, opacity: 0.75, textAlign: 'center', padding: '0 1rem' }}>
+        {cfg.sub}
+      </span>
+    </div>
+  );
+}
+
+// ─── Corner debug HUD (replaces [SUPER DEBUG OVERLAY]) ───────────────────────
+// Hidden by default — operator clicks the tiny [HUD] toggle to reveal it.
+// Low opacity, monospace, bottom-right corner — never blocks the video content.
+function DebugHud({ visible, videoRect, liveTracksData, videoRef }) {
+  if (!visible) return null;
+  const vt = videoRef.current;
+  return (
+    <div
+      style={{
+        position: 'absolute', bottom: '0.5rem', right: '0.5rem',
+        background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(74,222,128,0.3)',
+        borderRadius: '0.2rem', padding: '0.35rem 0.5rem',
+        fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+        fontSize: '0.5rem', lineHeight: '1.5', color: 'rgba(74,222,128,0.7)',
+        opacity: 0.85, zIndex: 30, pointerEvents: 'none', whiteSpace: 'pre',
+        minWidth: '160px',
+      }}
+    >
+      {`CONTAINER  ${videoRect.cw?.toFixed(0)}×${videoRect.ch?.toFixed(0)}\n`}
+      {`FRAME SRC  ${videoRect.vw}×${videoRect.vh}\n`}
+      {`RENDERED   ${videoRect.width?.toFixed(0)}×${videoRect.height?.toFixed(0)}\n`}
+      {`OFFSET     L:${videoRect.left?.toFixed(0)} T:${videoRect.top?.toFixed(0)}\n`}
+      {liveTracksData
+        ? `SEQ ${liveTracksData.sequence ?? '—'}  t=${liveTracksData.video_time?.toFixed(2) ?? '—'}s\n`
+        : `NO LIVE DATA\n`}
+      {vt
+        ? `VID  t=${vt.currentTime?.toFixed(2)}s  RS:${vt.readyState}\n`
+        : `VIDEO NOT READY\n`}
+      {`TRACKS  ${liveTracksData?.tracks?.length ?? 0}`}
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
+export default function VideoFeed({
+  eventData,
+  liveTracksData,
+  activeEvents = [],
+  telemetryStatus = 'WAITING',
+  cameraId,
+  playbackEnded = false,
+  demoScenario = 'normal',
+  mediaUrl,
+  mediaType,
+  currentFps,
+  onUpload,
+  isUploading,
+  canUpload,
+  uploadError,
+  onVideoEnded,
+}) {
   const containerRef = useRef(null);
-  const videoRef = useRef(null);
-  const [videoRect, setVideoRect] = useState({ left: 0, top: 0, width: 0, height: 0, vw: 0, vh: 0, cw: 0, ch: 0 });
-  const [renderTrigger, setRenderTrigger] = useState(0);
+  const videoRef    = useRef(null);
+  const svgRef      = useRef(null);
 
+  // Measured geometry of the letterboxed video frame within its container.
+  const [videoRect, setVideoRect] = useState({
+    left: 0, top: 0, width: 0, height: 0, cw: 0, ch: 0, vw: 0, vh: 0,
+  });
+
+  // Debug HUD toggle (off by default — non-intrusive)
+  const [hudVisible, setHudVisible] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+
+  // Lightweight render-tick to re-evaluate live tracks freshness
+  const [tick, setTick] = useState(0);
+
+  // Refresh freshness state four times per second; rendering at frame rate is
+  // unnecessary because track updates already trigger React renders.
   useEffect(() => {
-    const timer = setInterval(() => setRenderTrigger(v => v + 1), 50);
-    return () => clearInterval(timer);
+    const id = setInterval(() => setTick((v) => v + 1), 250);
+    return () => clearInterval(id);
   }, []);
 
-  const activeLiveTracks = useMemo(() => {
-    if (!liveTracksData || !liveTracksData.tracks) return [];
-    if (Date.now() - liveTracksData.timestamp > 500) return [];
-    
-    if (liveTracksData.video_time != null && videoRef.current) {
-      if (!videoRef.current.paused) {
-        videoRef.current.pause();
-      }
-      
-      const targetTime = liveTracksData.video_time;
-      const diff = Math.abs(videoRef.current.currentTime - targetTime);
-      if (diff > 0.05) {
-        console.log(`SEEKING from ${videoRef.current.currentTime} to ${targetTime}`);
-        videoRef.current.currentTime = targetTime;
-      }
+  /**
+   * Compute the letterbox offsets.
+   *
+   * The video element fills its parent 100%×100% with object-fit:contain.
+   * To find where the actual frame pixels sit we compare the container
+   * aspect ratio with the intrinsic video aspect ratio:
+   *   - If container is wider than the frame → pillarbox (black bars on sides)
+   *   - If container is taller than the frame → letterbox (bars top/bottom)
+   *
+   * We also fall back gracefully when metadata hasn't loaded yet.
+   */
+  const updateRect = useCallback(() => {
+    const container = containerRef.current;
+    const video     = videoRef.current;
+    if (!container || !video) return;
+
+    const cr   = container.getBoundingClientRect();
+    const cw   = cr.width;
+    const ch   = cr.height;
+    // Prefer frame dims from WS payload (available before video loads)
+    const vw   = liveTracksData?.frame_width  || video.videoWidth  || 1280;
+    const vh   = liveTracksData?.frame_height || video.videoHeight || 720;
+
+    if (vw === 0 || vh === 0) return;
+
+    const containerRatio = cw / ch;
+    const videoRatio     = vw / vh;
+
+    let renderedW, renderedH, left, top;
+
+    if (containerRatio > videoRatio) {
+      // Container wider than frame → pillarbox
+      renderedH = ch;
+      renderedW = ch * videoRatio;
+      left = (cw - renderedW) / 2;
+      top  = 0;
+    } else {
+      // Container taller than frame → letterbox
+      renderedW = cw;
+      renderedH = cw / videoRatio;
+      left = 0;
+      top  = (ch - renderedH) / 2;
     }
-    
-    return liveTracksData.tracks;
-  }, [liveTracksData, renderTrigger]);
+
+    setVideoRect({ left, top, width: renderedW, height: renderedH, cw, ch, vw, vh });
+  }, [liveTracksData?.frame_width, liveTracksData?.frame_height]);
 
   useEffect(() => {
-    const updateRect = () => {
-      const container = containerRef.current;
-      const video = videoRef.current;
-      if (!container || !video) return;
-      
-      const rect = container.getBoundingClientRect();
-      const cw = rect.width;
-      const ch = rect.height;
-      const vw = liveTracksData?.frame_width || video.videoWidth || video.naturalWidth || 768;
-      const vh = liveTracksData?.frame_height || video.videoHeight || video.naturalHeight || 576;
-
-      if (vw === 0 || vh === 0) return;
-
-      const containerRatio = cw / ch;
-      const videoRatio = vw / vh;
-
-      let renderedWidth = cw;
-      let renderedHeight = ch;
-      let left = 0;
-      let top = 0;
-
-      if (containerRatio > videoRatio) {
-        renderedWidth = cw;
-        renderedHeight = cw / videoRatio;
-        top = (ch - renderedHeight) / 2;
-      } else {
-        renderedHeight = ch;
-        renderedWidth = ch * videoRatio;
-        left = (cw - renderedWidth) / 2;
-      }
-      
-      setVideoRect({ left, top, width: renderedWidth, height: renderedHeight, cw, ch, vw, vh });
-    };
-
+    setVideoError(false);
     updateRect();
     const ro = new ResizeObserver(updateRect);
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
-  }, [mediaUrl, renderTrigger, liveTracksData?.frame_width]);
+  }, [updateRect, mediaUrl]);
 
+  /**
+   * Active tracks: filter out stale data (>500ms old) so the overlay clears
+   * naturally when the WS feed stops pushing new frames.
+   */
+  const activeTracks = useMemo(() => {
+    if (!liveTracksData?.tracks) return [];
+    
+    // Dynamic stale threshold: roughly 5 frames of latency tolerance, capped between 500ms and 2000ms.
+    const fps = (currentFps && currentFps > 0) ? currentFps : 30;
+    const staleThresholdMs = Math.max(Math.min((5 / fps) * 1000, 2000), 500);
+
+    if (Date.now() - (liveTracksData.timestamp ?? 0) > staleThresholdMs) return [];
+    return liveTracksData.tracks;
+  }, [liveTracksData, tick, currentFps]);
+
+  /**
+   * Synchronise video playback position to the backend's live_tracks timestamp.
+   * This keeps the bounding boxes visually locked to the correct frame.
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || liveTracksData?.video_time == null) return;
+    
+    // Ensure video is playing so it doesn't appear jumpy
+    if (video.paused && !video.ended) {
+      video.play().catch(e => console.warn('Autoplay prevented', e));
+    }
+    
+    // Sync if drifting too far (e.g., > 0.1s)
+    const diff = Math.abs(video.currentTime - liveTracksData.video_time);
+    if (diff > 0.1) {
+      video.currentTime = liveTracksData.video_time;
+    }
+  }, [liveTracksData?.video_time, liveTracksData?.sequence]);
+
+  // ── Empty state — no media loaded ──────────────────────────────────────────
   if (!mediaUrl) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center border rounded relative overflow-hidden"
-        style={{ background: 'radial-gradient(circle at 50% 50%, #0c1a13 0%, #020617 100%)', cursor: 'pointer' }}
-        onClick={onUpload}>
+      <div
+        className="dashboard-video-feed w-full h-full flex flex-col items-center justify-center border rounded relative overflow-hidden"
+        style={{ background: 'radial-gradient(circle at 50% 50%, #0c1a13 0%, #020617 100%)', cursor: canUpload ? 'pointer' : 'default' }}
+        onClick={canUpload ? onUpload : undefined}
+      >
         <div className="flex flex-col items-center z-10" style={{ gap: '1rem' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(74,222,128,0.15)', border: '2px solid rgba(74,222,128,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{
+            width: '64px', height: '64px', borderRadius: '50%',
+            background: 'rgba(74,222,128,0.15)',
+            border: '2px solid rgba(74,222,128,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
             <Upload size={28} style={{ color: 'var(--color-ok)' }} />
           </div>
-          <span className="font-display font-bold text-main" style={{ fontSize: '1rem', letterSpacing: '0.1em' }}>LOAD DEMO VIDEO</span>
-          <div style={{ background: 'var(--color-ok)', color: '#000', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.1em', padding: '0.6rem 1.5rem', borderRadius: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Play size={14} />UPLOAD DEMO MEDIA
-          </div>
+          <span
+            className="dashboard-video-title font-display font-bold text-main"
+            style={{ fontSize: '1rem', letterSpacing: '0.1em' }}
+          >
+            NO VIDEO SOURCE
+          </span>
+          {canUpload ? <div className="dashboard-video-upload" style={{
+            background: 'var(--color-ok)', color: '#000',
+            fontFamily: 'var(--font-display)', fontWeight: 700,
+            fontSize: '0.75rem', letterSpacing: '0.1em',
+            padding: '0.6rem 1.5rem', borderRadius: '0.25rem',
+            display: 'flex', alignItems: 'center', gap: '0.5rem',
+          }}>
+            <Play size={14} /> ADD VIDEO SOURCE
+          </div> : <span className="text-muted text-xs">Upload requires ADMIN or OPERATOR access</span>}
+          {uploadError && <span className="text-danger text-xs text-center" role="alert">{uploadError}</span>}
         </div>
       </div>
     );
   }
 
+  // ── Video player + SVG overlay ──────────────────────────────────────────────
   return (
-    <div ref={containerRef} className="w-full h-full relative border rounded overflow-hidden" style={{ background: 'radial-gradient(circle at 50% 50%, #064e3b 0%, #020617 100%)', boxShadow: 'inset 0 0 50px rgba(0,0,0,0.8)' }}>
-      <video ref={videoRef} onLoadedMetadata={() => setRenderTrigger(v=>v+1)} src={mediaUrl} muted style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', zIndex: 0 }} />
+    <div
+      ref={containerRef}
+      className="dashboard-video-feed w-full h-full relative border rounded overflow-hidden"
+      style={{
+        background: 'radial-gradient(circle at 50% 50%, #064e3b 0%, #020617 100%)',
+        boxShadow: 'inset 0 0 50px rgba(0,0,0,0.8)',
+      }}
+    >
+      {/* ── Video element ── */}
+      <video
+        ref={videoRef}
+        src={mediaUrl}
+        muted
+        autoPlay
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={updateRect}
+        onEnded={onVideoEnded}
+        onError={() => {
+          setVideoError(true);
+          console.error('Unable to load the selected video');
+        }}
+        style={{
+          position: 'absolute', inset: 0,
+          width: '100%', height: '100%',
+          /* object-fit:contain ensures no stretching; letterbox bars are black */
+          objectFit: 'contain',
+          zIndex: 0,
+        }}
+      />
+      {videoError && (
+        <div className="absolute inset-0 z-25 flex items-center justify-center bg-black/80 text-danger text-sm text-center px-4" role="alert">
+          Unable to play this video in the browser.
+        </div>
+      )}
 
-      <div className="absolute top-[20%] left-1/2 transform -translate-x-1/2 bg-red-600/90 text-white font-mono text-xl p-4 z-50 whitespace-pre text-center border-4 border-yellow-400">
-        {`[SUPER DEBUG OVERLAY]\n`}
-        {`CW: ${videoRect.cw?.toFixed(1)}, CH: ${videoRect.ch?.toFixed(1)}\n`}
-        {`VW: ${videoRect.vw}, VH: ${videoRect.vh}\n`}
-        {`RENDERED_W: ${videoRect.width?.toFixed(1)}, RENDERED_H: ${videoRect.height?.toFixed(1)}\n`}
-        {`OFFSET_L: ${videoRect.left?.toFixed(1)}, OFFSET_T: ${videoRect.top?.toFixed(1)}\n`}
-        {liveTracksData ? `SEQ: ${liveTracksData.sequence}\nVID_TIME: ${liveTracksData.video_time?.toFixed(2)}s\n` : `NO DATA\n`}
-        {videoRef.current ? `PLAYING_TIME: ${videoRef.current.currentTime?.toFixed(2)}s\nPAUSED: ${videoRef.current.paused}\nREADY_STATE: ${videoRef.current.readyState}\n` : `NO VIDEO\n`}
-        {`TRACKS: ${activeLiveTracks.length}`}
-      </div>
+      {(telemetryStatus !== 'LIVE' || playbackEnded) && !videoError && (
+        <div className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/55 text-center px-4" style={{ pointerEvents: 'none' }}>
+          <CameraOff size={28} className={telemetryStatus === 'DISCONNECTED' ? 'text-danger' : telemetryStatus === 'COMPLETED' ? 'text-success' : 'text-warning'} />
+          <strong className="font-display tracking-widest" style={{ marginTop: '0.5rem' }}>
+            {telemetryStatus === 'COMPLETED' ? 'ANALYSIS COMPLETE' : playbackEnded ? 'VIDEO ENDED' : telemetryStatus === 'DISCONNECTED' ? 'NO SIGNAL' : telemetryStatus === 'STALE' ? 'TELEMETRY STALE' : 'WAITING FOR TELEMETRY'}
+          </strong>
+          <span className="text-xs text-muted" style={{ marginTop: '0.25rem' }}>
+            {cameraId ? `Camera ${cameraId}` : 'No camera selected'}
+          </span>
+        </div>
+      )}
 
-      {activeLiveTracks.map((ev) => {
-        const color = getTrackColor(ev.track_id);
-        if (ev.bbox_x == null || ev.bbox_y == null || ev.bbox_w == null || ev.bbox_h == null) return null;
-        const lbl = `TRACK #${ev.track_id ?? '?'}`;
-        return (
-          <div key={ev.track_id} style={{
-            position: 'absolute', 
-            left: `${videoRect.left + (ev.bbox_x * videoRect.width)}px`, 
-            top: `${videoRect.top + (ev.bbox_y * videoRect.height)}px`,
-            width: `${ev.bbox_w * videoRect.width}px`, 
-            height: `${ev.bbox_h * videoRect.height}px`,
-            border: `2px solid ${color.border}`, backgroundColor: color.bg,
-            zIndex: 10, boxShadow: `0 0 8px ${color.border}60`, transition: 'none',
+      {/* ── Scanline aesthetic effect ── */}
+      <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none' }} />
+
+      {/* ── SVG bounding-box overlay ──────────────────────────────────────────
+          The SVG is sized to the full container (100%×100%) but all drawing
+          coordinates are translated by the letterbox offsets so track boxes
+          land precisely on the frame pixels — not on the black bars.
+          Using SVG (vs absolutely-positioned divs) eliminates the sub-pixel
+          clipping and z-index stacking issues that caused the previous
+          "TRACK #16 clipping" bug.
+      ─────────────────────────────────────────────────────────────────────── */}
+      <svg
+        ref={svgRef}
+        style={{
+          position: 'absolute', inset: 0,
+          width: '100%', height: '100%',
+          zIndex: 10, pointerEvents: 'none',
+          overflow: 'visible',
+        }}
+      >
+        {activeTracks.map((ev) => {
+          // Guard: skip tracks with incomplete bbox data
+          if (ev.bbox_x == null || ev.bbox_y == null ||
+              ev.bbox_w == null || ev.bbox_h == null) return null;
+
+          // ── Threat-aware colour ──────────────────────────────────────
+          const color = getThreatPalette(ev, ev.track_id);
+
+          const isWatchlistHit = ev.identity_match || !!ev.threat_level;
+          const isCritical     = ['CRITICAL', 'SEVERE'].includes(
+            (ev.threat_level || '').toUpperCase()
+          );
+
+          // Build the label: show subject name if a WL match is known
+          const trackLabel = ev.identity_match && ev.subject_name
+            ? `${ev.subject_name} [WL]`
+            : `TRACK #${ev.track_id ?? '?'}`;
+
+          // Map normalised [0..1] coords → container pixel coords
+          const x = videoRect.left + ev.bbox_x * videoRect.width;
+          const y = videoRect.top  + ev.bbox_y * videoRect.height;
+          const w = ev.bbox_w * videoRect.width;
+          const h = ev.bbox_h * videoRect.height;
+
+          // Label background metrics
+          const labelFontSize = 9;
+          const labelPadH     = 5;
+          const labelPadV     = 2;
+          const labelW        = trackLabel.length * (labelFontSize * 0.62) + labelPadH * 2;
+          const labelH        = labelFontSize + labelPadV * 2;
+
+          return (
+            <g key={ev.track_id}>
+              {/* Main bounding rectangle */}
+              <rect
+                x={x} y={y} width={w} height={h}
+                fill={color.fill}
+                stroke={color.stroke}
+                strokeWidth={color.strokeWidth ?? 1.5}
+                style={{
+                  filter: `drop-shadow(0 0 ${isCritical ? '7' : '4'}px ${color.glowColor})`,
+                  // Pulsing glow for critical WL hits via CSS animation on SVG element
+                  animation: color.pulse ? 'wl-pulse 1.2s ease-in-out infinite' : 'none',
+                }}
+              />
+
+              {/* Corner accent marks */}
+              {[
+                [x,     y,     8,  0, 0,  8],
+                [x+w,   y,    -8,  0, 0,  8],
+                [x,     y+h,   8,  0, 0, -8],
+                [x+w,   y+h,  -8,  0, 0, -8],
+              ].map(([cx, cy, dx1, dy1, dx2, dy2], i) => (
+                <g key={i}>
+                  <line x1={cx} y1={cy} x2={cx+dx1} y2={cy+dy1} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
+                  <line x1={cx} y1={cy} x2={cx+dx2} y2={cy+dy2} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
+                </g>
+              ))}
+
+              {/* Label pill */}
+              <rect
+                x={x} y={y - labelH}
+                width={labelW} height={labelH}
+                fill={color.labelFill}
+                rx={2}
+                style={{
+                  animation: color.pulse ? 'wl-pulse-label 1.2s ease-in-out infinite' : 'none',
+                }}
+              />
+              <text
+                x={x + labelPadH}
+                y={y - labelPadV - 1}
+                fill={color.labelText}
+                fontSize={labelFontSize}
+                fontFamily="'Space Grotesk', ui-monospace, monospace"
+                fontWeight={700}
+                letterSpacing="0.06em"
+                dominantBaseline="auto"
+              >
+                {trackLabel}
+              </text>
+
+              {/* WL badge icon (⚠) for watchlist hits */}
+              {isWatchlistHit && (
+                <text
+                  x={x + w - 12}
+                  y={y + 14}
+                  fill={color.stroke}
+                  fontSize={12}
+                  fontFamily="system-ui"
+                  style={{ filter: `drop-shadow(0 0 3px ${color.stroke})` }}
+                >
+                  ⚠
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* ── Scenario fallback overlay (fog / sensor failure / offline) ── */}
+      <ScenarioOverlay scenario={demoScenario} />
+
+      {/* ── Corner HUD toggle button ── */}
+      <button
+        onClick={() => setHudVisible((v) => !v)}
+        title="Toggle debug HUD"
+        style={{
+          position: 'absolute', top: '0.4rem', right: '0.4rem',
+          zIndex: 20,
+          background: hudVisible ? 'rgba(74,222,128,0.2)' : 'rgba(0,0,0,0.5)',
+          border: `1px solid ${hudVisible ? 'rgba(74,222,128,0.6)' : 'rgba(255,255,255,0.15)'}`,
+          borderRadius: '0.2rem',
+          padding: '0.15rem 0.4rem',
+          fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+          fontSize: '0.5rem', letterSpacing: '0.08em',
+          color: hudVisible ? '#4ade80' : 'rgba(255,255,255,0.4)',
+          cursor: 'pointer',
+          lineHeight: '1.4',
+          display: 'flex', alignItems: 'center', gap: '0.25rem',
+        }}
+      >
+        <Activity size={8} /> HUD
+      </button>
+
+      {/* ── Toggleable debug HUD (replaces removed [SUPER DEBUG OVERLAY]) ── */}
+      <DebugHud
+        visible={hudVisible}
+        videoRect={videoRect}
+        liveTracksData={liveTracksData}
+        videoRef={videoRef}
+      />
+
+      {/* ── Live indicator ── */}
+      {telemetryStatus === 'LIVE' && (
+        <div style={{
+          position: 'absolute', top: '0.4rem', left: '0.4rem',
+          zIndex: 20, display: 'flex', alignItems: 'center', gap: '0.3rem',
+          background: 'rgba(0,0,0,0.55)',
+          border: '1px solid rgba(74,222,128,0.35)',
+          borderRadius: '0.2rem', padding: '0.15rem 0.45rem',
+          pointerEvents: 'none',
+        }}>
+          <span style={{
+            width: '5px', height: '5px', borderRadius: '50%',
+            background: '#4ade80',
+            boxShadow: '0 0 5px #4ade80',
+            animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite',
+            display: 'inline-block',
+          }} />
+          <span style={{
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '0.5rem', letterSpacing: '0.1em',
+            color: 'rgba(74,222,128,0.85)',
           }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, transform: 'translateY(-100%)', background: color.border, color: color.label, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: '0.6rem', padding: '1px 5px', whiteSpace: 'nowrap' }}>{lbl}</div>
-          </div>
-        );
-      })}
+            TELEMETRY LIVE · {cameraId || 'UNKNOWN CAMERA'}
+          </span>
+        </div>
+      )}
+
+      {/* ── Uploading spinner ── */}
+      {isUploading && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 25,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: '0.75rem',
+        }}>
+          <span className="animate-pulse" style={{
+            fontFamily: 'var(--font-display)', fontSize: '0.8rem',
+            letterSpacing: '0.1em', color: 'var(--color-ok)',
+          }}>
+            TRANSMITTING TO EDGE NODE…
+          </span>
+        </div>
+      )}
+
+      {/* ── Add Video Button (Bottom Right) ── */}
+      {canUpload && (
+        <button
+          onClick={onUpload}
+          disabled={isUploading}
+          className="flex items-center gap-2 border border-ok text-ok px-3 py-1.5 rounded hover:bg-[rgba(74,222,128,0.1)] transition-colors text-sm font-display tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{
+            position: 'absolute', bottom: '0.5rem', right: '0.5rem',
+            zIndex: 20,
+            background: 'rgba(0,0,0,0.65)',
+          }}
+        >
+          {isUploading ? 'UPLOADING...' : 'ADD VIDEO'}
+        </button>
+      )}
     </div>
   );
 }

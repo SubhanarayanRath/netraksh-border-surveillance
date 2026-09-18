@@ -7,6 +7,34 @@ locally) with a real managed Postgres database. It does **not** deploy the edge 
 that runs on a camera-side device in the real architecture, not on Render; see
 "What this does NOT deploy" below.
 
+## Supported Deployment Matrix
+
+The application supports multiple deployment environments using the exact same codebase. The frontend remains agnostic and selects the backend via `VITE_BACKEND_URL`, while the backend relies on `DATABASE_URL` for PostgreSQL.
+
+### SUPPORTED NOW
+
+**A. Firebase Hosting → Render → Supabase PostgreSQL**
+- Frontend is hosted on Firebase (`https://netraksh-35030.web.app`).
+- Communicates with the Render FastAPI backend (`https://netraksh.onrender.com`).
+- Render connects to Supabase PostgreSQL.
+
+**B. Vercel → Render → Supabase PostgreSQL**
+- Frontend is hosted on Vercel (`https://netraksh.vercel.app`).
+- Communicates with the Render FastAPI backend (`https://netraksh.onrender.com`).
+- Render connects to Supabase PostgreSQL.
+
+**C. Local Frontend → Local/Render Backend → PostgreSQL**
+- Frontend running locally (`http://localhost:5173`).
+- Connects to a local backend (`http://localhost:8443`) or remote Render backend.
+- Backend connects to SQLite or Supabase PostgreSQL.
+
+### FUTURE / NOT IMPLEMENTED
+
+**D. Firebase Native Stack (Firebase-Only)**
+- Firebase Hosting → Firebase Auth → Firestore / Realtime Database.
+- *Status:* **NOT CURRENTLY IMPLEMENTED**. 
+- *Note:* If built in the future, this should be treated as a separate backend/data implementation profile, not interleaved within the current standard React logic.
+
 ## Prerequisites
 
 - A GitHub repository containing this project (push it there first if it isn't already).
@@ -37,7 +65,9 @@ that runs on a camera-side device in the real architecture, not on Render; see
    `INITIAL_AUDITOR_PASSWORD` at deploy time — never the `CHANGE_ME_*` placeholders
    `backend/config.py` defaults to locally, and never committed anywhere. To log in:
    Render dashboard → the `netraksh` service → **Environment** tab → find `ADMIN_PASSWORD`
-   → reveal it. Username is `admin`.
+   → reveal it. Username is `admin`. 
+   
+   *(Note: These are seed-time values only. Existing users in Supabase PostgreSQL remain the source of truth.)*
 
 5. **Open the live URL.** Render assigns one automatically
    (`https://netraksh-<random>.onrender.com`, shown at the top of the service page). Every
@@ -73,3 +103,4 @@ verification in this project up to now has been against real SQLite. The schema-
 and migration logic (`init_db()`, `_migrate_add_missing_columns()`) is written to be
 database-agnostic via SQLAlchemy's `inspect()`, not SQLite-specific, but "written to be"
 and "verified to be" are different claims — this is the first time it's actually true.
+

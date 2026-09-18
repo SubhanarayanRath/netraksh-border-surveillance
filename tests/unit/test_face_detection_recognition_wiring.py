@@ -48,14 +48,14 @@ class TestAttemptRecognitionNoOp:
     def test_no_recognizer_leaves_result_unchanged(self):
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=None)
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
         assert "face_match_person_id" not in result
 
     def test_untrained_recognizer_leaves_result_unchanged(self):
         fake = _FakeRecognizer(trained=False)
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=fake)
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
         assert "face_match_person_id" not in result
         assert fake.calls == []  # never even called recognize() on an untrained recognizer
 
@@ -63,7 +63,7 @@ class TestAttemptRecognitionNoOp:
         fake = _FakeRecognizer(trained=True, match={"person_id": "p1", "name": "Alice", "confidence": 10.0})
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=fake)
         result = {"event_type": "FACE_DETECTED"}  # no face_bbox key at all
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
         assert "face_match_person_id" not in result
 
     def test_degenerate_bbox_leaves_result_unchanged(self):
@@ -72,14 +72,14 @@ class TestAttemptRecognitionNoOp:
         fake = _FakeRecognizer(trained=True, match={"person_id": "p1", "name": "Alice", "confidence": 10.0})
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=fake)
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=50, y1=50, x2=50, y2=50)}
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
         assert "face_match_person_id" not in result
 
     def test_no_real_match_leaves_result_unchanged(self):
         fake = _FakeRecognizer(trained=True, match=None)
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=fake)
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
         assert "face_match_person_id" not in result
         assert len(fake.calls) == 1  # did genuinely attempt recognition
 
@@ -150,7 +150,7 @@ class TestAttemptRecognitionRealMatch:
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=fake)
         result = {"event_type": "FACE_DETECTED", "track_id": 7, "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
 
-        module._attempt_recognition(result, _person_crop())
+        module._attempt_lbph_recognition(result, _person_crop())
 
         assert result["face_match_person_id"] == "p-42"
         assert result["face_match_person_name"] == "Alice"
@@ -165,7 +165,7 @@ class TestAttemptRecognitionRealMatch:
         person_crop = _person_crop()  # 120x80
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
 
-        module._attempt_recognition(result, person_crop)
+        module._attempt_lbph_recognition(result, person_crop)
 
         assert len(fake.calls) == 1
         h, w = fake.calls[0][:2]
@@ -181,5 +181,5 @@ class TestAttemptRecognitionRealMatch:
 
         module = FaceDetectionModule(zones=[_verification_zone()], recognizer=_RaisingRecognizer())
         result = {"event_type": "FACE_DETECTED", "face_bbox": BoundingBox(x1=10, y1=10, x2=40, y2=40)}
-        module._attempt_recognition(result, _person_crop())  # must not raise
+        module._attempt_lbph_recognition(result, _person_crop())  # must not raise
         assert "face_match_person_id" not in result

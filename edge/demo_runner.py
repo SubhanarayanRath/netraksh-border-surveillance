@@ -63,7 +63,13 @@ logger = logging.getLogger(__name__)
 # _process_frame in the main thread.  Python dict writes are atomic under
 # the GIL for single-key updates.
 # ---------------------------------------------------------------------------
-_scenario: dict = {"current": "normal", "video_source": None, "should_restart": False}
+_scenario: dict = {
+    "current": "normal",
+    "video_source": None,
+    "video_session_id": None,
+    "should_restart": False,
+    "initialized": False,
+}
 
 # How long (seconds) a single 'failure' trigger keeps frozen frames active
 # before auto-resetting so the demo doesn't get permanently stuck.
@@ -83,11 +89,12 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
         return
     while True:
         try:
-            resp = httpx.get(f"{backend_url}/demo/scenario", timeout=2.0)
+            resp = httpx.get(f"{backend_url}/api/dashboard/video/internal-sync", timeout=2.0)
             if resp.status_code == 200:
                 data = resp.json()
                 new_scenario = data.get("scenario", "normal")
                 new_source = data.get("video_source")
+                new_session_id = data.get("video_session_id")
 
                 if new_scenario != _scenario["current"]:
                     logger.info(
@@ -96,13 +103,19 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
                     _scenario["current"] = new_scenario
                 
                 # If a new video source is provided, and it's different, trigger restart
-                if new_source and new_source != _scenario.get("video_source"):
-                    # Only trigger restart if we already had a source (not the first poll)
-                    # or if the backend dictates a source different from the CLI args.
+                if new_source and (
+                    new_source != _scenario.get("video_source")
+                    or (new_session_id and new_session_id != _scenario.get("video_session_id"))
+                ):
+                    # Only trigger restart if we already had a source/session OR if the backend
+                    # explicitly gives us a new session ID when we didn't have one initialized.
                     if _scenario["video_source"] is not None:
-                        logger.info(f"[DemoRunner] Video source changed to {new_source}, triggering restart...")
+                        logger.info(f"[DemoRunner] Video source/session changed to {new_source} ({new_session_id}), triggering restart...")
                         _scenario["should_restart"] = True
                     _scenario["video_source"] = new_source
+                if new_session_id:
+                    _scenario["video_session_id"] = new_session_id
+                _scenario["initialized"] = True
         except Exception as exc:
             logger.debug(f"[DemoRunner] Scenario poll failed (non-fatal): {exc}")
         time.sleep(interval)
@@ -225,11 +238,15 @@ class DemoAwareEdgePipeline(EdgePipeline):
         t.start()
 
         def _restart_watcher():
+            # DemoAwareEdgePipeline starts this watcher immediately before
+            # EdgePipeline flips _running to True. Wait for that transition
+            # instead of exiting during the small startup window.
+            while not getattr(self, "_running", False):
+                time.sleep(0.05)
             while True:
                 if getattr(self, "_running", False) and _scenario.get("should_restart"):
                     logger.info("[DemoRunner] Restart requested by scenario state. Stopping pipeline...")
                     self.stop()
-                    _scenario["should_restart"] = False
                     break
                 if not getattr(self, "_running", False):
                     break
@@ -262,7 +279,11 @@ def run_demo_pipeline(
         f"source={video_source} backend={backend_url}"
     )
 
-    # Start scenario polling in a daemon background thread
+    # Establish the CLI fallback before polling. Then allow the first poll
+    # to hydrate the current backend session before constructing a pipeline;
+    # otherwise a short-lived legacy pipeline starts against the old shared
+    # outbox and immediately has to restart.
+    _scenario["video_source"] = video_source
     poll_thread = threading.Thread(
         target=_poll_scenario,
         args=(backend_url, 5.0),
@@ -270,24 +291,34 @@ def run_demo_pipeline(
         name=f"scenario-poll-{camera_id}",
     )
     poll_thread.start()
-    # Initialize _scenario["video_source"] with the CLI argument so the first
-    # poll doesn't immediately restart if the backend doesn't have one set yet.
-    _scenario["video_source"] = video_source
+    initialization_deadline = time.time() + 3.0
+    while not _scenario.get("initialized") and time.time() < initialization_deadline:
+        time.sleep(0.05)
+    _scenario["should_restart"] = False
 
     while True:
         current_source = _scenario["video_source"]
         
+        current_session = _scenario.get("video_session_id")
+        session_suffix = f"_{current_session}" if current_session else ""
         config = {
             "camera_id": camera_id,
             "camera_name": camera_id,
+            "stream_id": current_session,
             "video_source": current_source,
+            # User-uploaded sessions are finite jobs. Legacy camera/demo
+            # sources keep their historical looping behavior.
+            "loop_video": not bool(current_session),
             "backend_url": backend_url,
             "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
             "zones_config_path": zones_config_path,
             "key_dir": "certs/edge",
             # Per-camera chain/sync DBs so two simultaneous pipelines don't collide
             "chain_db_path": f"edge/data/chain_{camera_id}.db",
-            "sync_db_path": f"edge/data/sync_{camera_id}.db",
+            # A finite upload gets its own durable outbox. This preserves old
+            # unsent evidence without allowing a large legacy backlog to
+            # starve the active operator session.
+            "sync_db_path": f"edge/data/sync_{camera_id}{session_suffix}.db",
             "clip_dir": "edge/data/clips",
             "metrics_json_path": f"edge/data/metrics_{camera_id}.json",
             "simulate_frozen": False,
@@ -303,11 +334,19 @@ def run_demo_pipeline(
         if _scenario.get("should_restart"):
             # The pipeline was stopped by the restart watcher, continue loop to recreate
             logger.info("[DemoRunner] Pipeline stopped for restart. Recreating...")
-            # We already cleared should_restart in the watcher, but just in case:
+            # Consume the restart request only after the blocking pipeline exits.
             _scenario["should_restart"] = False
             time.sleep(1.0)
         else:
-            # Normal exit (e.g. video ended or Ctrl+C)
+            # A completed upload should leave the worker alive so the next
+            # uploaded session can be picked up without restarting the OS
+            # process. The polling thread sets should_restart on a new ID.
+            if _scenario.get("video_session_id"):
+                logger.info("[DemoRunner] Uploaded video completed; waiting for the next session...")
+                while not _scenario.get("should_restart"):
+                    time.sleep(0.25)
+                _scenario["should_restart"] = False
+                continue
             logger.info("[DemoRunner] Pipeline exited normally. Ending loop.")
             break
 

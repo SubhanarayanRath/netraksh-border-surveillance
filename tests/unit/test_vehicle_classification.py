@@ -30,7 +30,7 @@ def key_manager(temp_dir):
         private_key_path=os.path.join(temp_dir, "test.key"),
         public_key_path=os.path.join(temp_dir, "test.pub"),
     )
-    km.load_or_generate()
+    km.load_or_generate(allow_generate=True)
     return km
 
 

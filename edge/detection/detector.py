@@ -14,34 +14,14 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from edge.detection.runtime import create_runtime, _YOLO_CLASS_MAP, _YOLO_VEHICLE_SUBTYPE_MAP
+
 from shared.constants import DetectionClass, SceneCondition, VehicleSubtype
 from shared.schemas import BoundingBox, Point, TrackData
 
 logger = logging.getLogger(__name__)
 
-# YOLO class ID mappings (COCO)
-_YOLO_CLASS_MAP: Dict[int, DetectionClass] = {
-    0: DetectionClass.PERSON,
-    1: DetectionClass.PERSON,   # bicycle — treated as person for MVP
-    2: DetectionClass.VEHICLE,  # car
-    3: DetectionClass.VEHICLE,  # motorcycle
-    5: DetectionClass.VEHICLE,  # bus
-    7: DetectionClass.VEHICLE,  # truck
-}
-
-# Real vehicle sub-classification (SIH PS 26187: "vehicle detection AND
-# classification", not detection alone) — YOLO/COCO already distinguishes
-# these class IDs; _YOLO_CLASS_MAP above previously discarded that
-# distinction by collapsing all four into one generic VEHICLE. This is a
-# parallel map, not a replacement — every class id here also appears in
-# _YOLO_CLASS_MAP mapped to DetectionClass.VEHICLE, so existing gating
-# logic keyed on detection_class is completely unaffected.
-_YOLO_VEHICLE_SUBTYPE_MAP: Dict[int, VehicleSubtype] = {
-    2: VehicleSubtype.CAR,
-    3: VehicleSubtype.MOTORCYCLE,
-    5: VehicleSubtype.BUS,
-    7: VehicleSubtype.TRUCK,
-}
+# We import these from edge.detection.runtime to avoid duplication.
 
 # Border-tuned ByteTrack config (architecture v4 §4 — Track Continuity Guard):
 # same as ultralytics' bundled bytetrack.yaml except a larger track_buffer.
@@ -63,36 +43,53 @@ class DetectionTracker:
         device: str = "cpu",
         tracker_config: Optional[str] = None,
     ):
-        self.model_size = model_size
+        self.model_size = os.environ.get("DETECTOR_MODEL", model_size)
         self.device = device
-        # Falls back to the border-tuned config (edge/config/bytetrack_border.yaml)
-        # if the given/default path doesn't exist, and further to ultralytics'
-        # own bundled "bytetrack.yaml" if even that is missing — never silently
-        # crashes the pipeline over a missing tracker config file.
-        config = tracker_config or _DEFAULT_TRACKER_CONFIG
-        if not os.path.exists(config):
+        
+        # Read desired tracker from environment (bytetrack vs botsort)
+        tracker_type = os.environ.get("TRACKER", "bytetrack").lower()
+        
+        if tracker_config is None:
+            if tracker_type == "botsort":
+                tracker_config = str(Path(__file__).resolve().parent.parent / "config" / "botsort_border.yaml")
+            else:
+                tracker_config = _DEFAULT_TRACKER_CONFIG
+                
+        # Falls back to the border-tuned config if the given/default path doesn't exist, 
+        # and further to ultralytics' own bundled yaml if even that is missing
+        if not os.path.exists(tracker_config):
+            fallback_yaml = "botsort.yaml" if tracker_type == "botsort" else "bytetrack.yaml"
             logger.warning(
-                f"[Detector] Tracker config not found at {config}; "
-                f"falling back to ultralytics' bundled bytetrack.yaml (default track_buffer)"
+                f"[Detector] Tracker config not found at {tracker_config}; "
+                f"falling back to ultralytics' bundled {fallback_yaml}"
             )
-            config = "bytetrack.yaml"
-        self.tracker_config = config
-        self._model = None
-        self._fps_measurements: List[float] = []
-        self._last_fps_report = time.time()
+            tracker_config = fallback_yaml
+            
+        self.tracker_config = tracker_config
+        self._runtime = create_runtime()
+        self._tracker = None
 
     def load(self) -> None:
-        """Load YOLO model. Called once at startup."""
+        """Load detector runtime and initialize tracker. Called once at startup."""
+        self._runtime.load()
+        
         try:
-            from ultralytics import YOLO
-            logger.info(f"[Detector] Loading {self.model_size} on {self.device}...")
-            self._model = YOLO(self.model_size)
-            # Warm up
-            dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-            self._model.predict(dummy, verbose=False, device=self.device)
-            logger.info("[Detector] Model loaded and warmed up")
+            from ultralytics.trackers import BYTETracker, BOTSORT
+            tracker_type = os.environ.get("TRACKER", "bytetrack").lower()
+            import yaml
+            from ultralytics.utils import IterableSimpleNamespace
+            
+            with open(self.tracker_config, "r") as f:
+                cfg = yaml.safe_load(f)
+            
+            args = IterableSimpleNamespace(**cfg)
+            if tracker_type == "botsort":
+                self._tracker = BOTSORT(args=args)
+            else:
+                self._tracker = BYTETracker(args=args)
+            logger.info(f"[Detector] Standalone tracker ({tracker_type}) initialized")
         except Exception as exc:
-            logger.error(f"[Detector] Failed to load model: {exc}")
+            logger.error(f"[Detector] Failed to initialize tracker: {exc}")
             raise
 
     def detect_and_track(
@@ -106,80 +103,83 @@ class DetectionTracker:
         Run YOLO inference + ByteTrack association.
         Returns a list of TrackData objects (one per tracked object).
         """
-        if self._model is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
+        if self._tracker is None:
+            raise RuntimeError("Tracker not loaded.")
 
-        t_start = time.perf_counter()
+        # 1. Run inference using abstracted runtime
+        detections = self._runtime.detect(frame, confidence_threshold)
 
-        try:
-            results = self._model.track(
-                frame,
-                persist=True,
-                conf=confidence_threshold,
-                device=self.device,
-                tracker=self.tracker_config,
-                verbose=False,
-                classes=list(_YOLO_CLASS_MAP.keys()),
-            )
-        except Exception as exc:
-            logger.error(f"[Detector] Inference error: {exc}")
-            return []
+        # 2. Build the official ultralytics Boxes object expected by the tracker.
+        # BYTETracker.update() (installed source confirmed) accesses:
+        #   results.conf  → data[:, -2]
+        #   results.cls   → data[:, -1]
+        #   results.xywh  → computed from data[:, :4] (xyxy → xywh)
+        # The authoritative way to satisfy this is to construct the real
+        # ultralytics.engine.results.Boxes class (BaseTensor subclass).
+        # Ultralytics 8.3.0 installed (verified from __init__.py).
+        import torch
+        from ultralytics.engine.results import Boxes as UltralyticsBoxes
 
-        t_end = time.perf_counter()
-        elapsed = t_end - t_start
-        self._fps_measurements.append(1.0 / elapsed if elapsed > 0 else 0)
+        tracks = []
+        orig_shape = frame.shape[:2]  # (height, width) — required by Boxes
 
-        tracks: List[TrackData] = []
-        if results and results[0].boxes is not None:
-            boxes = results[0].boxes
-            for i in range(len(boxes)):
-                try:
-                    cls_id = int(boxes.cls[i].item())
-                    if cls_id not in _YOLO_CLASS_MAP:
-                        continue
-                    conf = float(boxes.conf[i].item())
-                    if conf < confidence_threshold:
-                        continue
+        if not detections:
+            # Construct empty Boxes — tracker handles len(results.conf)==0
+            empty_t = torch.zeros((0, 6), dtype=torch.float32)
+            empty_boxes = UltralyticsBoxes(empty_t, orig_shape)
+            self._tracker.update(empty_boxes, frame)
+            return tracks
 
-                    track_id_tensor = boxes.id
-                    track_id = int(track_id_tensor[i].item()) if track_id_tensor is not None else i
+        det_array = np.zeros((len(detections), 6), dtype=np.float32)
+        for i, d in enumerate(detections):
+            # Column layout required by Boxes: [x1, y1, x2, y2, conf, cls]
+            det_array[i] = [d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2, d.confidence, d.class_id]
 
-                    xyxy = boxes.xyxy[i].tolist()
-                    bbox = BoundingBox(x1=xyxy[0], y1=xyxy[1], x2=xyxy[2], y2=xyxy[3])
+        det_tensor = torch.tensor(det_array, dtype=torch.float32)
+        det_boxes = UltralyticsBoxes(det_tensor, orig_shape)
 
-                    # Maintain trajectory
-                    traj = []
-                    if existing_trajectories and track_id in existing_trajectories:
-                        traj = list(existing_trajectories[track_id])
-                    traj.append(bbox.centroid)
-                    if len(traj) > 50:  # cap trajectory length
-                        traj = traj[-50:]
+        # 3. Update tracker with the real Boxes object
+        tracked_objects = self._tracker.update(det_boxes, frame)
+        
+        for t in tracked_objects:
+            if hasattr(t, "tlbr"):
+                # Direct STrack access if it returns raw tracks
+                bbox_arr = t.tlbr
+                track_id = int(t.track_id)
+                cls_id = int(t.cls) if hasattr(t, 'cls') else 0
+                conf = float(t.score)
+            else:
+                # If it returns a tensor/array
+                bbox_arr = t[:4]
+                track_id = int(t[4])
+                conf = float(t[5])
+                cls_id = int(t[6]) if len(t) > 6 else 0
+                
+            if cls_id not in _YOLO_CLASS_MAP:
+                continue
 
-                    tracks.append(TrackData(
-                        track_id=track_id,
-                        detection_class=_YOLO_CLASS_MAP[cls_id],
-                        bbox=bbox,
-                        confidence=conf,
-                        trajectory=traj,
-                        vehicle_subtype=_YOLO_VEHICLE_SUBTYPE_MAP.get(cls_id),
-                    ))
-                except Exception as exc:
-                    logger.debug(f"[Detector] Error parsing detection {i}: {exc}")
-                    continue
+            bbox = BoundingBox(x1=bbox_arr[0], y1=bbox_arr[1], x2=bbox_arr[2], y2=bbox_arr[3])
 
-        # Log FPS every 5 seconds
-        if time.time() - self._last_fps_report > 5.0 and self._fps_measurements:
-            avg_fps = sum(self._fps_measurements) / len(self._fps_measurements)
-            logger.info(f"[Detector] Inference FPS (avg last {len(self._fps_measurements)} frames): {avg_fps:.1f}")
-            self._fps_measurements.clear()
-            self._last_fps_report = time.time()
+            traj = []
+            if existing_trajectories and track_id in existing_trajectories:
+                traj = list(existing_trajectories[track_id])
+            traj.append(bbox.centroid)
+            if len(traj) > 50:
+                traj = traj[-50:]
+
+            tracks.append(TrackData(
+                track_id=track_id,
+                detection_class=_YOLO_CLASS_MAP[cls_id],
+                bbox=bbox,
+                confidence=conf,
+                trajectory=traj,
+                vehicle_subtype=_YOLO_VEHICLE_SUBTYPE_MAP.get(cls_id),
+            ))
 
         return tracks
 
     def get_avg_fps(self) -> float:
-        if not self._fps_measurements:
-            return 0.0
-        return sum(self._fps_measurements) / len(self._fps_measurements)
+        return self._runtime.get_avg_fps()
 
 
 class NightMotionFallback:

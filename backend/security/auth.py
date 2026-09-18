@@ -6,10 +6,11 @@ No private keys exposed to frontend. No credentials hardcoded.
 from __future__ import annotations
 
 import logging
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Security, status, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -117,6 +118,32 @@ require_any_role = require_roles(UserRole.ADMIN, UserRole.OPERATOR, UserRole.AUD
 
 
 # ---------------------------------------------------------------------------
+# Command Isolation
+# ---------------------------------------------------------------------------
+
+def get_command_filter(user: User) -> Optional[str]:
+    """
+    Returns the command_id to filter by, or None if the user has global access.
+    ADMIN and AUDITOR have global read access (None).
+    OPERATOR is restricted to their command_id.
+    """
+    if user.role in [UserRole.ADMIN.value, UserRole.AUDITOR.value]:
+        return None
+    return user.command_id
+
+def enforce_command_access(user: User, target_command_id: str) -> None:
+    """
+    Raises 403 Forbidden if the user is an OPERATOR and target_command_id != user.command_id.
+    """
+    filter_id = get_command_filter(user)
+    if filter_id is not None and filter_id != target_command_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: command isolation boundary."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Audit logging
 # ---------------------------------------------------------------------------
 
@@ -146,11 +173,20 @@ def audit(
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap: create initial users if they don't exist
+# Bootstrap: create or repair development users
 # ---------------------------------------------------------------------------
 
 def bootstrap_users(db: Session) -> None:
-    """Called on startup to ensure at least one user of each role exists."""
+    """Ensure the configured initial accounts exist without creating duplicates.
+
+    Development databases commonly outlive changes to the bootstrap code.  In
+    that environment, an existing default account may therefore retain a
+    stale password hash, role, or disabled flag.  Repair those *configured
+    bootstrap accounts* idempotently so the documented local credentials keep
+    working.  Production and staging never rewrite an existing account here;
+    their passwords and roles are managed deliberately outside application
+    startup.
+    """
     defaults = [
         (settings.ADMIN_USERNAME, settings.ADMIN_PASSWORD, UserRole.ADMIN.value),
         (settings.INITIAL_OPERATOR_USERNAME, settings.INITIAL_OPERATOR_PASSWORD, UserRole.OPERATOR.value),
@@ -162,4 +198,146 @@ def bootstrap_users(db: Session) -> None:
             user = User(username=username, hashed_password=hash_password(password), role=role)
             db.add(user)
             logger.info(f"Bootstrap: created user '{username}' with role '{role}'")
+        elif settings.ENV == "development":
+            repaired = []
+            if not verify_password(password, existing.hashed_password):
+                existing.hashed_password = hash_password(password)
+                repaired.append("password hash")
+            if existing.role != role:
+                existing.role = role
+                repaired.append("role")
+            if not existing.is_active:
+                existing.is_active = True
+                repaired.append("active status")
+            if repaired:
+                logger.info(
+                    "Bootstrap: repaired %s for development user '%s'",
+                    ", ".join(repaired),
+                    username,
+                )
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 WP-2: Edge Identity Binding
+# ---------------------------------------------------------------------------
+
+def extract_verified_client_identity(request: Request) -> Optional[dict]:
+    """
+    Extracts cryptographically verified client identity from the TLS connection.
+    Supports two modes explicitly defined by MTLS_TRUSTED_PROXY:
+    
+    MODE A (MTLS_TRUSTED_PROXY=False): Direct TLS termination.
+    Reads from ASGI scope `extensions.tls.client_cert`.
+    
+    MODE B (MTLS_TRUSTED_PROXY=True): Trusted reverse-proxy TLS termination.
+    Reads `X-Client-Fingerprint` and `X-Client-Serial` headers.
+    This MUST ONLY be used if the backend connection is strictly firewalled 
+    to only allow traffic from the trusted proxy that performs the validation.
+    """
+    if settings.MTLS_TRUSTED_PROXY:
+        fingerprint = request.headers.get("X-Client-Fingerprint")
+        serial = request.headers.get("X-Client-Serial")
+        if fingerprint:
+            return {"fingerprint": fingerprint, "serial": serial}
+        return None
+    else:
+        # MODE A: Direct Uvicorn TLS (ASGI standard)
+        tls_ext = request.scope.get("extensions", {}).get("tls", {})
+        client_cert_der = tls_ext.get("client_cert")
+        if not client_cert_der:
+            return None
+            
+        import hashlib
+        # The ASGI spec provides the certificate as a DER-encoded byte string.
+        # We hash it to generate the fingerprint.
+        fingerprint = hashlib.sha256(client_cert_der).hexdigest().lower()
+        
+        # We don't parse the full x509 here for serial, but could if cryptography was available.
+        # For our identity binding, fingerprint is the primary unique identifier.
+        return {"fingerprint": fingerprint, "serial": None}
+
+def get_edge_identity(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Dependency for Edge ingress endpoints (POST /events, /ws/sync).
+    Binds the cryptographically verified client certificate to the EdgeIdentity.
+    """
+    from backend.models.orm import EdgeIdentity
+
+    if settings.MTLS_MODE == "disabled":
+        # No mTLS enforcement
+        return None
+
+    identity_info = extract_verified_client_identity(request)
+    
+    if not identity_info:
+        if settings.MTLS_MODE == "required":
+            audit(db, "EDGE_AUTHENTICATION_FAILED", ip_address=request.client.host if request.client else "unknown", detail="Missing client certificate")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Client certificate required")
+        else:
+            return None # Optional mode
+            
+    fingerprint = identity_info["fingerprint"]
+    
+    identity = db.query(EdgeIdentity).filter(EdgeIdentity.certificate_fingerprint == fingerprint).first()
+    
+    if not identity:
+        audit(db, "EDGE_CERTIFICATE_UNKNOWN", ip_address=request.client.host if request.client else "unknown", detail=f"Unknown fingerprint: {fingerprint}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Certificate not registered")
+        
+    if identity.status == "REVOKED":
+        audit(db, "EDGE_CERTIFICATE_REVOKED", ip_address=request.client.host if request.client else "unknown", detail=f"Revoked identity: {identity.edge_id}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Certificate revoked")
+        
+    if identity.status == "SUSPENDED":
+        audit(db, "EDGE_CERTIFICATE_SUSPENDED", ip_address=request.client.host if request.client else "unknown", detail=f"Suspended identity: {identity.edge_id}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Certificate suspended")
+        
+    if identity.status == "EXPIRED":
+        audit(db, "EDGE_CERTIFICATE_EXPIRED", ip_address=request.client.host if request.client else "unknown", detail=f"Expired identity: {identity.edge_id}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Certificate expired")
+        
+    if identity.status != "ACTIVE":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Identity is not active")
+
+    # Optional: could check `expires_at` against datetime.utcnow() directly if not relying on background jobs to update status
+
+    audit(db, "EDGE_CONNECTED", resource_type="EdgeIdentity", resource_id=identity.edge_id, ip_address=request.client.host if request.client else "unknown")
+    
+    return identity
+
+
+def require_edge_auth(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Authenticate an edge ingestion request without exposing its secret.
+
+    Registered mTLS identities take precedence. Deployments where mTLS is
+    optional or disabled must provision EDGE_AUTH_TOKEN to the backend and
+    each approved edge. Local development remains deliberately permissive
+    only when no token is configured, so a demo does not require a committed
+    development secret.
+    """
+    identity = get_edge_identity(request, db)
+    if identity is not None:
+        return identity
+
+    expected = settings.EDGE_AUTH_TOKEN
+    scheme, _, supplied = request.headers.get("Authorization", "").partition(" ")
+    if expected and scheme.lower() == "bearer" and secrets.compare_digest(supplied, expected):
+        return None
+    if settings.ENV == "development" and not expected:
+        return None
+
+    audit(
+        db,
+        "EDGE_AUTHENTICATION_FAILED",
+        ip_address=request.client.host if request.client else "unknown",
+        detail="Missing or invalid edge authentication",
+        success=False,
+    )
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Edge authentication required")

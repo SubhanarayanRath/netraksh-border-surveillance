@@ -50,18 +50,13 @@ export default function Architecture() {
     <div className="h-full flex flex-col gap-6" style={{ overflowY: 'auto', paddingRight: '12px', paddingBottom: '2rem' }}>
       
       {/* Header */}
-      <div className="flex-col pb-4 border-b border-color">
-        <h2 className="font-display tracking-widest uppercase mb-2" style={{ 
-          fontSize: '1.75rem', 
-          background: 'linear-gradient(90deg, #ffffff 0%, #94a3b8 100%)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent'
-        }}>
-          System Architecture
-        </h2>
-        <p className="text-sm font-body text-muted" style={{ maxWidth: '800px', lineHeight: '1.6' }}>
-          The NETRAKSH pipeline operates on a decentralized edge-to-cloud architecture. It processes video streams locally on CPU hardware, mathematically scores event reliability, and commits high-confidence incidents to a secure cryptographic ledger.
-        </p>
+      <div className="section-header flex-shrink-0">
+        <div>
+          <h2 className="section-title">System Architecture</h2>
+          <div className="section-sub">
+            The NETRAKSH pipeline operates on a decentralized edge-to-cloud architecture. It processes video streams locally on CPU hardware, mathematically scores event reliability, and commits high-confidence incidents to a secure cryptographic ledger.
+          </div>
+        </div>
       </div>
 
       {/* Main Pipeline Container */}
@@ -202,7 +197,7 @@ export default function Architecture() {
             </div>
           </div>
 
-          {/* Blockchain */}
+          {/* Ledger */}
           <div 
             className="border border-danger rounded flex flex-col glow-danger" 
             style={{ 
@@ -227,13 +222,13 @@ export default function Architecture() {
             <div className="flex justify-between items-center gap-2 mb-4 pb-3 border-b border-color text-danger">
               <div className="flex items-center gap-2">
                 <Link size={18} />
-                <span className="text-xs font-display uppercase tracking-widest">Blockchain</span>
+                <span className="text-xs font-display uppercase tracking-widest">Cryptographic Ledger</span>
               </div>
               <span className="bg-danger text-white rounded font-display tracking-widest" style={{ padding: '0.25rem 0.5rem', fontSize: '9px', boxShadow: '0 0 10px rgba(239,68,68,0.4)' }}>HIGH SEVERITY</span>
             </div>
             <h3 className="text-danger font-display mb-2 text-lg tracking-wide">Permissioned Ledger</h3>
             <div className="flex flex-col gap-3 text-sm font-body text-muted mt-2">
-              <span>Hyperledger Fabric-compatible adapter prototype.</span>
+              <span>Permissioned Ledger adapter prototype.</span>
               <div className="bg-dark p-3 rounded border border-danger text-xs text-muted" style={{ borderOpacity: 0.3, lineHeight: '1.5' }}>
                 Currently running in MOCK mode due to deployment environment constraints. Architecture supports immediate live-switch upon Fabric node availability.
               </div>

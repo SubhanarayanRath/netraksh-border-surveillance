@@ -47,14 +47,22 @@ def test_live_telemetry_payload_validation():
         LiveTelemetryPayload(**invalid_payload)
 
 @patch("backend.api.system.broadcast_telemetry")
-def test_post_telemetry_endpoint(mock_broadcast):
+def test_post_telemetry_endpoint(mock_broadcast, monkeypatch):
+    from backend.config import settings
+    from backend.database.session import init_db
+    monkeypatch.setattr(settings, "EDGE_AUTH_TOKEN", "test-edge-auth-token-0123456789abcdef")
+    init_db()
     payload = {
         "camera_id": "cam-01",
         "timestamp": time.time(),
         "sequence": 1,
         "tracks": []
     }
-    response = client.post("/system/telemetry", json=payload)
+    response = client.post(
+        "/system/telemetry",
+        json=payload,
+        headers={"Authorization": f"Bearer {settings.EDGE_AUTH_TOKEN}"},
+    )
     assert response.status_code == 202
     assert response.json() == {"status": "ok"}
     mock_broadcast.assert_called_once()
@@ -115,4 +123,3 @@ def test_edge_telemetry_queue_latest_only_logic():
     assert telemetry_queue.qsize() == 2
     assert telemetry_queue.get_nowait() == {"seq": 2}
     assert telemetry_queue.get_nowait() == {"seq": 3}
-

@@ -1,83 +1,139 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Eye, Shield, Map, Activity, Bell, Gauge, Settings } from 'lucide-react';
+import {
+  Eye, Shield, Map, Activity, Bell, Gauge, Settings,
+  Users, Network, BarChart2, ClipboardList, Radio,
+  Building2, Cpu
+} from 'lucide-react';
 import Logo from './Logo';
 import useAuth from '../hooks/useAuth';
+
+const ROLE_COLORS = {
+  ADMIN:    'text-danger',
+  OPERATOR: 'text-ok',
+  AUDITOR:  'text-warning',
+};
+
+const ROLE_BORDER = {
+  ADMIN:    'border-danger',
+  OPERATOR: 'border-ok',
+  AUDITOR:  'border-warning',
+};
+
+const NAV_SECTIONS = [
+  {
+    label: 'Surveillance',
+    items: [
+      { to: '/',              icon: Eye,          label: 'Command Center' },
+      { to: '/camera-health', icon: Activity,     label: 'System Health'  },
+      { to: '/map',           icon: Map,          label: 'Map Intelligence'},
+    ],
+  },
+  {
+    label: 'Intelligence',
+    items: [
+      { to: '/cross-command-alerts', icon: Bell,         label: 'Alerts & Incidents' },
+      { to: '/evidence',             icon: Shield,       label: 'Evidence Vault'     },
+      { to: '/watchlist',            icon: Users,        label: 'Face Watchlist'     },
+      { to: '/analytics',            icon: BarChart2,    label: 'Analytics'          },
+      { to: '/audit',                icon: ClipboardList,label: 'Audit Trail'        },
+    ],
+  },
+  {
+    label: 'Administration',
+    items: [
+      { to: '/performance',    icon: Gauge,   label: 'Edge Performance', },
+      { to: '/architecture',   icon: Network, label: 'Architecture',     },
+    ],
+    adminItems: [
+      { to: '/camera-management', icon: Settings, label: 'Camera Mgmt', adminOnly: true },
+    ],
+  },
+];
 
 export default function Sidebar() {
   const location = useLocation();
   const path = location.pathname;
-  const { role } = useAuth();
+  const { role, username } = useAuth();
 
-  const getClassName = (activePath) => {
-    const base = "w-full h-full flex items-center justify-center rounded transition-colors";
-    return path === activePath 
-      ? `${base} bg-ok` 
-      : `${base} text-muted hover-bg-elevated`;
+  const isActive = (to) => {
+    if (to === '/') return path === '/';
+    return path.startsWith(to);
   };
 
   return (
     <nav className="sidebar-left">
-      <div className="flex-col items-center gap-2">
-        <div className="flex items-center justify-center rounded border" style={{backgroundColor: 'var(--bg-elevated)', width: '52px', height: '52px'}}>
-          <Logo size={36} />
+      {/* Brand */}
+      <div className="nav-brand">
+        <Logo size={32} />
+        <div className="nav-brand-text">
+          <span className="nav-brand-name">Netraksh</span>
+          <span className="nav-brand-sub">Border Intelligence</span>
         </div>
-        {/* The sidebar column widened from 60px to 88px (index.css) so both
-            the logo mark and this caption have real room, after the
-            original 9px + tracking-widest label clipped off the viewport
-            edge entirely at 60px (see docs/ARCHITECTURE.md). Still
-            constrained to a fixed width with wrapping allowed as a safety
-            net — not relying on it fitting exactly — so a future font/text
-            change wraps to a second line instead of silently overflowing
-            off-screen again. */}
-        <span
-          className="font-display font-bold text-ok"
-          style={{
-            fontSize: '11px', letterSpacing: '0.03em', lineHeight: 1.2,
-            width: '72px', whiteSpace: 'normal', wordBreak: 'break-word',
-            // `text-center` (Tailwind utility class) computed as
-            // text-align: start here, not center — confirmed via
-            // getComputedStyle, not assumed — so the word rendered
-            // left-aligned inside its own centered box (the box was
-            // centered in the sidebar; the glyphs inside it weren't
-            // centered within the box). Set inline instead, which always
-            // wins regardless of whatever is overriding the utility class.
-            textAlign: 'center',
-          }}
-        >
-          NETRAKSH
-        </span>
       </div>
 
-      <div className="flex-col gap-4" style={{width: '48px'}}>
-        <Link to="/" className={getClassName("/")} title="Dashboard" style={{width: '48px', height: '48px'}}>
-          <Eye size={22} />
-        </Link>
-        <Link to="/camera-health" className={getClassName("/camera-health")} title="Camera Health" style={{width: '48px', height: '48px'}}>
-          <Activity size={22} />
-        </Link>
-        <Link to="/evidence" className={getClassName("/evidence")} title="Evidence Vault" style={{width: '48px', height: '48px'}}>
-          <Shield size={22} />
-        </Link>
-        <Link to="/cross-command-alerts" className={getClassName("/cross-command-alerts")} title="Cross-Command Alerts" style={{width: '48px', height: '48px'}}>
-          <Bell size={22} />
-        </Link>
-        <Link to="/performance" className={getClassName("/performance")} title="Edge Performance" style={{width: '48px', height: '48px'}}>
-          <Gauge size={22} />
-        </Link>
-        {/* The first genuinely role-gated nav item — visible only when
-            actually signed in as ADMIN, matching the real backend RBAC
-            (require_admin) that CameraManagement.jsx's endpoints enforce.
-            Every other icon here is reachable by any role; this one
-            reflects a real permission difference instead of showing every
-            viewer an identical sidebar regardless of who they are. */}
-        {role === 'ADMIN' && (
-          <Link to="/camera-management" className={getClassName("/camera-management")} title="Camera Management (ADMIN)" style={{width: '48px', height: '48px'}}>
-            <Settings size={22} />
-          </Link>
-        )}
-        <Link to="/architecture" className={getClassName("/architecture")} title="Architecture" style={{width: '48px', height: '48px'}}>
-          <Map size={22} />
-        </Link>
+      {/* Navigation */}
+      <div style={{ flex: 1, overflowY: 'auto', paddingTop: '0.5rem' }}>
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} className="nav-section">
+            <div className="nav-section-label">{section.label}</div>
+            <div className="nav-items">
+              {section.items.map(({ to, icon: Icon, label }) => (
+                <Link
+                  key={to}
+                  to={to}
+                  className={`nav-item${isActive(to) ? ' active' : ''}`}
+                  title={label}
+                >
+                  <Icon size={15} className="nav-item-icon" />
+                  <span>{label}</span>
+                </Link>
+              ))}
+              {section.adminItems && role === 'ADMIN' &&
+                section.adminItems.map(({ to, icon: Icon, label }) => (
+                  <Link
+                    key={to}
+                    to={to}
+                    className={`nav-item${isActive(to) ? ' active' : ''}`}
+                    title={label + ' (ADMIN)'}
+                  >
+                    <Icon size={15} className="nav-item-icon" />
+                    <span>{label}</span>
+                  </Link>
+                ))
+              }
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Operator Footer */}
+      <div className="nav-footer">
+        <div className="nav-operator-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div
+              style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: 'var(--bg-base)',
+                border: `1px solid var(--border-color)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Cpu size={13} style={{ color: 'var(--text-muted)' }} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="nav-operator-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {username || 'Operator'}
+              </div>
+              <div
+                className={`nav-operator-role ${ROLE_COLORS[role] || 'text-muted'}`}
+                style={{ fontSize: '0.6rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+              >
+                {role || 'UNKNOWN'}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </nav>
   );

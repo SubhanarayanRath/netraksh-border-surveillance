@@ -113,6 +113,8 @@ class CorroborationResult:
     t_max_s: float
     sigma_s: float
     tc: float
+    appearance_similarity: Optional[float] = None
+    representation_type: Optional[str] = None
 
 
 def haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -154,15 +156,13 @@ def find_corroboration(event: Event, db: Session) -> tuple[str, Optional[Corrobo
     """
     Look for a real, already-stored event at another real-coordinate camera
     that is temporally/spatially plausible as corroboration for `event`.
+    If CROSS_CAMERA_REID is enabled, also checks appearance similarity.
     Returns (status, single BEST (highest-Tc) match at or above MIN_TC_TO_RECORD),
     or (status, None) if no such match exists — no match is ever fabricated.
     """
     camera = db.query(Camera).filter(Camera.id == event.camera_id).first()
     if camera is None or camera.latitude is None or camera.longitude is None:
-        # Can't compute a real topology without this camera's real
-        # coordinates — honestly skip rather than guess.
-        return "UNAVAILABLE", None
-
+        return "INSUFFICIENT_EVIDENCE", None
 
     other_cameras = (
         db.query(Camera)
@@ -173,13 +173,24 @@ def find_corroboration(event: Event, db: Session) -> tuple[str, Optional[Corrobo
         .all()
     )
     if not other_cameras:
-        return "NO_CORROBORATION", None
-
+        return "NO_MATCH", None
 
     window_start = event.timestamp - MAX_CORROBORATION_WINDOW
     window_end = event.timestamp + MAX_CORROBORATION_WINDOW
 
+    from backend.config import settings
+    from backend.services.reid import get_or_compute_embedding, compute_cosine_similarity
+
+    use_appearance = (settings.CROSS_CAMERA_REID == "appearance")
+    
+    # Pre-fetch source embedding if appearance is enabled
+    source_embedding = None
+    if use_appearance:
+        source_embedding = get_or_compute_embedding(event)
+
     best: Optional[CorroborationResult] = None
+    best_status = "NO_MATCH"
+    
     for other_cam in other_cameras:
         distance_m = haversine_distance_m(camera.latitude, camera.longitude, other_cam.latitude, other_cam.longitude)
         if distance_m > MAX_CORROBORATION_DISTANCE_M:
@@ -203,23 +214,57 @@ def find_corroboration(event: Event, db: Session) -> tuple[str, Optional[Corrobo
             tc, sigma = temporal_consistency(delta_t_s, t_min, t_max)
             if tc < MIN_TC_TO_RECORD:
                 continue
-            if best is None or tc > best.tc:
-                best = CorroborationResult(
-                    other_event_id=cand.id,
-                    other_camera_id=other_cam.id,
-                    distance_m=distance_m,
-                    delta_t_s=delta_t_s,
-                    t_expected_s=(t_min + t_max) / 2.0,
-                    t_min_s=t_min,
-                    t_max_s=t_max,
-                    sigma_s=sigma,
-                    tc=tc,
-                )
+                
+            status = "NO_MATCH"
+            
+            if use_appearance:
+                cand_embedding = get_or_compute_embedding(cand)
+                if source_embedding is None or cand_embedding is None:
+                    status = "INSUFFICIENT_EVIDENCE"
+                else:
+                    similarity = compute_cosine_similarity(source_embedding, cand_embedding)
+                    
+                    # Rule-based threshold logic
+                    # similarity > 0.85 indicates strong classical appearance correlation
+                    if tc >= 0.5 and similarity >= 0.85:
+                        status = "CORROBORATED"
+                    elif tc >= 0.5 and similarity < 0.50:
+                        status = "CONFLICTED"
+                    elif tc >= 0.3:
+                        status = "CANDIDATE"
+                    else:
+                        status = "NO_MATCH"
+            else:
+                # Existing spatial+temporal logic
+                status = "CORROBORATED" if tc >= 0.5 else "CANDIDATE"
+
+            if status in ("NO_MATCH", "INSUFFICIENT_EVIDENCE", "CONFLICTED") and (best is None):
+                # We record these states only if we don't have a better one.
+                best_status = status
+
+            if status in ("CORROBORATED", "CANDIDATE"):
+                if best is None or tc > best.tc:
+                    best = CorroborationResult(
+                        other_event_id=cand.id,
+                        other_camera_id=other_cam.id,
+                        distance_m=distance_m,
+                        delta_t_s=delta_t_s,
+                        t_expected_s=(t_min + t_max) / 2.0,
+                        t_min_s=t_min,
+                        t_max_s=t_max,
+                        sigma_s=sigma,
+                        tc=tc,
+                        appearance_similarity=similarity if use_appearance else None,
+                        representation_type="CLASSICAL_APPEARANCE_DESCRIPTOR" if use_appearance else None,
+                    )
+                    best_status = status
 
     if best is None:
-        return "NO_CORROBORATION", None
+        # If we failed to find any candidate that passed MIN_TC_TO_RECORD,
+        # but the cameras exist, best_status might be NO_MATCH or INSUFFICIENT_EVIDENCE
+        return best_status, None
     
-    return "CORROBORATED", best
+    return best_status, best
 
 
 
@@ -248,6 +293,8 @@ def apply_corroboration(event: Event, db: Session) -> Optional[CorroborationResu
     event.corroboration_delta_t_s = result.delta_t_s
     event.corroboration_t_expected_s = result.t_expected_s
     event.corroboration_sigma_s = result.sigma_s
+    event.appearance_similarity = result.appearance_similarity
+    event.representation_type = result.representation_type
 
     other_event = db.query(Event).filter(Event.id == result.other_event_id).first()
     if other_event is not None and (
@@ -261,6 +308,8 @@ def apply_corroboration(event: Event, db: Session) -> Optional[CorroborationResu
         other_event.corroboration_delta_t_s = result.delta_t_s
         other_event.corroboration_t_expected_s = result.t_expected_s
         other_event.corroboration_sigma_s = result.sigma_s
+        other_event.appearance_similarity = result.appearance_similarity
+        other_event.representation_type = result.representation_type
 
     db.commit()
     logger.info(

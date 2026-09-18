@@ -6,23 +6,25 @@ GET  /events/{id}/evidence-image — decrypted evidence image for an authorized 
 POST /events           — ingest event from edge sync (edge device auth)
 POST /events/{id}/verify — run integrity verification
 """
-from __future__ import annotations
-
 import json
 import logging
 import os
+import hashlib
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, Form, File
 from fastapi.responses import Response
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from backend.api.rate_limit import limiter
+from backend.config import settings
 from backend.database.session import get_db
-from backend.models.orm import Camera, EvidencePackage, Event
-from backend.security.auth import require_any_role
+from backend.models.orm import Camera, EvidencePackage, Event, User
+from backend.security.auth import audit, require_any_role, require_edge_auth, get_command_filter, enforce_command_access
 from backend.security.evidence_key_wrap import unwrap_key
+from backend.services.evidence_storage import get_evidence_storage, EvidenceNotFoundError, PathTraversalError
 from backend.services.verification import verify_event_integrity
 from shared.crypto import aes_gcm_decrypt
 from shared.schemas import (
@@ -38,16 +40,24 @@ router = APIRouter(prefix="/events", tags=["events"])
 @router.get("", response_model=List[EventResponse])
 async def list_events(
     camera_id: Optional[str] = Query(None),
+    stream_id: Optional[str] = Query(None),
     decision_state: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
     db: Session = Depends(get_db),
+    _user: User = Depends(require_any_role),
 ):
     q = db.query(Event)
+    command_filter = get_command_filter(_user)
+    if command_filter:
+        q = q.join(Camera).filter(Camera.owning_command_id == command_filter)
+        
     if camera_id:
         q = q.filter(Event.camera_id == camera_id)
+    if stream_id:
+        q = q.filter(Event.stream_id == stream_id)
     if decision_state:
         q = q.filter(Event.decision_state == decision_state)
     if event_type:
@@ -62,16 +72,19 @@ async def list_events(
 async def get_event(
     event_id: str,
     db: Session = Depends(get_db),
-    _user = Depends(require_any_role),
+    _user: User = Depends(require_any_role),
 ):
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+        
+    enforce_command_access(_user, event.camera.owning_command_id)
     return _event_to_response(event, db)
 
 
 @router.get("/{event_id}/evidence-image")
 async def get_evidence_image(
+    request: Request,
     event_id: str,
     db: Session = Depends(get_db),
     _user = Depends(require_any_role),
@@ -95,30 +108,51 @@ async def get_evidence_image(
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    if not event.evidence_clip_ref:
-        raise HTTPException(status_code=404, detail="This event has no evidence clip")
-
-    path = event.evidence_clip_ref
-    
-    # Path traversal protection
-    normalized_path = os.path.normpath(path)
-    if ".." in normalized_path.split(os.sep) or os.path.isabs(normalized_path):
-        raise HTTPException(status_code=400, detail="Invalid path in evidence reference.")
         
-    if not os.path.exists(path):
+    enforce_command_access(_user, event.camera.owning_command_id)
+        
+    if event.storage_status not in (None, "AVAILABLE"):
+        raise HTTPException(status_code=404, detail=f"Evidence is not available (status: {event.storage_status})")
+
+    # Use object_key if available (WP-3.3), else fallback to legacy clip ref
+    ref = event.object_key or event.evidence_clip_ref
+    if not ref:
+        raise HTTPException(status_code=404, detail="This event has no evidence clip reference")
+        
+    storage = get_evidence_storage()
+    
+    # If the storage provider supports signed URLs, redirect the client directly.
+    # Note: If the object is application-encrypted (.jpg.enc), the client will receive
+    # the encrypted bytes and must decrypt them. If this is an issue, the backend could
+    # stream and decrypt via get_object(), but generating a signed URL is the WP-3.3 preferred path.
+    if event.storage_provider != "local":
+        url = storage.generate_signed_url(ref, expires_in=settings.EVIDENCE_SIGNED_URL_TTL_SECONDS)
+        if url:
+            audit(db, "EVIDENCE_URL_GENERATED", user_id=_user.id, ip_address=request.client.host if hasattr(request, 'client') and request.client else "unknown",
+                  resource_type="Event", resource_id=event_id)
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url=url, status_code=307)
+
+    try:
+        raw = storage.get_object(ref)
+    except PathTraversalError as exc:
+        logger.warning(f"Path traversal blocked for event {event_id}: {exc}")
+        raise HTTPException(status_code=400, detail="Invalid path in evidence reference.")
+    except EvidenceNotFoundError as exc:
+        logger.warning(f"Evidence not found for event {event_id}: {exc}")
+        # If the DB says it's AVAILABLE but we can't find it, it's MISSING.
+        if event.storage_status == "AVAILABLE":
+            event.storage_status = "MISSING"
+            db.commit()
+            
         raise HTTPException(
             status_code=404,
-            detail=(
-                "Evidence file not found on this server's filesystem. This endpoint only "
-                "works when the backend and edge device share a filesystem (the current "
-                "single-machine demo deployment) — see docs/LIMITATIONS.md."
-            ),
+            detail="Evidence file not found on the storage backend."
         )
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
 
-    with open(path, "rb") as f:
-        raw = f.read()
-
-    if path.endswith(".jpg.enc"):
+    if ref.endswith(".jpg.enc"):
         camera = db.query(Camera).filter(Camera.id == event.camera_id).first()
         if not camera or not camera.evidence_key_wrapped:
             raise HTTPException(
@@ -144,15 +178,19 @@ async def get_evidence_image(
         # — see docs/LIMITATIONS.md) — served as-is, not an error case.
         image_bytes = raw
 
+    audit(db, "EVIDENCE_DECRYPTED", user_id=_user.id, ip_address=request.client.host if hasattr(request, 'client') and request.client else "unknown",
+          resource_type="Event", resource_id=event_id)
+
     return Response(content=image_bytes, media_type="image/jpeg")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute")  # Security: rate-limit edge ingest endpoint
 async def ingest_event(
+    request: Request,           # Required by slowapi to extract client IP
     payload: EventCreateRequest,
     db: Session = Depends(get_db),
-    # MVP: Edge authentication disabled for local demo. 
-    # In production, this validates mTLS or device token.
+    edge_identity = Depends(require_edge_auth),
 ):
     """
     Called by edge sync client when connectivity is restored.
@@ -162,10 +200,28 @@ async def ingest_event(
 
     ep = payload.evidence_package
 
+    # If mTLS identity is present, force the edge_device_id to match the authenticated identity.
+    # We do NOT trust the edge_device_id provided inside the JSON payload if mTLS is active.
+    authenticated_edge_id = edge_identity.edge_id if edge_identity else payload.edge_device_id
+
+    if authenticated_edge_id != ep.camera_id:
+        logger.warning(f"[Security] Cross-camera submission attempt blocked | auth_edge_id={authenticated_edge_id} target_camera_id={ep.camera_id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated edge identity does not match evidence camera_id"
+        )
+        
+    if payload.edge_device_id != ep.camera_id:
+        logger.warning(f"[Security] Payload inconsistency blocked | edge_device_id={payload.edge_device_id} target_camera_id={ep.camera_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payload edge_device_id must match evidence camera_id"
+        )
+
     # Ensure camera exists (create stub if unknown, mark for review)
     camera = db.query(Camera).filter(Camera.id == ep.camera_id).first()
     if not camera:
-        logger.warning(f"Event from unknown camera {ep.camera_id} — creating stub camera")
+        logger.warning(f"[Ingest] Event from unknown camera | camera_id={ep.camera_id} event_id={ep.event_id} kid={ep.kid}")
         camera = Camera(id=ep.camera_id, name=f"Unknown-{ep.camera_id[:8]}", location="unknown")
         db.add(camera)
         db.flush()
@@ -175,7 +231,7 @@ async def ingest_event(
         from backend.models.orm import Zone
         zone = db.query(Zone).filter(Zone.id == ep.zone_id).first()
         if not zone:
-            logger.warning(f"Event from unknown zone {ep.zone_id} — creating stub zone")
+            logger.warning(f"[Ingest] Event from unknown zone | zone_id={ep.zone_id} event_id={ep.event_id} camera_id={ep.camera_id}")
             zone = Zone(
                 id=ep.zone_id,
                 camera_id=ep.camera_id,
@@ -187,30 +243,38 @@ async def ingest_event(
             db.add(zone)
             db.flush()
 
+    # Check if event already exists (prevents crash from mock edge simulator re-sending same events)
+    if db.query(Event).filter(Event.id == ep.event_id).first():
+        logger.info(f"[Ingest] Duplicate detected, skipping ingest | event_id={ep.event_id} camera_id={ep.camera_id} kid={ep.kid}")
+        return {"event_id": ep.event_id, "verified": True, "status": "duplicate"}
+
     # Create event record
     event = Event(
         id=ep.event_id,
         camera_id=ep.camera_id,
+        stream_id=ep.stream_id,
         zone_id=ep.zone_id,
         timestamp=ep.timestamp,
-        event_type=str(ep.event_type) if ep.event_type else None,
-        detection_class=str(ep.detection_class),
+        video_time=ep.video_time,
+        event_type=ep.event_type,
+        detection_class=ep.detection_class,
         confidence=ep.confidence,
-        scene_condition=str(ep.scene_condition),
-        camera_health_state=str(ep.camera_health_state),
-        decision_state=str(ep.decision_state),
+        scene_condition=ep.scene_condition,
+        camera_health_state=ep.camera_health_state,
+        decision_state=ep.decision_state,
         decision_reason=ep.decision_reason,
         track_id=ep.track_id,
-        severity=str(ep.severity) if ep.severity else None,
-        direction=str(ep.direction) if ep.direction else None,
+        severity=ep.severity,
+        direction=ep.direction,
         rule=ep.rule,
         rule_value=ep.rule_value,
         plate_text=ep.plate_text,
         plate_confidence=ep.plate_confidence,
-        vehicle_subtype=str(ep.vehicle_subtype) if ep.vehicle_subtype else None,
+        vehicle_subtype=ep.vehicle_subtype,
         face_match_person_id=ep.face_match_person_id,
         face_match_person_name=ep.face_match_person_name,
         face_match_confidence=ep.face_match_confidence,
+        evidence_clip_ref=ep.evidence_clip_ref,
         bbox_x=ep.bbox_x,
         bbox_y=ep.bbox_y,
         bbox_w=ep.bbox_w,
@@ -220,28 +284,37 @@ async def ingest_event(
         score_s=ep.score_s,
         score_h=ep.score_h,
         score_r=ep.score_r,
-        evidence_clip_ref=ep.evidence_clip_ref,
-        edge_device_id=payload.edge_device_id,
+        edge_device_id=authenticated_edge_id,
         sequence_number=payload.sequence_number,
         synced_from_edge=True,
     )
     db.add(event)
     db.flush()
 
-    # Store evidence package
-    evidence = EvidencePackage(
-        event_id=ep.event_id,
-        sha256=ep.hash or "",
-        digital_signature=ep.signature or "",
-        previous_hash=ep.previous_hash,
-        current_hash=ep.hash or "",
-        raw_package_json=json.dumps(ep.model_dump(), default=str),
-    )
-    db.add(evidence)
+    # Store evidence package — idempotency guard prevents duplicate rows
+    # if the edge retries an event that was already partially ingested.
+    evidence = db.query(EvidencePackage).filter(EvidencePackage.event_id == ep.event_id).first()
+    if not evidence:
+        evidence = EvidencePackage(
+            event_id=ep.event_id,
+            schema_version=ep.schema_version,
+            crypto_version=ep.crypto_version,
+            kid=ep.kid,
+            sha256=ep.hash or "",
+            digital_signature=ep.signature or "",
+            previous_hash=ep.previous_hash,
+            current_hash=ep.hash or "",
+            raw_package_json=json.dumps(ep.model_dump(), default=str),
+        )
+        db.add(evidence)
+    else:
+        logger.debug(
+            f"EvidencePackage for event {ep.event_id} already exists — skipping insert "
+            f"(camera_id={ep.camera_id})"
+        )
 
-    # Server-side verification
-    camera_pubkey = camera.public_key_pem
-    vr = verify_event_integrity(ep, camera_pubkey, db, payload.edge_device_id, payload.sequence_number)
+    # 4) Tamper-evident verification (Phase 2 core mechanic)
+    vr = verify_event_integrity(ep, db, payload.edge_device_id, payload.sequence_number)
     evidence.hash_valid = vr.hash_valid
     evidence.signature_valid = vr.signature_valid
     evidence.chain_valid = vr.chain_valid
@@ -249,7 +322,11 @@ async def ingest_event(
     evidence.verified_at = datetime.utcnow()
 
     db.commit()
-    logger.info(f"Event {ep.event_id} ingested. Verified: {evidence.verified_ok}")
+    logger.info(
+        f"Event ingested: event_id={ep.event_id} camera_id={ep.camera_id} "
+        f"edge_device_id={payload.edge_device_id} seq={payload.sequence_number} "
+        f"verified={evidence.verified_ok} decision={ep.decision_state}"
+    )
 
     # Cross-camera corroboration (backend/services/cross_camera.py) — real,
     # computed now because it needs other cameras' already-committed events,
@@ -265,6 +342,31 @@ async def ingest_event(
     # Check escalation eligibility
     check_and_escalate(event, db)
 
+    # Watchlist-driven threat escalation (CRITICAL/SEVERE face matches only).
+    # BUG FIX: was person.subject_name — WatchlistPerson.name is the correct field.
+    if event.face_match_person_id:
+        from backend.models.orm import WatchlistPerson
+        from backend.services.escalation import dispatch_webhook_alert
+        person = db.query(WatchlistPerson).filter(
+            WatchlistPerson.id == event.face_match_person_id
+        ).first()
+        if person and person.threat_level in ("CRITICAL", "SEVERE"):
+            logger.info(
+                f"Watchlist match dispatch: event_id={event.id} "
+                f"camera_id={event.camera_id} person_id={person.id} "
+                f"threat_level={person.threat_level}"
+                # Do NOT log person.name — biometric PII; do NOT log credentials
+            )
+            dispatch_webhook_alert({
+                "event_id": event.id,
+                "person_id": person.id,
+                # FIXED: .name is the correct WatchlistPerson field (not .subject_name)
+                "subject_name": person.name,
+                "threat_level": person.threat_level,
+                "camera_id": event.camera_id,
+                "timestamp": event.timestamp.isoformat() if event.timestamp else None,
+            }, person.id)
+
     # Push to live dashboard
     from backend.api.websocket import broadcast_event
     import asyncio
@@ -273,8 +375,97 @@ async def ingest_event(
     return {"event_id": ep.event_id, "verified": evidence.verified_ok}
 
 
+@router.post("/{event_id}/evidence", status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute")
+async def ingest_evidence(
+    request: Request,
+    event_id: str,
+    expected_hash: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    edge_identity = Depends(require_edge_auth),
+):
+    """
+    WP-3.3: Explicit evidence binary upload via multipart form-data.
+    Must be called after the main /events metadata ingest.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    # WP-3.3 Edge identity enforcement
+    authenticated_edge_id = edge_identity.edge_id if edge_identity else None
+    if authenticated_edge_id and event.edge_device_id != authenticated_edge_id:
+        raise HTTPException(status_code=403, detail="Not authorized to upload evidence for this event")
+        
+    if event.storage_status == "AVAILABLE":
+        return {"status": "already_available"}
+        
+    event.storage_status = "UPLOADING"
+    db.commit()
+
+    # WP-3.3 Content-Type validation
+    allowed_types = {"image/jpeg", "application/octet-stream"}
+    if file.content_type not in allowed_types:
+        event.storage_status = "FAILED"
+        event.failure_reason = f"Unsupported Media Type: {file.content_type}"
+        db.commit()
+        raise HTTPException(status_code=415, detail=f"Unsupported Media Type. Expected {', '.join(allowed_types)}")
+
+    # Read the upload BEFORE the try block that converts all exceptions to 500.
+    # The HTTPException raised here (413, 415) must propagate directly to FastAPI
+    # and must NOT be caught and downgraded by the generic handler below.
+    content = await file.read()
+    if len(content) > settings.MAX_UPLOAD_SIZE_BYTES:
+        event.storage_status = "FAILED"
+        event.failure_reason = f"Upload size {len(content)} exceeds limit {settings.MAX_UPLOAD_SIZE_BYTES}"
+        db.commit()
+        raise HTTPException(status_code=413, detail="Evidence file too large")
+
+    try:
+        # Naming convention: evidence/{camera_id}/{date}/{event_id}.jpg.enc
+        date_str = event.timestamp.strftime("%Y%m%d")
+        ext = ".jpg.enc" if event.evidence_clip_ref and event.evidence_clip_ref.endswith(".enc") else ".jpg"
+
+        # Validate binary characteristics
+        if ext == ".jpg":
+            if not content.startswith(b'\xff\xd8\xff'):
+                raise ValueError("Invalid file format. Magic bytes do not match JPEG.")
+
+        calculated_hash = hashlib.sha256(content).hexdigest()
+        if calculated_hash != expected_hash:
+            raise ValueError(f"Content hash mismatch. Expected {expected_hash}, got {calculated_hash}")
+
+        object_key = f"evidence/{event.camera_id}/{date_str}/{event_id}{ext}"
+
+        storage = get_evidence_storage()
+        storage.put_object(object_key, content, content_type=file.content_type or "application/octet-stream")
+
+        event.object_key = object_key
+        event.storage_provider = settings.OBJECT_STORAGE_PROVIDER or "local"
+        event.content_hash = calculated_hash
+        event.content_size = len(content)
+        event.storage_status = "AVAILABLE"
+        event.uploaded_at = datetime.utcnow()
+        event.failure_reason = None
+        db.commit()
+
+        return {"status": "success", "object_key": object_key}
+
+    except Exception as exc:
+        event.storage_status = "FAILED"
+        event.failure_reason = str(exc)
+        db.commit()
+        logger.error(f"Failed to ingest evidence for event {event_id}: {exc}")
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Failed to store evidence")
+
+
 @router.post("/{event_id}/verify", response_model=VerificationResponse)
+@limiter.limit("30/minute")  # Security: prevent brute-force verify/replay attacks
 async def verify_event(
+    request: Request,  # Required by slowapi
     event_id: str,
     db: Session = Depends(get_db),
     _user = Depends(require_any_role),
@@ -291,7 +482,7 @@ async def verify_event(
 
     camera = db.query(Camera).filter(Camera.id == event.camera_id).first()
     ep = EPSchema(**json.loads(evidence.raw_package_json))
-    vr = verify_event_integrity(ep, camera.public_key_pem if camera else None, db, event.edge_device_id, event.sequence_number)
+    vr = verify_event_integrity(ep, db, event.edge_device_id, event.sequence_number)
 
     # Update stored verification state
     evidence.hash_valid = vr.hash_valid
@@ -300,6 +491,9 @@ async def verify_event(
     evidence.verified_ok = vr.hash_valid and vr.signature_valid and vr.chain_valid
     evidence.verified_at = datetime.utcnow()
     db.commit()
+
+    audit(db, "EVIDENCE_VERIFIED", user_id=_user.id, ip_address=request.client.host if hasattr(request, 'client') and request.client else "unknown",
+          resource_type="Event", resource_id=event_id, detail=f"verified_ok={evidence.verified_ok}")
 
     return vr
 
@@ -311,7 +505,9 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
     return EventResponse(
         event_id=event.id,
         camera_id=event.camera_id,
+        stream_id=event.stream_id if isinstance(event.stream_id, str) else None,
         timestamp=event.timestamp,
+        video_time=event.video_time,
         event_type=event.event_type,
         detection_class=event.detection_class,
         confidence=event.confidence,
@@ -322,16 +518,27 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         zone_id=event.zone_id or "",
         track_id=event.track_id,
         severity=event.severity,
+        schema_version=ep.schema_version if ep else None,
+        crypto_version=ep.crypto_version if ep else None,
         hash=ep.sha256 if ep else None,
         signature=ep.digital_signature if ep else None,
+        kid=ep.kid if ep else None,
         verified_ok=ep.verified_ok if ep else None,
         edge_device_id=event.edge_device_id,
         corroboration_score=event.corroboration_score,
         corroborated_by_event_id=event.corroborated_by_event_id,
+        corroborating_camera_id=(
+            event.corroborating_camera_id
+            if isinstance(event.corroborating_camera_id, str)
+            else None
+        ),
         corroboration_distance_m=event.corroboration_distance_m,
         corroboration_delta_t_s=event.corroboration_delta_t_s,
         corroboration_t_expected_s=event.corroboration_t_expected_s,
         corroboration_sigma_s=event.corroboration_sigma_s,
+        corroboration_status=event.corroboration_status,
+        appearance_similarity=event.appearance_similarity,
+        representation_type=event.representation_type,
         vehicle_subtype=event.vehicle_subtype,
         face_match_person_id=event.face_match_person_id,
         face_match_person_name=event.face_match_person_name,
@@ -347,4 +554,10 @@ def _event_to_response(event: Event, db: Session) -> EventResponse:
         score_r=event.score_r,
         blockchain_tx_id=alert.blockchain_tx_id if alert else None,
         blockchain_status=alert.blockchain_status if alert else None,
+        storage_provider=event.storage_provider,
+        storage_status=event.storage_status,
+        content_hash=event.content_hash,
+        content_size=event.content_size,
+        uploaded_at=event.uploaded_at,
+        failure_reason=event.failure_reason,
     )

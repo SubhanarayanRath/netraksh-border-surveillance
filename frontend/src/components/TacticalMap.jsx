@@ -24,6 +24,7 @@ const HEALTH_COLORS = {
   OK: '#4ade80',
   DEGRADED: '#fbbf24',
   FAILED: '#f87171',
+  UNKNOWN: '#64748b',
 };
 
 function markerIcon(color, pulsing) {
@@ -113,22 +114,11 @@ export default function TacticalMap({ alerts = [] }) {
     markersRef.current.forEach((m) => map.removeLayer(m));
     markersRef.current = [];
 
-    const withCoords = cameras.map(c => {
-      if (c.latitude != null && c.longitude != null) return c;
-      // Fallback for demo cameras if local DB is missing coordinates
-      if (c.camera_id === 'cam-border-01' || c.id === 'cam-border-01') return { ...c, latitude: 31.6050, longitude: 74.6050 };
-      if (c.camera_id === 'cam-checkpoint-01' || c.id === 'cam-checkpoint-01') return { ...c, latitude: 31.6025, longitude: 74.6025 };
-      if (c.camera_id === 'cam-perimeter-03' || c.id === 'cam-perimeter-03') return { ...c, latitude: 31.6030, longitude: 74.6030 };
-      return c;
-    }).filter((c) => c.latitude != null && c.longitude != null);
+    const withCoords = cameras.filter((c) => c.latitude != null && c.longitude != null);
     const activeAlertCameraIds = new Set(alerts.filter((a) => !a.isMock && !a.acknowledged_at).map((a) => a.camera_id));
 
-    withCoords.forEach((cam, index) => {
-      // Fallback to green/yellow if edge telemetry is missing locally, to match the UI spec
-      let color = HEALTH_COLORS[cam.health_state];
-      if (!color) {
-        color = index === 0 ? '#4ade80' : '#fbbf24'; // Green, then Yellow
-      }
+    withCoords.forEach((cam) => {
+      const color = HEALTH_COLORS[cam.health_state] || HEALTH_COLORS.UNKNOWN;
       const pulsing = activeAlertCameraIds.has(cam.camera_id);
       const marker = L.marker([cam.latitude, cam.longitude], { icon: markerIcon(color, pulsing) }).addTo(map);
       marker.bindPopup(
@@ -148,13 +138,7 @@ export default function TacticalMap({ alerts = [] }) {
     }
   }, [cameras, alerts]);
 
-  const withCoordsCount = cameras.map(c => {
-    if (c.latitude != null && c.longitude != null) return c;
-    if (c.camera_id === 'cam-border-01' || c.id === 'cam-border-01') return { ...c, latitude: 31.6050, longitude: 74.6050 };
-    if (c.camera_id === 'cam-checkpoint-01' || c.id === 'cam-checkpoint-01') return { ...c, latitude: 31.6025, longitude: 74.6025 };
-    if (c.camera_id === 'cam-perimeter-03' || c.id === 'cam-perimeter-03') return { ...c, latitude: 31.6030, longitude: 74.6030 };
-    return c;
-  }).filter((c) => c.latitude != null && c.longitude != null).length;
+  const withCoordsCount = cameras.filter((c) => c.latitude != null && c.longitude != null).length;
 
   return (
     <div className="w-full h-full relative rounded overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.1)' }}>
