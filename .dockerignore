@@ -9,7 +9,6 @@ frontend/dist
 # The runtime image copies these in now for the unified prototype demo.
 tests/
 docs/
-yolov8n.pt
 .pytest_cache
 __pycache__
 *.pyc

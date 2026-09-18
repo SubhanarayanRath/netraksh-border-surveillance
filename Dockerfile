@@ -46,6 +46,7 @@ COPY edge/ ./edge/
 COPY demo/ ./demo/
 COPY certs/ ./certs/
 COPY scripts/ ./scripts/
+COPY yolov8n.pt ./
 COPY start.sh ./
 RUN chmod +x start.sh
 
