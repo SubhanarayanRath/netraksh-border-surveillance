@@ -22,6 +22,8 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN ["npm", "ci"]
 COPY frontend/ ./
+ARG VITE_BACKEND_URL
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
 RUN ["npm", "run", "build"]
 
 # --- Stage 2: the actual runtime image ---
