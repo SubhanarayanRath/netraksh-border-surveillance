@@ -551,6 +551,7 @@ export default function Dashboard() {
                   // Keep the existing videoSessionId
                   setSessionStartTime(Date.now());
                   setPlaybackEnded(false);
+                  setLatestEvent(null);
                 } else {
                   authFetch('/api/dashboard/video/scenario', {
                     method: 'POST',

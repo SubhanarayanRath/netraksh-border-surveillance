@@ -499,7 +499,8 @@ def run_demo_pipeline(
             if _scenario.get("video_session_id"):
                 logger.info("[DemoRunner] Uploaded video completed; waiting for the next session...")
                 while not _scenario.get("should_restart"):
-                    if _scenario.get("current") == "normal":
+                    # Only restart if scenario is normal AND video_time explicitly returns to 0 (replay)
+                    if _scenario.get("current") == "normal" and _scenario.get("video_time", -1) == 0:
                         logger.info("[DemoRunner] Resume requested on a completed session. Restarting pipeline to replay...")
                         break
                     time.sleep(0.25)

@@ -240,6 +240,9 @@ export default function VideoFeed({
   // Lightweight render-tick to re-evaluate live tracks freshness
   const [tick, setTick] = useState(0);
 
+  // Explicit React playback state for scanner and UI
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+
   // ─── LOCAL DETERMINISTIC DEMO CACHE LOGIC ────────────────────────────────────
   const [demoCache, setDemoCache] = useState(null);
 
@@ -405,7 +408,10 @@ export default function VideoFeed({
 
     const syncTime = () => {
       // Continuously synchronize the exact video state to the backend
-      if (!video.paused && !video.ended && !playbackEnded && demoScenario !== 'paused') {
+      if (video.ended || playbackEnded) {
+        return; // Natural end: do not send pause heartbeat
+      }
+      if (!video.paused && demoScenario !== 'paused') {
         onStartAnalysis?.(video.currentTime);
       } else {
         onPauseAnalysis?.(video.currentTime);
@@ -477,12 +483,23 @@ export default function VideoFeed({
         preload="metadata"
         onLoadedMetadata={(e) => {
           updateRect();
-          if (e.target.paused) onPauseAnalysis?.(e.target.currentTime);
+          if (e.target.paused && !e.target.ended) onPauseAnalysis?.(e.target.currentTime);
         }}
-        onPlay={(e) => onStartAnalysis?.(e.target.currentTime)}
-        onPause={(e) => onPauseAnalysis?.(e.target.currentTime)}
+        onPlay={(e) => {
+          setIsVideoPlaying(true);
+          onStartAnalysis?.(e.target.currentTime);
+        }}
+        onPause={(e) => {
+          setIsVideoPlaying(false);
+          if (!e.target.ended && !playbackEnded) {
+            onPauseAnalysis?.(e.target.currentTime);
+          }
+        }}
         onSeeked={(e) => onStartAnalysis?.(e.target.currentTime)}
-        onEnded={onVideoEnded}
+        onEnded={(e) => {
+          setIsVideoPlaying(false);
+          onVideoEnded?.(e);
+        }}
         onError={() => {
           setVideoError(true);
           console.error('Unable to load the selected video');
@@ -504,7 +521,7 @@ export default function VideoFeed({
 
 
       {/* ── Scanline aesthetic effect ── */}
-      <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none' }} />
+      <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none', animationPlayState: isVideoPlaying ? 'running' : 'paused' }} />
 
       {/* ── SVG bounding-box overlay ──────────────────────────────────────────
           The SVG is sized to the full container (100%×100%) but all drawing
