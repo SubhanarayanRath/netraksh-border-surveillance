@@ -76,7 +76,7 @@ async def report_camera_health(
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
         logger.warning(f"Health report from unknown camera {camera_id} — creating stub camera")
-        camera = Camera(id=camera_id, name=f"Unknown-{camera_id[:8]}", location="unknown")
+        camera = Camera(id=camera_id, name="Unknown / Unregistered Camera", location="unknown")
         db.add(camera)
         db.flush()
 

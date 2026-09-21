@@ -245,6 +245,7 @@ def _migrate_add_missing_columns(test_engine=None) -> None:
             "hash_valid": "BOOLEAN",
             "signature_valid": "BOOLEAN",
             "chain_valid": "BOOLEAN",
+            "chain_status": "VARCHAR(16)",
             "raw_package_json": "TEXT",
             "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         }
@@ -268,6 +269,7 @@ def _migrate_add_missing_columns(test_engine=None) -> None:
         expected_ec_columns = {
             "kid": "VARCHAR(64)",
             "chain_valid": "BOOLEAN",
+            "chain_status": "VARCHAR(16)",
             "verified_at": "TIMESTAMP",
         }
         missing_ec = [

@@ -111,13 +111,15 @@ async def get_evidence_image(
         
     enforce_command_access(_user, event.camera.owning_command_id)
         
-    if event.storage_status not in (None, "AVAILABLE"):
+    if event.storage_status in ("CREATED", "UPLOADING"):
+        raise HTTPException(status_code=425, detail="Evidence is still synchronizing")
+    elif event.storage_status not in (None, "AVAILABLE"):
         raise HTTPException(status_code=404, detail=f"Evidence is not available (status: {event.storage_status})")
 
-    # Use object_key if available (WP-3.3), else fallback to legacy clip ref
-    ref = event.object_key or event.evidence_clip_ref
+    # Treat object_key as the authoritative backend storage reference.
+    ref = event.object_key
     if not ref:
-        raise HTTPException(status_code=404, detail="This event has no evidence clip reference")
+        raise HTTPException(status_code=425, detail="Evidence binary has not been uploaded yet")
         
     storage = get_evidence_storage()
     
@@ -318,7 +320,8 @@ async def ingest_event(
     evidence.hash_valid = vr.hash_valid
     evidence.signature_valid = vr.signature_valid
     evidence.chain_valid = vr.chain_valid
-    evidence.verified_ok = vr.hash_valid and vr.signature_valid and vr.chain_valid
+    evidence.chain_status = vr.chain_status
+    evidence.verified_ok = vr.hash_valid and vr.signature_valid and vr.chain_status == "VALID"
     evidence.verified_at = datetime.utcnow()
 
     db.commit()
@@ -327,6 +330,18 @@ async def ingest_event(
         f"edge_device_id={payload.edge_device_id} seq={payload.sequence_number} "
         f"verified={evidence.verified_ok} decision={ep.decision_state}"
     )
+
+    # 5) Iterative forward resolution if we just resolved a chain link
+    if evidence.chain_status == "VALID":
+        from backend.services.verification import resolve_pending_chains
+        try:
+            resolve_pending_chains(
+                db, payload.edge_device_id, payload.sequence_number, evidence.current_hash
+            )
+            db.commit()
+        except Exception as exc:
+            logger.error(f"Chain healing failed (non-fatal): {exc}")
+            db.rollback()
 
     # Cross-camera corroboration (backend/services/cross_camera.py) — real,
     # computed now because it needs other cameras' already-committed events,

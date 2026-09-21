@@ -47,7 +47,7 @@ except ImportError:
     # Fallback in case demo module is structurally unavailable
     import uuid as _uuid
     _demo_state: dict = {
-        "scenario": "normal",
+        "scenario": "paused",
         "video_source": None,
         "video_preview": None,
         "video_session_id": None,
@@ -184,8 +184,31 @@ async def get_internal_sync():
     return {
         "video_source": _demo_state.get("video_source"),
         "video_session_id": _demo_state.get("video_session_id"),
-        "scenario": _demo_state.get("scenario", "normal")
+        "scenario": _demo_state.get("scenario", "normal"),
+        "video_time": _demo_state.get("video_time", 0.0),
+        "video_time_updated_at": _demo_state.get("video_time_updated_at", 0.0)
     }
+
+
+@router.post("/video/scenario")
+async def post_video_scenario(
+    payload: dict,
+    _user=Depends(require_operator_or_admin)
+):
+    """
+    Authenticated endpoint for the frontend to control the demo scenario
+    (e.g., play/pause) and update the session ID or video time.
+    """
+    requested = payload.get("scenario")
+    if requested in {"normal", "fog", "failure", "offline", "paused"}:
+        _demo_state["scenario"] = requested
+    if "video_session_id" in payload:
+        _demo_state["video_session_id"] = payload["video_session_id"]
+    if "video_time" in payload:
+        _demo_state["video_time"] = float(payload["video_time"])
+        import time
+        _demo_state["video_time_updated_at"] = time.time()
+    return {"status": "success", "state": _demo_state}
 
 
 # ---------------------------------------------------------------------------
@@ -343,22 +366,9 @@ async def upload_dashboard_video(
         preview_url = "/api/dashboard/video/current/media"
         logger.info("[Dashboard] Serving original MP4 directly (ffmpeg not installed)")
 
-    # --- Update shared demo state so edge runner picks up new source ---
-    # The demo_runner.py polls GET /demo/scenario every 5s; a changed
-    # video_session_id triggers a pipeline restart on the new video_source.
-    _demo_state["video_source"] = str(Path("demo") / "videos" / target_name)
-    _demo_state["video_preview"] = (
-        str(Path("demo") / "videos" / preview_name)
-        if preview_url and preview_path.exists()
-        else None
-    )
-    _demo_state["video_session_id"] = new_session_id
-
-    logger.info(
-        f"[Dashboard] Demo state updated: source={_demo_state['video_source']} "
-        f"session={new_session_id}"
-    )
-
+    # Do NOT update shared demo state here so edge runner does not start immediately.
+    # The frontend will call /analyze to trigger playback.
+    
     if preview_url:
         return {
             "status": "ok",
@@ -385,3 +395,46 @@ async def upload_dashboard_video(
             "Upload an MP4 file for in-browser video playback."
         ),
     }
+
+# ---------------------------------------------------------------------------
+# POST /api/dashboard/video/analyze
+# ---------------------------------------------------------------------------
+from pydantic import BaseModel
+
+class AnalyzeRequest(BaseModel):
+    session_id: str
+    source_name: str
+    preview_name: str | None = None
+
+@router.post("/video/analyze", status_code=status.HTTP_200_OK)
+async def analyze_dashboard_video(
+    req: AnalyzeRequest,
+    _user=Depends(require_operator_or_admin),
+):
+    """
+    Trigger the Edge processor to begin analysis of an uploaded video.
+    This separates upload (buffering/transcoding) from actual playback/analysis,
+    allowing the frontend to stay paused until the user hits Play.
+    """
+    target_name = req.source_name
+    preview_name = req.preview_name
+
+    vdir = _videos_dir()
+    target_path = vdir / target_name
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Video file not found. Please upload again.")
+
+    _demo_state["video_source"] = str(Path("demo") / "videos" / target_name)
+    _demo_state["video_preview"] = (
+        str(Path("demo") / "videos" / preview_name)
+        if preview_name and (vdir / preview_name).exists()
+        else None
+    )
+    _demo_state["video_session_id"] = req.session_id
+
+    logger.info(
+        f"[Dashboard] Analysis triggered: source={_demo_state['video_source']} "
+        f"session={req.session_id}"
+    )
+
+    return {"status": "ok", "message": "Analysis started"}

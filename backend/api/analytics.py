@@ -67,6 +67,8 @@ def _window_events(
 ):
     """Base query: events within the time window."""
     q = db.query(Event).filter(Event.timestamp >= since, Event.timestamp <= until)
+    # REQUIREMENT 6: exclude system heartbeat/ABSTAIN events from real analytics
+    q = q.filter(Event.decision_state != 'ABSTAIN')
     if user:
         command_filter = get_command_filter(user)
         if command_filter:

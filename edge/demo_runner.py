@@ -95,12 +95,20 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
                 new_scenario = data.get("scenario", "normal")
                 new_source = data.get("video_source")
                 new_session_id = data.get("video_session_id")
+                new_video_time = data.get("video_time")
 
                 if new_scenario != _scenario["current"]:
                     logger.info(
                         f"[DemoRunner] Scenario changed: {_scenario['current']} → {new_scenario}"
                     )
                     _scenario["current"] = new_scenario
+                
+                if new_video_time is not None:
+                    _scenario["video_time"] = float(new_video_time)
+                if "video_time_updated_at" in data:
+                    _scenario["video_time_updated_at"] = float(data["video_time_updated_at"])
+                elif new_video_time is not None:
+                    _scenario["video_time_updated_at"] = time.time()
                 
                 # If a new video source is provided, and it's different, trigger restart
                 if new_source and (
@@ -146,6 +154,93 @@ class DemoAwareEdgePipeline(EdgePipeline):
     evidence chain, sync — is inherited untouched from EdgePipeline.
     """
 
+    def __init__(self, config: dict):
+        super().__init__(config)
+        
+        self._vtest_cache = None
+        self._cache_cursor = 0
+        if "vtest.mp4" in config.get("video_source", ""):
+            cache_path = Path("demo/videos/vtest_telemetry.json")
+            if cache_path.exists():
+                import json
+                try:
+                    with open(cache_path, "r") as f:
+                        self._vtest_cache = json.load(f)
+                    logger.info(f"[DemoRunner] Loaded {len(self._vtest_cache)} frames of deterministic telemetry for vtest.mp4")
+                    
+                    # self._original_detect = self.detector.detect_and_track
+                    # def _mock_detect(frame, condition, confidence_threshold, existing_trajectories=None):
+                    #     return self._get_cached_tracks()
+                    # self.detector.detect_and_track = _mock_detect
+                except Exception as e:
+                    logger.error(f"[DemoRunner] Failed to load vtest telemetry cache: {e}")
+
+    def _get_cached_tracks(self):
+        browser_time = _scenario.get("video_time", 0.0)
+        browser_updated = _scenario.get("video_time_updated_at", time.time())
+        is_paused = _scenario.get("current") == "paused"
+        
+        if is_paused:
+            video_time = browser_time
+        else:
+            video_time = browser_time + (time.time() - browser_updated)
+        
+        if not self._vtest_cache:
+            return []
+            
+        # Fast linear search from cursor since time moves forward monotonically mostly
+        closest = self._vtest_cache[self._cache_cursor]
+        min_diff = abs(closest["video_time"] - video_time)
+        
+        for i in range(self._cache_cursor, len(self._vtest_cache)):
+            diff = abs(self._vtest_cache[i]["video_time"] - video_time)
+            if diff < min_diff:
+                min_diff = diff
+                closest = self._vtest_cache[i]
+                self._cache_cursor = i
+            elif diff > min_diff:
+                # Diff is increasing, we passed the minimum
+                break
+                
+        # If time wrapped around (seek backwards), reset cursor
+        if video_time < closest["video_time"] - 1.0:
+            self._cache_cursor = 0
+            
+        from shared.schemas import TrackData, BoundingBox
+        from shared.constants import DetectionClass
+        
+        tracks = []
+        for t in closest["tracks"]:
+            cls_map = {"person": DetectionClass.PERSON, "vehicle": DetectionClass.VEHICLE}
+            det_class = cls_map.get(t["detection_class"], DetectionClass.UNKNOWN)
+            
+            w = getattr(self, "_last_frame_width", 768)
+            h = getattr(self, "_last_frame_height", 576)
+            
+            bbox = BoundingBox(
+                x1=t["bbox_x"] * w,
+                y1=t["bbox_y"] * h,
+                x2=(t["bbox_x"] + t["bbox_w"]) * w,
+                y2=(t["bbox_y"] + t["bbox_h"]) * h
+            )
+            
+            traj = []
+            if hasattr(self, "_trajectories") and t["track_id"] in self._trajectories:
+                traj = list(self._trajectories[t["track_id"]])
+            traj.append(bbox.centroid)
+            if len(traj) > 50:
+                traj = traj[-50:]
+            
+            tracks.append(TrackData(
+                track_id=t["track_id"],
+                detection_class=det_class,
+                bbox=bbox,
+                confidence=t["confidence"],
+                trajectory=traj
+            ))
+            
+        return tracks
+
     def _notify_backend_normal(self) -> None:
         try:
             import httpx
@@ -173,6 +268,20 @@ class DemoAwareEdgePipeline(EdgePipeline):
         """
         global _failure_until
         scenario = _scenario["current"]
+
+        # -------------------------------------------------------------
+        # SYNCHRONIZATION FIX:
+        # Override OpenCV's internal video_time with the authoritative
+        # extrapolated browser clock so that telemetry payloads match exactly.
+        # -------------------------------------------------------------
+        browser_time = _scenario.get("video_time", 0.0)
+        browser_updated = _scenario.get("video_time_updated_at", time.time())
+        if scenario == "paused":
+            current_time = browser_time
+        else:
+            current_time = browser_time + (time.time() - browser_updated)
+        
+        meta.video_time_seconds = current_time
 
         if scenario == "failure":
             now = time.time()
@@ -204,6 +313,13 @@ class DemoAwareEdgePipeline(EdgePipeline):
             # evidence while using detection_frame for YOLO).
             super()._process_frame(fog_frame, meta)
 
+        elif scenario == "paused":
+            _failure_until = 0.0
+            # Frame passes through, but adapter is paused so it just spins on old frames
+            # or doesn't produce any new ones. We skip YOLO/tracking and telemetry here
+            # so that no new events are generated while the video is paused.
+            pass
+
         else:
             _failure_until = 0.0
             # normal / offline — pass frame through unchanged
@@ -219,19 +335,57 @@ class DemoAwareEdgePipeline(EdgePipeline):
         # This runs in a daemon thread alongside the real sync loop thread
         # that EdgePipeline.start() itself will spawn.
         def _offline_watcher():
+            # Wait for EdgePipeline to flip _running to True during its start()
+            # instead of exiting during the small startup window.
+            while not getattr(self, "_running", False):
+                time.sleep(0.05)
+
             last = None
-            while True:
+            last_applied_target = None
+            while getattr(self, "_running", True):
                 s = _scenario["current"]
                 if s != last:
                     want_offline = (s == "offline")
                     try:
+                        logger.info("PAUSE_DIAG: entering set_simulate_offline")
                         self.sync_client.set_simulate_offline(want_offline)
+                        logger.info("PAUSE_DIAG: set_simulate_offline completed")
+                        if hasattr(self, 'adapter'):
+                            logger.info("PAUSE_DIAG: about to set adapter.paused")
+                            self.adapter.paused = (s == "paused")
+                            logger.info(f"PAUSE_DIAG: adapter.paused set successfully, value={self.adapter.paused}")
                         logger.info(
-                            f"[DemoRunner] sync_client.simulate_offline → {want_offline}"
+                            f"[DemoRunner] sync_client.simulate_offline → {want_offline}, adapter.paused → {s == 'paused'}"
                         )
                     except Exception as exc:
-                        logger.debug(f"[DemoRunner] offline watcher error: {exc}")
+                        logger.error(f"[DemoRunner] offline watcher error during scenario={s}: {exc}", exc_info=True)
                     last = s
+                
+                # If paused, do not seek or advance time
+                if s == "paused":
+                    time.sleep(1.0)
+                    continue
+
+                # Check for explicit seek requests
+                logger.info("PAUSE_DIAG: entering seek section")
+                target_time = _scenario.get("video_time")
+                target_updated = _scenario.get("video_time_updated_at", time.time())
+                
+                if target_time is not None and hasattr(self, 'adapter'):
+                    if s == "paused":
+                        extrapolated_target = target_time
+                    else:
+                        extrapolated_target = target_time + (time.time() - target_updated)
+                        
+                    # Only seek if the difference is significant (> 2.0s) to avoid micro-stutters
+                    current_edge_time = getattr(self.adapter, "_last_video_time", 0.0)
+                    drift = extrapolated_target - current_edge_time
+                    if abs(drift) > 2.0 and target_time != last_applied_target:
+                        logger.info(f"[DemoRunner] Seeking Edge to match Browser time: {extrapolated_target}s (drift: {drift:.2f}s)")
+                        self.adapter.seek_to(extrapolated_target)
+                        last_applied_target = target_time
+                    # DO NOT clear _scenario["video_time"] so we can continue tracking drift
+
                 time.sleep(1.0)
 
         t = threading.Thread(target=_offline_watcher, daemon=True, name="offline-watcher")
@@ -286,7 +440,7 @@ def run_demo_pipeline(
     _scenario["video_source"] = video_source
     poll_thread = threading.Thread(
         target=_poll_scenario,
-        args=(backend_url, 5.0),
+        args=(backend_url, float(os.environ.get("SYNC_INTERVAL_SECONDS", 1.0))),
         daemon=True,
         name=f"scenario-poll-{camera_id}",
     )
@@ -321,6 +475,7 @@ def run_demo_pipeline(
             "sync_db_path": f"edge/data/sync_{camera_id}{session_suffix}.db",
             "clip_dir": "edge/data/clips",
             "metrics_json_path": f"edge/data/metrics_{camera_id}.json",
+            "fps_declared": 30.0,
             "simulate_frozen": False,
             "simulate_night": False,
         }
@@ -344,6 +499,9 @@ def run_demo_pipeline(
             if _scenario.get("video_session_id"):
                 logger.info("[DemoRunner] Uploaded video completed; waiting for the next session...")
                 while not _scenario.get("should_restart"):
+                    if _scenario.get("current") == "normal":
+                        logger.info("[DemoRunner] Resume requested on a completed session. Restarting pipeline to replay...")
+                        break
                     time.sleep(0.25)
                 _scenario["should_restart"] = False
                 continue
@@ -365,7 +523,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--video-source",
-        default=os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.avi"),
+        default=os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.mp4"),
         help="OpenCV video source: path to .avi/.mp4, 'webcam', or RTSP URL",
     )
     parser.add_argument(

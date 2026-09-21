@@ -267,6 +267,7 @@ class EvidencePackage(Base):
     hash_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
     signature_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
     chain_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
+    chain_status: Mapped[Optional[str]] = mapped_column(String(16))
     raw_package_json: Mapped[Optional[str]] = mapped_column(Text)   # full evidence package JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -293,6 +294,7 @@ class EvidenceChain(Base):
     signature: Mapped[str] = mapped_column(Text, nullable=False)
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     chain_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
+    chain_status: Mapped[Optional[str]] = mapped_column(String(16))
 
 
 # ---------------------------------------------------------------------------

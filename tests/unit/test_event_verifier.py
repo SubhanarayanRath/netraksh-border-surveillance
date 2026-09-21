@@ -16,10 +16,9 @@ def _payload(track_id=1, zone_id="zone-1", event_type="LOITERING", **extra):
 
 
 class TestSingleConfirmationEvents:
-    """Loitering/abandoned/ANPR/face default to required_confirmations=1 —
-    their own task module already bakes in temporal persistence, so the
-    verifier should auto-verify on the very first DETECTED observation,
-    preserving today's existing immediate-alert behavior for these types."""
+    """Loitering/abandoned/ANPR/face and now crossing events default to required_confirmations=1 —
+    their own task module already bakes in temporal persistence, or they are edge-triggered, so the
+    verifier should auto-verify on the very first DETECTED observation."""
 
     def test_loitering_verifies_on_first_detected_observation(self):
         v = EventVerifier()
@@ -40,73 +39,45 @@ class TestSingleConfirmationEvents:
         assert state == "ALERTED"
         assert verified is not None
 
-
-class TestMultiFrameConfirmationEvents:
-    """Fence/line crossing require >1 confirmation — the mechanism that
-    stops a single-frame tracking jitter from becoming an alert."""
-
-    def test_fence_crossing_requires_default_three_confirmations(self):
+    def test_fence_crossing_verifies_on_first_detected_observation(self):
         v = EventVerifier()
         key = EventVerifier.make_key("cam-1", 7, "VIRTUAL_FENCE_CROSSING", "zone-1")
         payload = _payload(track_id=7, event_type="VIRTUAL_FENCE_CROSSING", direction="OUTSIDE_TO_RESTRICTED")
 
         state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 1, True)
-        assert state == "CANDIDATE" and verified is None
-
-        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 2, True)
-        assert state == "CANDIDATE" and verified is None
-
-        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 3, True)
         assert state == "ALERTED" and verified is not None
 
-    def test_line_crossing_requires_default_three_confirmations(self):
-        """Architecture v4 §5: line crossing shares fence crossing's exposure
-        to single-frame jitter, so it shares the same confirmation depth."""
-        assert DEFAULT_REQUIRED_CONFIRMATIONS["LINE_CROSSING"] == 3
+    def test_line_crossing_verifies_on_first_detected_observation(self):
+        assert DEFAULT_REQUIRED_CONFIRMATIONS["LINE_CROSSING"] == 1
         v = EventVerifier()
         key = EventVerifier.make_key("cam-1", 8, "LINE_CROSSING", "line-1")
         payload = _payload(track_id=8, zone_id="line-1", event_type="LINE_CROSSING", direction="A_TO_B")
 
-        for frame in (1, 2):
-            state, verified = v.observe(key, "LINE_CROSSING", payload, frame, True)
-            assert state == "CANDIDATE" and verified is None
-
-        state, verified = v.observe(key, "LINE_CROSSING", payload, 3, True)
+        state, verified = v.observe(key, "LINE_CROSSING", payload, 1, True)
         assert state == "ALERTED" and verified is not None
-
-    def test_single_bad_frame_does_not_verify_fence_crossing(self):
-        """The exact scenario the pitch narrative demos: one noisy frame
-        crossing a zone boundary must NOT become a security alert."""
-        v = EventVerifier()
-        key = EventVerifier.make_key("cam-1", 7, "VIRTUAL_FENCE_CROSSING", "zone-1")
-        payload = _payload(track_id=7, event_type="VIRTUAL_FENCE_CROSSING", direction="OUTSIDE_TO_RESTRICTED")
-
-        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 1, True)
-        assert verified is None
-        # Track immediately bounces back out — pipeline simply never calls
-        # observe() again for this key on subsequent frames.
-        expired = v.expire_stale(current_frame=10)
-        assert key in expired
-        assert v.get_state(key) is None  # candidate fully dropped, no evidence ever generated
 
     def test_uncertain_frame_holds_progress_without_resetting_it(self):
         v = EventVerifier()
         key = EventVerifier.make_key("cam-1", 7, "VIRTUAL_FENCE_CROSSING", "zone-1")
         payload = _payload(track_id=7, event_type="VIRTUAL_FENCE_CROSSING", direction="OUTSIDE_TO_RESTRICTED")
 
-        v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 1, True)   # confirm 1/3
-        v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 2, False)  # held, not counted, not reset
-        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 3, True)  # confirm 2/3
+        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 1, False)  # held, not counted, not reset
         assert state == "CANDIDATE" and verified is None
-        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 4, True)  # confirm 3/3
+        state, verified = v.observe(key, "VIRTUAL_FENCE_CROSSING", payload, 2, True)  # confirm 1/1
         assert state == "ALERTED" and verified is not None
+
+
+class TestMultiFrameConfirmationEvents:
+    """If there are any events that require multiple confirmations, they would be tested here.
+    Currently, all standard events require 1 confirmation."""
+    pass
 
 
 class TestExpiry:
     def test_candidate_expires_without_reconfirmation(self):
         v = EventVerifier(max_gap_frames=5)
         key = EventVerifier.make_key("cam-1", 9, "VIRTUAL_FENCE_CROSSING", "zone-1")
-        v.observe(key, "VIRTUAL_FENCE_CROSSING", _payload(track_id=9, event_type="VIRTUAL_FENCE_CROSSING"), 1, True)
+        v.observe(key, "VIRTUAL_FENCE_CROSSING", _payload(track_id=9, event_type="VIRTUAL_FENCE_CROSSING"), 1, False) # Using False so it stays a CANDIDATE
         assert v.get_pending_count() == 1
         expired = v.expire_stale(current_frame=10)  # 9 frames later, > max_gap_frames
         assert key in expired
@@ -115,7 +86,7 @@ class TestExpiry:
     def test_candidate_not_expired_within_gap_window(self):
         v = EventVerifier(max_gap_frames=5)
         key = EventVerifier.make_key("cam-1", 9, "VIRTUAL_FENCE_CROSSING", "zone-1")
-        v.observe(key, "VIRTUAL_FENCE_CROSSING", _payload(track_id=9, event_type="VIRTUAL_FENCE_CROSSING"), 1, True)
+        v.observe(key, "VIRTUAL_FENCE_CROSSING", _payload(track_id=9, event_type="VIRTUAL_FENCE_CROSSING"), 1, False)
         expired = v.expire_stale(current_frame=4)  # only 3 frames later
         assert expired == []
         assert v.get_pending_count() == 1
@@ -149,14 +120,13 @@ class TestCooldown:
 
 class TestKeyIsolation:
     def test_different_tracks_do_not_share_confirmation_progress(self):
-        v = EventVerifier()
-        key_a = EventVerifier.make_key("cam-1", 1, "VIRTUAL_FENCE_CROSSING", "zone-1")
-        key_b = EventVerifier.make_key("cam-1", 2, "VIRTUAL_FENCE_CROSSING", "zone-1")
-        payload_a = _payload(track_id=1, event_type="VIRTUAL_FENCE_CROSSING")
-        payload_b = _payload(track_id=2, event_type="VIRTUAL_FENCE_CROSSING")
+        v = EventVerifier(required_confirmations={"TEST_EVENT": 2})
+        key_a = EventVerifier.make_key("cam-1", 1, "TEST_EVENT", "zone-1")
+        key_b = EventVerifier.make_key("cam-1", 2, "TEST_EVENT", "zone-1")
+        payload_a = _payload(track_id=1, event_type="TEST_EVENT")
+        payload_b = _payload(track_id=2, event_type="TEST_EVENT")
 
-        v.observe(key_a, "VIRTUAL_FENCE_CROSSING", payload_a, 1, True)
-        v.observe(key_a, "VIRTUAL_FENCE_CROSSING", payload_a, 2, True)
+        v.observe(key_a, "TEST_EVENT", payload_a, 1, True)
         # track 2 has only one confirmation — must not benefit from track 1's progress
-        state_b, verified_b = v.observe(key_b, "VIRTUAL_FENCE_CROSSING", payload_b, 2, True)
+        state_b, verified_b = v.observe(key_b, "TEST_EVENT", payload_b, 1, True)
         assert state_b == "CANDIDATE" and verified_b is None

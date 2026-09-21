@@ -209,14 +209,15 @@ def verify_chain_continuity(
     sequence_number: int,
     current_hash: str,
     previous_hash: Optional[str],
-) -> bool:
+) -> tuple[bool, str]:
     """
     Verify that this event's previous_hash matches the hash stored for the
     previous sequence number in our server-side chain tracking table.
+    Returns (is_valid: bool, status: str)
     """
     if sequence_number == 0:
         # First event in chain — no previous to check
-        return True
+        return True, "VALID"
 
     prev_chain = (
         db.query(EvidenceChain)
@@ -229,9 +230,23 @@ def verify_chain_continuity(
     if prev_chain is None:
         logger.warning(
             f"Chain gap: expected sequence {sequence_number - 1} for device {edge_device_id}, "
-            f"not found in server chain table. Chain continuity CANNOT be confirmed."
+            f"not found in server chain table. Setting status to PENDING."
         )
-        return False
+        return False, "PENDING"
+
+    if prev_chain.chain_status == "PENDING":
+        logger.warning(
+            f"Chain gap earlier in sequence for device {edge_device_id}, "
+            f"predecessor {sequence_number - 1} is PENDING. Setting status to PENDING."
+        )
+        return False, "PENDING"
+        
+    if prev_chain.chain_status == "INVALID":
+        logger.warning(
+            f"Predecessor {sequence_number - 1} for device {edge_device_id} is INVALID. "
+            f"Chain cannot be validated."
+        )
+        return False, "INVALID"
 
     chain_ok = prev_chain.current_hash == previous_hash
     if not chain_ok:
@@ -239,7 +254,8 @@ def verify_chain_continuity(
             f"CHAIN BREAK at sequence {sequence_number} for device {edge_device_id}. "
             f"Expected previous_hash={prev_chain.current_hash}, got {previous_hash}"
         )
-    return chain_ok
+        return False, "INVALID"
+    return True, "VALID"
 
 
 def verify_event_integrity(
@@ -254,7 +270,7 @@ def verify_event_integrity(
     """
     hash_valid, hash_msg, calculated_hash = verify_hash(evidence_package)
     sig_valid, sig_msg, key_status = verify_signature(evidence_package, db)
-    chain_valid = verify_chain_continuity(
+    chain_valid, chain_status = verify_chain_continuity(
         db, edge_device_id, sequence_number,
         evidence_package.hash or "",
         evidence_package.previous_hash,
@@ -280,6 +296,7 @@ def verify_event_integrity(
             signature=evidence_package.signature or "",
             verified_at=datetime.utcnow(),
             chain_valid=chain_valid,
+            chain_status=chain_status,
         )
         db.add(chain_record)
         db.flush()
@@ -292,11 +309,11 @@ def verify_event_integrity(
         sig_detail += f" (KEY:{key_status})"
     detail_parts.append(f"SIGNATURE: {sig_detail}")
     
-    detail_parts.append(f"CHAIN: {'VALID' if chain_valid else 'BROKEN'}")
+    detail_parts.append(f"CHAIN: {chain_status}")
 
     logger.info(
         f"Verification for event {evidence_package.event_id}: "
-        f"hash={hash_valid} ({hash_msg}), sig={sig_valid}, chain={chain_valid}"
+        f"hash={hash_valid} ({hash_msg}), sig={sig_valid}, chain={chain_status}"
     )
 
     stored_hash = evidence_package.hash or ""
@@ -309,8 +326,74 @@ def verify_event_integrity(
         hash_valid=hash_valid,
         signature_valid=sig_valid,
         chain_valid=chain_valid,
+        chain_status=chain_status,
         detail=" | ".join(detail_parts),
         calculated_hash=calculated_hash,
         stored_hash=stored_hash,
         verified_at=datetime.utcnow(),
     )
+
+def resolve_pending_chains(db: Session, edge_device_id: str, start_sequence_number: int, start_hash: str):
+    """
+    Iteratively heals PENDING chain gaps going forward.
+    Bound: max 1000 records to prevent infinite loops.
+    """
+    # Import EvidencePackage model here to avoid circular imports if necessary
+    from backend.models.orm import EvidencePackage as EvidencePackageModel
+    
+    MAX_RESOLUTIONS = 1000
+    resolutions = 0
+    current_seq = start_sequence_number
+    current_hash = start_hash
+    
+    while resolutions < MAX_RESOLUTIONS:
+        next_chain = (
+            db.query(EvidenceChain)
+            .filter(
+                EvidenceChain.edge_device_id == edge_device_id,
+                EvidenceChain.sequence_number == current_seq + 1,
+            )
+            .first()
+        )
+        
+        if not next_chain or next_chain.chain_status != "PENDING":
+            break
+            
+        if next_chain.previous_hash == current_hash:
+            next_ep = db.query(EvidencePackageModel).filter(EvidencePackageModel.event_id == next_chain.event_id).first()
+            if next_ep and next_ep.hash_valid and next_ep.signature_valid:
+                next_chain.chain_status = "VALID"
+                next_chain.chain_valid = True
+                next_ep.chain_status = "VALID"
+                next_ep.chain_valid = True
+                next_ep.verified_ok = True
+                
+                logger.info(f"[Healer] Healed sequence {current_seq + 1} for device {edge_device_id}")
+            else:
+                next_chain.chain_status = "INVALID"
+                next_chain.chain_valid = False
+                if next_ep:
+                    next_ep.chain_status = "INVALID"
+                    next_ep.chain_valid = False
+                    next_ep.verified_ok = False
+                logger.warning(f"[Healer] Sequence {current_seq + 1} for device {edge_device_id} had crypto failures, marking INVALID")
+                break
+        else:
+            next_chain.chain_status = "INVALID"
+            next_chain.chain_valid = False
+            next_ep = db.query(EvidencePackageModel).filter(EvidencePackageModel.event_id == next_chain.event_id).first()
+            if next_ep:
+                next_ep.chain_status = "INVALID"
+                next_ep.chain_valid = False
+                next_ep.verified_ok = False
+            logger.warning(f"[Healer] CHAIN BREAK at sequence {current_seq + 1} for device {edge_device_id} during healing")
+            break
+            
+        current_seq += 1
+        current_hash = next_chain.current_hash
+        resolutions += 1
+        
+    if resolutions > 0:
+        db.flush()
+        logger.info(f"[Healer] Finished healing {resolutions} dependent blocks for {edge_device_id}")
+

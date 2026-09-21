@@ -166,7 +166,9 @@ class EdgePipeline:
         self._last_video_time = None
         self._last_frame_width = None
         self._last_frame_height = None
-        self.telemetry_queue = Queue(maxsize=10)
+        # We need a small bounded queue so if the backend goes down or network
+        # is durable/offline-capable. Telemetry is explicitly lossy.
+        self.telemetry_queue = Queue(maxsize=2)
         self._telemetry_metrics = {"produced": 0, "dropped": 0, "errors": 0}
 
         # Layer 2: Health + Condition
@@ -197,6 +199,7 @@ class EdgePipeline:
         # first FAILED-health frame of a run always captures a snapshot
         # immediately, not after waiting a full interval.
         self._last_abstain_snapshot_time = 0.0
+        self._last_abstain_emit_time = 0.0
 
         # Load zones
         self.zones = load_zones(self.zone_config_path)
@@ -367,6 +370,11 @@ class EdgePipeline:
                 self._report_metrics()
                 self._publish_analysis_state("COMPLETED")
             self._running = False
+            if hasattr(self, 'sync_client') and self.sync_client:
+                try:
+                    self.sync_client.stop()
+                except Exception:
+                    pass
             self.adapter.stop()
             self.adapter.join()
             telemetry_thread.join(timeout=2.0)
@@ -375,6 +383,11 @@ class EdgePipeline:
         """Gracefully stop the pipeline."""
         logger.info(f"[Pipeline] Stopping frame loop for camera {self.camera_id}")
         self._running = False
+        if hasattr(self, 'sync_client') and self.sync_client:
+            try:
+                self.sync_client.stop()
+            except Exception:
+                pass
 
     def _run_telemetry_loop(self) -> None:
         """Background thread for pushing live telemetry to the backend."""
@@ -538,28 +551,30 @@ class EdgePipeline:
 
         # If camera FAILED, emit ABSTAIN heartbeat and stop
         if health.health_state == CameraHealthState.FAILED:
-            reliability = make_abstain(self.camera_id, health.health_reason, condition.condition)
-            # Tiered evidence capture by condition quality (see shared/
-            # constants.py's ABSTAIN_SNAPSHOT_INTERVAL_SECONDS docstring):
-            # this heartbeat fires every frame (unchanged, real camera-health
-            # telemetry), but previously NEVER saved a snapshot at all --
-            # frame=None unconditionally -- so a false FAILED trigger left
-            # nothing to review. Now captures a real encrypted snapshot
-            # periodically instead of never, without flooding disk with one
-            # per frame during a sustained outage.
             now = time.time()
-            capture_snapshot = should_capture_abstain_snapshot(self._last_abstain_snapshot_time, now)
-            if capture_snapshot:
-                self._last_abstain_snapshot_time = now
-            self._emit_event(
-                track=None,
-                reliability=reliability,
-                health=health,
-                condition=condition,
-                zone_id=self._default_zone_id,
-                overrides={},
-                frame=frame if capture_snapshot else None,
-            )
+            if (now - self._last_abstain_emit_time) >= 1.0:
+                self._last_abstain_emit_time = now
+                reliability = make_abstain(self.camera_id, health.health_reason, condition.condition)
+                # Tiered evidence capture by condition quality (see shared/
+                # constants.py's ABSTAIN_SNAPSHOT_INTERVAL_SECONDS docstring):
+                # this heartbeat fires every frame (unchanged, real camera-health
+                # telemetry), but previously NEVER saved a snapshot at all --
+                # frame=None unconditionally -- so a false FAILED trigger left
+                # nothing to review. Now captures a real encrypted snapshot
+                # periodically instead of never, without flooding disk with one
+                # per frame during a sustained outage.
+                capture_snapshot = should_capture_abstain_snapshot(self._last_abstain_snapshot_time, now)
+                if capture_snapshot:
+                    self._last_abstain_snapshot_time = now
+                self._emit_event(
+                    track=None,
+                    reliability=reliability,
+                    health=health,
+                    condition=condition,
+                    zone_id=self._default_zone_id,
+                    overrides={},
+                    frame=frame if capture_snapshot else None,
+                )
             t_frame_end = time.perf_counter()
             self.metrics.record_frame(
                 health_condition_ms=(t_health_condition - t_frame_start) * 1000.0,
@@ -1112,7 +1127,7 @@ def run_edge(config_path: Optional[str] = None) -> None:
         camera_id = os.environ.get("CAMERA_ID", os.environ.get("EDGE_DEVICE_ID", "cam-border-01"))
         config = {
             "camera_id": camera_id,
-            "video_source": os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.avi"),
+            "video_source": os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.mp4"),
             "backend_url": os.environ.get("BACKEND_URL", "http://localhost:8443"),
             "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
             "simulate_frozen": os.environ.get("SIMULATE_FROZEN_CAMERA", "").lower() == "true",

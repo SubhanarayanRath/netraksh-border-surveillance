@@ -75,3 +75,97 @@ docs/benchmark_raw*.json
 docs/*_demo.json
 docs/*_vtest.json
 node_modules
+
+# Local environments
+venv.broken*/
+venv_broken/
+
+# Generated/runtime test artifacts
+test-results/
+MagicMock/
+opencv_zoo/
+
+# Local model artifact
+*.onnx
+
+# Scratch/recovery scripts
+scratch_*.py
+recover*.py
+patch*.py
+fix_cameras.py
+repair_venv.py
+check_vid.py
+diagnostic.py
+diagnostic_script.py
+helper.py
+hash_gen.py
+refactor.py
+apply_sih_css.py
+extract.js
+extract_clean.py
+extract_css.py
+extract_valid_css.py
+analyze_reads.js
+anpr_backup.py
+lpd_yunet_ref.py
+run_wrapper.py
+
+# Temporary browser/test scripts
+test.js
+test_api.js
+test_browser.py
+test_frontend.py
+test_headed.py
+test_ws.py
+targeted_verify.py
+e2e_*.py
+verify_*.py
+test_api.py
+test_default_video.py
+test_backend_handshake.py
+test_dashboard_tdz.py
+test_acceptance_tdz2.py
+test_csp.py
+upload_and_listen.py
+frontend/upload_and_listen.mjs
+frontend/test_dashboard_logic.js
+
+# Generated video uploads
+demo/videos/uploaded_*.mp4
+
+# Generated telemetry/report artifact
+e2e_report.json
+*telemetry.json
+
+# Generated screenshots
+*.png
+
+# Temporary local runner/build scripts
+run_*.bat
+run_*.ps1
+start_all.py
+build_ui.*
+
+# Firebase local/config files if not part of deployment
+.firebase/
+.firebaserc
+firebase.json
+
+# Presentation exports
+*.pdf
+*.pptx
+
+# Temporary phase walkthrough reports
+svgphase*.md
+svgwalkthrough*.md
+walkthrough.md
+
+# Generated status/log text files
+diff.txt
+namestatus_*.txt
+stat_*.txt
+status.txt
+status_*.txt
+
+# CSS backups
+frontend/src/index_*.css

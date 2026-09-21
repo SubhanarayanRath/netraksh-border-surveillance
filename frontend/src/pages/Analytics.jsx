@@ -23,20 +23,20 @@ import { WS_URL, authFetch } from '../services/auth';
 
 // ─── Time-range presets ───────────────────────────────────────────────────────
 const PRESETS = [
-  { label: '1 h',  hours: 1   },
-  { label: '6 h',  hours: 6   },
-  { label: '24 h', hours: 24  },
-  { label: '7 d',  hours: 168 },
+  { label: '1 h', hours: 1 },
+  { label: '6 h', hours: 6 },
+  { label: '24 h', hours: 24 },
+  { label: '7 d', hours: 168 },
 ];
 
 const SEVERITY_COLORS = {
-  HIGH:     '#ef4444',
-  MEDIUM:   '#f59e0b',
-  LOW:      '#64748b',
+  HIGH: '#ef4444',
+  MEDIUM: '#f59e0b',
+  LOW: '#64748b',
   CRITICAL: '#dc2626',
-  SEVERE:   '#f97316',
+  SEVERE: '#f97316',
   ELEVATED: '#eab308',
-  NONE:     '#475569',
+  NONE: '#475569',
 };
 
 const TYPE_COLORS = [
@@ -135,22 +135,22 @@ export default function Analytics() {
   useWebSocket(WS_URL);
 
   // Time window state
-  const [preset, setPreset]     = useState(PRESETS[2]); // default: 24h
+  const [preset, setPreset] = useState(PRESETS[2]); // default: 24h
   const [customSince, setCustomSince] = useState('');
   const [customUntil, setCustomUntil] = useState('');
-  const [useCustom, setUseCustom]     = useState(false);
+  const [useCustom, setUseCustom] = useState(false);
   const [filters, setFilters] = useState({ stream_id: '', camera_id: '', event_type: '' });
   const [options, setOptions] = useState({ streams: [], cameras: [], event_types: [] });
   const liveRefreshTimer = useRef(null);
 
   // API data state
-  const [summary,    setSummary]    = useState(null);
+  const [summary, setSummary] = useState(null);
   const [timeseries, setTimeseries] = useState(null);
-  const [byType,     setByType]     = useState(null);
-  const [byCamera,   setByCamera]   = useState(null);
+  const [byType, setByType] = useState(null);
+  const [byCamera, setByCamera] = useState(null);
   const [bySeverity, setBySeverity] = useState(null);
-  const [status,     setStatus]     = useState('idle');
-  const [error,      setError]      = useState(null);
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState(null);
 
   // Build since/until from current selection
   const buildWindow = useCallback(() => {
@@ -210,13 +210,17 @@ export default function Analytics() {
     authFetch('/analytics/options')
       .then(response => response.ok ? response.json() : null)
       .then(data => { if (data) setOptions(data); })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
     const refreshForLiveEvent = () => {
+      // Debounce: collapse a burst of live events (Edge emits ~10/sec) into a
+      // single refresh at most once every 5 seconds. 250ms was too short —
+      // each new event reset the timer before it fired, producing a continuous
+      // load() call storm that caused the Analytics page to visually reload.
       window.clearTimeout(liveRefreshTimer.current);
-      liveRefreshTimer.current = window.setTimeout(() => load(), 250);
+      liveRefreshTimer.current = window.setTimeout(() => load(), 5000);
     };
     window.addEventListener('netraksh-analytics-event', refreshForLiveEvent);
     return () => {
@@ -280,8 +284,8 @@ export default function Analytics() {
                 className="btn btn-sm"
                 style={{
                   borderColor: (!useCustom && preset.label === p.label) ? 'var(--accent)' : 'var(--border-color)',
-                  background:  (!useCustom && preset.label === p.label) ? 'var(--accent-dim)' : 'transparent',
-                  color:       (!useCustom && preset.label === p.label) ? 'var(--accent)' : 'var(--text-muted)',
+                  background: (!useCustom && preset.label === p.label) ? 'var(--accent-dim)' : 'transparent',
+                  color: (!useCustom && preset.label === p.label) ? 'var(--accent)' : 'var(--text-muted)',
                   border: '1px solid',
                 }}
               >
@@ -309,15 +313,7 @@ export default function Analytics() {
             />
           </div>
 
-          <select
-            className="input"
-            aria-label="Analytics stream filter"
-            value={filters.stream_id}
-            onChange={e => setFilters(previous => ({ ...previous, stream_id: e.target.value }))}
-          >
-            <option value="">All streams</option>
-            {options.streams.map(stream => <option key={stream} value={stream}>{stream.slice(0, 8)}</option>)}
-          </select>
+
           <select
             className="input"
             aria-label="Analytics camera filter"
@@ -363,19 +359,19 @@ export default function Analytics() {
         <>
           {/* Summary stat cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
-            <StatCard icon={Activity}      label="Total Events"        value={summary?.events?.total}              color="text-ok" />
-            <StatCard icon={AlertTriangle} label="Total Alerts"         value={summary?.alerts?.total}             color="text-danger" />
-            <StatCard icon={AlertTriangle} label="Unresolved"           value={summary?.alerts?.unresolved}        color="text-warning" />
-            <StatCard icon={AlertTriangle} label="Watchlist Matches"    value={summary?.events?.watchlist_matches} color="text-danger" />
-            <StatCard                      label="ANPR Events"           value={summary?.events?.anpr} />
-            <StatCard                      label="Intrusions"            value={summary?.events?.intrusion} />
-            <StatCard                      label="Vehicle Events"        value={summary?.events?.vehicle} />
-            <StatCard                      label="Person Events"         value={summary?.events?.person} />
-            <StatCard                      label="Verified Events"       value={summary?.events?.verified} color="text-ok" />
-            <StatCard                      label="Detection Rate"        value={summary?.events?.detection_rate_pct} color="text-ok" format={fmtPercent} />
-            <StatCard                      label="Average Reliability"   value={summary?.events?.reliability?.average} format={fmtRatio} />
-            <StatCard                      label="Average Confidence"    value={summary?.events?.confidence?.average} format={fmtFractionPercent} />
-            <StatCard icon={Camera}        label="Active Cameras"        value={summary?.cameras?.active_in_window} />
+            <StatCard icon={Activity} label="Total Events" value={summary?.events?.total} color="text-ok" />
+            <StatCard icon={AlertTriangle} label="Total Alerts" value={summary?.alerts?.total} color="text-danger" />
+            <StatCard icon={AlertTriangle} label="Unresolved" value={summary?.alerts?.unresolved} color="text-warning" />
+            <StatCard icon={AlertTriangle} label="Watchlist Matches" value={summary?.events?.watchlist_matches} color="text-danger" />
+            <StatCard label="ANPR Events" value={summary?.events?.anpr} />
+            <StatCard label="Intrusions" value={summary?.events?.intrusion} />
+            <StatCard label="Vehicle Events" value={summary?.events?.vehicle} />
+            <StatCard label="Person Events" value={summary?.events?.person} />
+            <StatCard label="Verified Events" value={summary?.events?.verified} color="text-ok" />
+            <StatCard label="Detection Rate" value={summary?.events?.detection_rate_pct} color="text-ok" format={fmtPercent} />
+            <StatCard label="Average Reliability" value={summary?.events?.reliability?.average} format={fmtRatio} />
+            <StatCard label="Average Confidence" value={summary?.events?.confidence?.average} format={fmtFractionPercent} />
+            <StatCard icon={Camera} label="Active Cameras" value={summary?.cameras?.active_in_window} />
             <StatCard
               label="Fleet Uptime"
               notAvailable={summary?.uptime_not_available ?? true}
@@ -386,8 +382,8 @@ export default function Analytics() {
           {/* Alert lifecycle */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
             <StatCard label="Acknowledged" value={summary?.alerts?.acknowledged} color="text-ok" />
-            <StatCard label="Unresolved"   value={summary?.alerts?.unresolved}   color="text-warning" />
-            <StatCard label="Closed"       value={summary?.alerts?.closed}       color="text-muted" />
+            <StatCard label="Unresolved" value={summary?.alerts?.unresolved} color="text-warning" />
+            <StatCard label="Closed" value={summary?.alerts?.closed} color="text-muted" />
           </div>
 
           {/* Charts row */}
@@ -411,10 +407,10 @@ export default function Analytics() {
                       <YAxis stroke="#4d6080" fontSize={10} allowDecimals={false} />
                       <Tooltip contentStyle={{ backgroundColor: '#111d30', borderColor: '#1e3050', color: '#e8eef8', fontSize: '0.75rem' }} />
                       <Legend wrapperStyle={{ fontSize: '10px', color: '#5d7a9e' }} />
-                      <Bar dataKey="person"    name="Person"    fill="#4d6080" radius={[2,2,0,0]} stackId="a" />
-                      <Bar dataKey="vehicle"   name="Vehicle"   fill="#00b4d8" radius={[2,2,0,0]} stackId="a" />
-                      <Bar dataKey="intrusion" name="Intrusion" fill="#f59e0b" radius={[2,2,0,0]} stackId="a" />
-                      <Bar dataKey="watchlist" name="Watchlist" fill="#ef4444" radius={[2,2,0,0]} stackId="a" />
+                      <Bar dataKey="person" name="Person" fill="#4d6080" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="vehicle" name="Vehicle" fill="#00b4d8" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="intrusion" name="Intrusion" fill="#f59e0b" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="watchlist" name="Watchlist" fill="#ef4444" radius={[2, 2, 0, 0]} stackId="a" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -474,7 +470,7 @@ export default function Analytics() {
                       <XAxis type="number" stroke="#4d6080" fontSize={10} allowDecimals={false} />
                       <YAxis type="category" dataKey="event_type" stroke="#4d6080" fontSize={9} width={58} />
                       <Tooltip contentStyle={{ backgroundColor: '#111d30', borderColor: '#1e3050', color: '#e8eef8', fontSize: '0.75rem' }} />
-                      <Bar dataKey="count" name="Events" radius={[0,2,2,0]}>
+                      <Bar dataKey="count" name="Events" radius={[0, 2, 2, 0]}>
                         {typeBarData.map((_, i) => (
                           <Cell key={i} fill={TYPE_COLORS[i % TYPE_COLORS.length]} />
                         ))}

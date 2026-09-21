@@ -46,7 +46,7 @@ _state: dict = {
     "video_session_id": str(uuid.uuid4()),
 }
 
-_VALID_SCENARIOS = frozenset({"normal", "fog", "failure", "offline"})
+_VALID_SCENARIOS = frozenset({"normal", "fog", "failure", "offline", "paused"})
 
 
 @router.get("/scenario")
@@ -56,6 +56,8 @@ async def get_scenario():
         "scenario": _state["scenario"],
         "video_source": _state["video_source"],
         "video_session_id": _state["video_session_id"],
+        "video_time": _state.get("video_time", 0.0),
+        "video_time_updated_at": _state.get("video_time_updated_at", 0.0),
     }
 
 
@@ -69,10 +71,18 @@ async def set_scenario(payload: dict):
     requested = payload.get("scenario", "normal")
     if requested in _VALID_SCENARIOS:
         _state["scenario"] = requested
+    if "video_session_id" in payload:
+        _state["video_session_id"] = payload["video_session_id"]
+    if "video_time" in payload:
+        _state["video_time"] = float(payload["video_time"])
+        import time
+        _state["video_time_updated_at"] = time.time()
     return {
         "scenario": _state["scenario"],
         "video_source": _state["video_source"],
         "video_session_id": _state["video_session_id"],
+        "video_time": _state.get("video_time", 0.0),
+        "video_time_updated_at": _state.get("video_time_updated_at", 0.0),
     }
 
 from backend.security.auth import require_operator_or_admin

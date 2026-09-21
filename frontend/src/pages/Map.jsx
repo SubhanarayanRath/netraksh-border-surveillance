@@ -83,13 +83,10 @@ export default function MapView() {
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current, { zoomControl: false }).setView([20.5937, 78.9629], 4);
+    const map = L.map(containerRef.current, { zoomControl: false }).setView([20.5937, 78.9629], 4.5);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      maxZoom: 19,
-      className: 'map-tiles',
-    }).addTo(map);
+    // Removed CartoDB tile layer to avoid any API KEY REQUIRED overlays or dependency on external providers.
+    // The static map SVG background will serve as the visualization layer.
     mapRef.current = map;
     const observer = new ResizeObserver(() => map.invalidateSize());
     observer.observe(containerRef.current);
@@ -145,7 +142,12 @@ export default function MapView() {
       </div>
 
       <div className="relative flex-grow rounded border border-color overflow-hidden bg-panel">
-        <div ref={containerRef} className="w-full h-full z-0" />
+        <div className="absolute inset-0 z-[0] opacity-40" style={{
+            backgroundImage: `url('/assets/images/india_map_bg.svg')`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center'
+        }} />
+        <div ref={containerRef} className="w-full h-full z-10 relative" style={{ background: 'transparent' }} />
         {cameraState === 'loading' && <div className="absolute inset-0 z-[5] flex items-center justify-center bg-panel/80 text-muted text-sm">Loading camera locations…</div>}
         {cameraState === 'error' && <div className="absolute inset-0 z-[5] flex items-center justify-center bg-panel/80 text-danger text-sm">Unable to load camera locations.</div>}
         {cameraState === 'ready' && mappedCameras.length === 0 && <div className="absolute inset-0 z-[5] flex items-center justify-center bg-panel/90 text-muted text-sm text-center px-4">NO GEOLOCATION CONFIGURED<br />Register real camera coordinates to enable map markers.</div>}

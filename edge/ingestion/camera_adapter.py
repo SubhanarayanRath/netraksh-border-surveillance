@@ -74,6 +74,9 @@ class CameraAdapter:
         self._frozen_frame: Optional[np.ndarray] = None
         self.loop_video = loop_video
         self._eof_reached = False
+        self.paused = False
+        self._seek_request = None
+        self._last_video_time = 0.0
 
         # WP-4.1 State & Queue
         self._state = StreamState.INITIALIZING
@@ -149,6 +152,10 @@ class CameraAdapter:
                 logger.error("[Adapter] Reader thread failed to join within timeout (decoder may be hanging).")
             self._reader_thread = None
 
+    def seek_to(self, target_time_s: float) -> None:
+        """Request a seek to the specified video time in seconds."""
+        self._seek_request = target_time_s
+
     def _reader_loop(self) -> None:
         """Background thread loop owning the VideoCapture."""
         cap = None
@@ -198,6 +205,22 @@ class CameraAdapter:
                     continue
 
             if self.state == StreamState.CONNECTED:
+                if self._seek_request is not None:
+                    if is_video_file and cap is not None:
+                        logger.info(f"[Adapter] Seeking to {self._seek_request}s")
+                        cap.set(cv2.CAP_PROP_POS_MSEC, self._seek_request * 1000.0)
+                        # Empty the queue so old frames aren't processed
+                        while not self._queue.empty():
+                            try:
+                                self._queue.get_nowait()
+                            except queue.Empty:
+                                break
+                    self._seek_request = None
+                    continue
+
+                if self.paused:
+                    time.sleep(0.1)
+                    continue
                 try:
                     ret, frame = cap.read()
                 except Exception as e:
@@ -247,6 +270,7 @@ class CameraAdapter:
                     height=frame.shape[0],
                     source=self.source_str,
                 )
+                self._last_video_time = meta.video_time_seconds
 
                 # Push to bounded queue with DROP_OLDEST policy
                 try:

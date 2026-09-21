@@ -573,17 +573,19 @@ button {
   top: 0;
   left: 0;
   width: 100%;
-  height: 2px;
-  background: rgba(74, 222, 128, 0.4);
-  box-shadow: 0 0 10px rgba(74, 222, 128, 0.8), 0 0 20px rgba(74, 222, 128, 0.4);
-  animation: scanline-anim 4s linear infinite;
+  height: 1px;
+  background: rgba(74, 222, 128, 0.2);
+  box-shadow: 0 0 5px rgba(74, 222, 128, 0.3);
+  animation: scanline-anim 8s linear infinite;
   z-index: 20;
   pointer-events: none;
 }
 
 @keyframes scanline-anim {
-  0% { top: -5%; }
-  100% { top: 105%; }
+  0% { top: 0%; opacity: 0; }
+  5% { opacity: 1; }
+  95% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
 }
 /* COMPONENT RESTORE */
 /* ── Sidebar ── */
@@ -1214,10 +1216,22 @@ button {
 }
 .dashboard-camera-select select {
   min-width: 13rem;
-  color: var(--text-main);
-  background: var(--bg-base);
-  border: 0;
+  color: #f8fafc;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
   font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+.dashboard-camera-select select option {
+  background-color: #1e293b;
+  color: #f8fafc;
+}
+.dashboard-camera-select select:focus {
+  border-color: var(--color-ok);
 }
 .dashboard-status-chip { min-width: 6.5rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .dashboard-status-chip strong { color: var(--text-muted); font-size: 0.7rem; }

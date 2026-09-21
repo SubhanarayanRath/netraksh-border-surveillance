@@ -516,6 +516,7 @@ class VerificationResponse(BaseModel):
     hash_valid: bool
     signature_valid: bool
     chain_valid: bool
+    chain_status: Optional[str] = None
     detail: str
     calculated_hash: Optional[str] = None
     stored_hash: Optional[str] = None

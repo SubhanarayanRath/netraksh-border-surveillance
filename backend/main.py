@@ -186,6 +186,7 @@ async def add_security_headers(request: Request, call_next) -> Response:
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
         "connect-src 'self' ws: wss:; "
         "frame-ancestors 'none'; "
         "object-src 'none'; "
@@ -232,7 +233,9 @@ if frontend_dist.exists():
     app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
 
 demo_videos_path = Path(__file__).resolve().parent.parent / "demo" / "videos"
-    
+if demo_videos_path.exists():
+    app.mount("/demo/videos", StaticFiles(directory=demo_videos_path), name="demo_videos")
+
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
     # Allow API routes to pass through if they 404 (handled before this catch-all)

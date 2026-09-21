@@ -108,6 +108,7 @@ class SyncClient:
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._init_db()
         self._is_online = False
+        self._running = True
 
     def _get_conn(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
@@ -247,10 +248,15 @@ class SyncClient:
             "remaining": self.get_queue_depth(),
         }
 
+    def stop(self) -> None:
+        """Signal the background sync loop to terminate."""
+        self._running = False
+        logger.info("[Sync] Stop requested. Sync loop will exit after current sleep/batch.")
+
     def run_sync_loop(self) -> None:
-        """Background sync loop — runs indefinitely."""
+        """Background sync loop — runs indefinitely until stopped."""
         logger.info(f"[Sync] Background sync loop started (interval={self.retry_interval}s)")
-        while True:
+        while self._running:
             try:
                 result = self.sync_once()
                 if result.get("uploaded", 0) > 0:

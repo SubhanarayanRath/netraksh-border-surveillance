@@ -166,11 +166,15 @@ async def verify_chain(
     if not evidence_list:
         return {"is_valid": True, "message": "No evidence on chain yet."}
     
-    invalid_count = sum(1 for ev in evidence_list if not ev.verified_ok)
-    if invalid_count == 0:
-        return {"is_valid": True, "message": f"Successfully verified {len(evidence_list)} blocks across all edge hash chains."}
-    else:
+    invalid_count = sum(1 for ev in evidence_list if ev.chain_status == 'INVALID')
+    pending_count = sum(1 for ev in evidence_list if ev.chain_status == 'PENDING')
+    
+    if invalid_count > 0:
         return {"is_valid": False, "message": f"{invalid_count} block(s) failed integrity verification. Chain compromised."}
+    elif pending_count > 0:
+        return {"is_valid": True, "message": f"Verified {len(evidence_list) - pending_count} blocks. {pending_count} blocks pending chain sync."}
+    else:
+        return {"is_valid": True, "message": f"Successfully verified {len(evidence_list)} blocks across all edge hash chains."}
 
 
 _telemetry_requests = 0
@@ -407,7 +411,7 @@ async def nodes_health(
             "uptime_seconds": latest_metrics.uptime_seconds if latest_metrics else None,
             "cpu_percent": latest_metrics.cpu_percent if latest_metrics else None,
             "fps": latest_metrics.fps if latest_metrics else None,
-            "last_ping": latest_metrics.timestamp.isoformat() if latest_metrics else (latest_health.timestamp.isoformat() if latest_health else None),
+            "last_ping": (latest_metrics.timestamp.isoformat() + "Z") if latest_metrics else ((latest_health.timestamp.isoformat() + "Z") if latest_health else None),
         })
         
     return results

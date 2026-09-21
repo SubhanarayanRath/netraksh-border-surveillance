@@ -147,7 +147,7 @@ function EvidenceImageOverlay({ imageUrl, event, status }) {
       )}
 
       {/* Loading overlay */}
-      {status === 'loading' && (
+      {(status === 'loading' || status === 'syncing') && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20,
           background: 'rgba(0,0,0,0.6)',
@@ -155,9 +155,9 @@ function EvidenceImageOverlay({ imageUrl, event, status }) {
         }}>
           <span className="animate-pulse" style={{
             fontFamily: 'var(--font-display)', fontSize: '0.65rem',
-            letterSpacing: '0.1em', color: '#4ade80',
+            letterSpacing: '0.1em', color: status === 'syncing' ? '#fbbf24' : '#4ade80',
           }}>
-            DECRYPTING…
+            {status === 'syncing' ? 'SYNCING EVIDENCE...' : 'DECRYPTING…'}
           </span>
         </div>
       )}
@@ -181,7 +181,7 @@ function EvidenceImageOverlay({ imageUrl, event, status }) {
       )}
 
       {/* Inline status banners for non-blocking states */}
-      {(status === 'no-key' || status === 'no-evidence' || status === 'error') && (
+      {(status === 'no-key' || status === 'no-evidence' || status === 'error' || status === 'sync-timeout') && (
         <div style={{
           position: 'absolute', bottom: '0.5rem', left: '0.5rem', right: '0.5rem',
           zIndex: 20,
@@ -195,6 +195,7 @@ function EvidenceImageOverlay({ imageUrl, event, status }) {
         }}>
           {status === 'no-key'    && "Camera's evidence key isn't registered — run scripts/upload_evidence_key.py"}
           {status === 'no-evidence' && 'No evidence image is available for this event'}
+          {status === 'sync-timeout' && 'Evidence sync timed out. Please try refreshing later.'}
           {status === 'error'     && 'Could not reach the backend — check connectivity'}
         </div>
       )}
@@ -336,29 +337,61 @@ export default function Evidence() {
     streams: [...new Set(displayEvents.map(ev => ev.stream_id).filter(Boolean))].sort(),
   }), [displayEvents]);
 
-  // Load evidence image for selected event
-  const loadEvidenceImage = async (eventId) => {
-    setEvidenceImageStatus('loading');
-    setEvidenceImageSizeBytes(null);
-    try {
-      const res = await authFetch(`/events/${eventId}/evidence-image`);
-      if (res.status === 403) { setEvidenceImageStatus('access-denied'); return; }
-      if (res.status === 409) { setEvidenceImageStatus('no-key');        return; }
-      if (res.status === 404 || !res.ok) { setEvidenceImageStatus('no-evidence'); return; }
-      const blob = await res.blob();
-      setEvidenceImageSizeBytes(blob.size);
-      setEvidenceImageUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return URL.createObjectURL(blob);
-      });
-      setEvidenceImageStatus('ready');
-    } catch {
-      setEvidenceImageStatus('error');
-    }
-  };
-
   useEffect(() => {
-    if (selectedEvent) loadEvidenceImage(selectedEvent.event_id);
+    if (!selectedEvent) return;
+    
+    let active = true;
+    let timer = null;
+
+    const loadEvidenceImage = async (eventId, attempt = 1) => {
+      if (!active) return;
+      
+      // Only show 'loading' or 'syncing' initially, avoid flickering on retry
+      if (attempt === 1) {
+        setEvidenceImageStatus('loading');
+        setEvidenceImageSizeBytes(null);
+      }
+      
+      try {
+        const res = await authFetch(`/events/${eventId}/evidence-image`);
+        if (!active) return;
+        
+        if (res.status === 425) {
+          if (attempt >= 10) {
+            setEvidenceImageStatus('sync-timeout');
+            return;
+          }
+          setEvidenceImageStatus('syncing');
+          timer = setTimeout(() => {
+            loadEvidenceImage(eventId, attempt + 1);
+          }, 3000); // 3 seconds * 10 = 30 seconds maximum
+          return;
+        }
+
+        if (res.status === 403) { setEvidenceImageStatus('access-denied'); return; }
+        if (res.status === 409) { setEvidenceImageStatus('no-key');        return; }
+        if (res.status === 404 || !res.ok) { setEvidenceImageStatus('no-evidence'); return; }
+        
+        const blob = await res.blob();
+        if (!active) return;
+        
+        setEvidenceImageSizeBytes(blob.size);
+        setEvidenceImageUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
+        setEvidenceImageStatus('ready');
+      } catch {
+        if (active) setEvidenceImageStatus('error');
+      }
+    };
+
+    loadEvidenceImage(selectedEvent.event_id);
+
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
   }, [selectedEvent?.event_id]);
 
   // Revoke blob URL on unmount
@@ -430,19 +463,19 @@ export default function Evidence() {
           </div>
           
           <div className="flex flex-col h-full" style={{ padding: '0.75rem' }}>
-            <div className="relative mb-3">
-              <Search size={14} className="absolute left-3 top-2 text-muted" />
+            <div className="relative mb-3 flex items-center">
+              <Search size={14} className="absolute left-3 text-muted pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search by ID or Hash..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-dark border border-color rounded py-1.5 pl-9 pr-3 font-body text-main"
-                style={{ fontSize: '0.75rem' }}
+                className="w-full bg-dark border border-color rounded py-2 pr-3 font-body text-main"
+                style={{ fontSize: '0.75rem', paddingLeft: '2.5rem' }}
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-1 mb-3">
+            <div className="flex flex-col gap-2 mb-3">
               <select aria-label="Decision filter" value={decisionFilter} onChange={e => setDecisionFilter(e.target.value)} className="bg-dark border border-color rounded px-1 py-1 text-main" style={{fontSize:'0.62rem'}}>
                 <option value="ALL">All states</option>
                 {filterOptions.decisions.map(value => <option key={value} value={value}>{value}</option>)}
@@ -543,16 +576,22 @@ export default function Evidence() {
                   <span className="text-sm font-body">{selectedEvent?.video_time != null ? `${Number(selectedEvent.video_time).toFixed(2)} s` : 'N/A'}</span>
                 </div>
                 <div className="flex-col">
+                  <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">EVENT TYPE</span>
+                  <span className="text-sm font-body border px-2 py-1 rounded w-max bg-[rgba(255,255,255,0.05)] border-color font-bold">
+                    {selectedEvent?.event_type ? selectedEvent.event_type.replace(/_/g, ' ') : (selectedEvent?.decision_state || 'N/A')}
+                  </span>
+                </div>
+                <div className="flex-col">
                   <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">SENSOR ID</span>
                   <span className="text-sm font-body border px-2 py-1 rounded w-max">
                     {selectedEvent?.camera_id || 'N/A'}
                   </span>
                 </div>
                 <div className="flex-col">
-                  <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">DETECTION TYPE</span>
+                  <span className="text-xs text-muted font-display uppercase tracking-widest mb-1">DETECTION CLASS</span>
                   <span className="text-sm font-body">
                     {selectedEvent?.detection_class
-                      ? String(selectedEvent.detection_class).toUpperCase()
+                      ? (String(selectedEvent.detection_class).toLowerCase() === 'vehicle' ? 'VEHICLE / TRACK' : String(selectedEvent.detection_class).toUpperCase())
                       : 'N/A'}
                     {selectedEvent?.vehicle_subtype &&
                       ` (${String(selectedEvent.vehicle_subtype).toUpperCase()})`}
@@ -591,7 +630,7 @@ export default function Evidence() {
                             σ = ${selectedEvent.corroboration_sigma_s?.toFixed(1)}s`}
                       </span>
                     </div>
-                  ) : selectedEvent?.corroboration_status === 'NO_CORROBORATION' ? (
+                  ) : selectedEvent?.corroboration_status === 'NO_MATCH' ? (
                     <span className="text-sm font-body text-warning block mt-1">
                       NO CORROBORATION: no physically plausible matching event found
                     </span>

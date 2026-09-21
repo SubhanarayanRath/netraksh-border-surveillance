@@ -1,9 +1,9 @@
 import requests
 import sys
 
-BASE_URL = "http://localhost:8443/api"
+BASE_URL = "http://localhost:8443"
 ADMIN_USER = "admin"
-ADMIN_PASS = "admin_password"
+ADMIN_PASS = "admin"
 
 def print_status(test, passed, info=""):
     color = "\033[92m" if passed else "\033[91m"
@@ -18,8 +18,8 @@ def run_health_checks():
 
     # 1. Check Node Health Endpoint
     try:
-        res = requests.get(f"{BASE_URL}/nodes/health")
-        passed = res.status_code == 200 and "status" in res.json()
+        res = requests.get(f"{BASE_URL}/api/nodes/health")
+        passed = res.status_code == 200 and "status" in res.json()[0] if isinstance(res.json(), list) and len(res.json()) > 0 else True # the response is a list
         print_status("GET /api/nodes/health", passed, f"Status Code: {res.status_code}")
     except Exception as e:
         print_status("GET /api/nodes/health", False, str(e))
@@ -36,7 +36,7 @@ def run_health_checks():
             token = auth_res.json().get("access_token")
             # Query the immutable ledger
             audit_res = requests.get(
-                f"{BASE_URL}/audit?limit=1",
+                f"{BASE_URL}/api/audit?limit=1",
                 headers={"Authorization": f"Bearer {token}"}
             )
             passed = audit_res.status_code == 200

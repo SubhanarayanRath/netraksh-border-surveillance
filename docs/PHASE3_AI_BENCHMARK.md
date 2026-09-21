@@ -1,10 +1,10 @@
 # NETRAKSH Phase 3 AI Benchmark
 
-*Generated on: Tue Sep 15 21:27:44 2026*
+*Generated on: Sun Sep 20 15:49:49 2026*
 
 ## 1. Environment
 - **OS**: win32
-- **Python**: 3.12.10
+- **Python**: 3.11.7
 - **Hardware**: NOT MEASURED
 
 ## 2. Input Data
@@ -17,8 +17,8 @@
 - **Tracker**: default
 
 ## 4. Detection Metrics
-- **Mean Detector+Tracker Latency**: 39.52 ms (p95: 42.43 ms)
-- **Effective FPS**: 25.3
+- **Mean Detector+Tracker Latency**: 77.14 ms (p95: 163.21 ms)
+- **Effective FPS**: 13.0
 - **Total Objects Detected**: 625
 - **Pixel-Area Categories**: Small (<32x32): 21 | Medium: 604 | Large (>96x96): 0
 - **Precision/Recall**: NOT MEASURABLE — NO GROUND TRUTH AVAILABLE
@@ -53,16 +53,16 @@
 - **R (Final Score) Mean**: 0.00
 
 ## 9. Scene-Condition Metrics
-- **Mean Latency**: 4.78 ms
+- **Mean Latency**: 6.32 ms
 
 ## 10. End-to-End Metrics
-- **Mean Latency**: 44.37 ms (p95: 47.42 ms)
-- **Mean Effective Throughput**: 22.5 FPS
+- **Mean Latency**: 83.55 ms (p95: 173.15 ms)
+- **Mean Effective Throughput**: 12.0 FPS
 
 ## 11. Memory Metrics
-- **RSS Before**: 479.74 MB
-- **RSS Peak During**: 639.62 MB
-- **RSS After**: 639.62 MB
+- **RSS Before**: 635.26 MB
+- **RSS Peak During**: 723.16 MB
+- **RSS After**: 719.66 MB
 
 ## 12. Ground-Truth Availability
 NOT MEASURABLE — NO GROUND TRUTH AVAILABLE

@@ -214,6 +214,15 @@ export default function Dashboard() {
   // On mount: check if the server already has a browser-playable video
   // from a previous session.  This avoids the empty-feed state after a
   // page refresh when the edge runner is still processing the last upload.
+  //
+  // Session lifecycle: reuse the existing backend session_id when present.
+  // Generating a new randomUUID() on every page reload caused the DemoRunner
+  // to restart every time the browser refreshed (because the polling thread
+  // sees a new session_id via /api/dashboard/video/internal-sync and triggers
+  // a pipeline restart), discarding in-flight telemetry and desynchronising
+  // the videoSessionId guard in Dashboard.  The guard nulls out liveTelemetry
+  // when liveTelemetry.stream_id !== videoSessionId, so a mismatch means LIVE
+  // telemetry is silently dropped even when the edge is running correctly.
   useEffect(() => {
     const checkExistingVideo = async () => {
       try {
@@ -222,7 +231,15 @@ export default function Dashboard() {
         const data = await res.json();
         if (data.preview_url) {
           if (data.session_id) {
+            // REUSE the existing backend session_id so the DemoRunner's
+            // currently-running pipeline (and its telemetry stream_id) already
+            // matches what the frontend will filter against.  A new session is
+            // only needed when the user explicitly uploads a new video.
             setVideoSessionId(data.session_id);
+            setSessionStartTime(Date.now());
+            // Do NOT POST a new session_id here — that would restart the
+            // DemoRunner unnecessarily.  The backend already has the correct
+            // state; we are just synchronising the browser to it.
           }
           const mediaRes = await authFetch(data.preview_url);
           if (mediaRes.ok) {
@@ -270,6 +287,26 @@ export default function Dashboard() {
         throw new Error(detail);
       }
       const uploaded = await res.json();
+      
+      if (uploaded.session_id && uploaded.source_name) {
+        try {
+          const analyzeRes = await authFetch('/api/dashboard/video/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: uploaded.session_id,
+              source_name: uploaded.source_name,
+              preview_name: uploaded.preview_url ? `uploaded_${uploaded.session_id}_preview.mp4` : null
+            })
+          });
+          if (!analyzeRes.ok) {
+             console.error('Failed to trigger analysis on edge', await analyzeRes.text());
+          }
+        } catch (err) {
+          console.error('Network error triggering analysis:', err);
+        }
+      }
+
       if (uploaded.status === 'ok_no_preview') {
         URL.revokeObjectURL(nextUrl);
         setMediaUrl(null);
@@ -357,6 +394,8 @@ export default function Dashboard() {
       setLatestEvent(contextualEvents[0]);
     }
   }, [contextualEvents.length, contextualEvents[0]?.event_id, contextualEvents[0]?.id, mediaUrl]);
+
+  const securityEvents = contextualEvents.filter(ev => ev.event_type && String(ev.event_type).toLowerCase() !== 'unknown');
 
   const parsed = latestEvent ? parseDecisionReason(latestEvent) : null;
   // Reliability factors and Gate 1 must describe the same event snapshot.
@@ -497,6 +536,36 @@ export default function Dashboard() {
               canUpload={canUpload}
               uploadError={uploadError}
               onVideoEnded={() => setPlaybackEnded(true)}
+              onStartAnalysis={(time) => {
+                if (playbackEnded) {
+                  // Reuse the same videoSessionId to preserve the active session and events
+                  // Do NOT generate a new crypto.randomUUID() for a loop of the same video.
+                  
+                  // Fire POST before clearing playbackEnded state
+                  authFetch('/api/dashboard/video/scenario', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_session_id: videoSessionId, scenario: demoScenario || 'normal', video_time: 0 })
+                  }).catch(e => console.error("Failed to set new session", e));
+
+                  // Keep the existing videoSessionId
+                  setSessionStartTime(Date.now());
+                  setPlaybackEnded(false);
+                } else {
+                  authFetch('/api/dashboard/video/scenario', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_session_id: videoSessionId, scenario: demoScenario || 'normal', video_time: time })
+                  }).catch(e => console.error("Failed to sync play time", e));
+                }
+              }}
+              onPauseAnalysis={(time) => {
+                 authFetch('/api/dashboard/video/scenario', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_session_id: videoSessionId, scenario: 'paused', video_time: time })
+                  }).catch(e => console.error("Failed to sync pause", e));
+              }}
             />
           </div>
 
@@ -519,17 +588,17 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex flex-col gap-2 flex-grow pr-2">
-                {!mediaUrl && contextualEvents.length === 0 && !(liveTelemetry?.tracks?.length > 0) ? (
+                {!mediaUrl && securityEvents.length === 0 ? (
                   <div className="state-empty" style={{ padding: '1rem' }}>
-                    <div className="state-empty-sub">No events recorded for this camera yet</div>
+                    <div className="state-empty-sub">No verified security events recorded for this camera yet</div>
                   </div>
-                ) : analysisState === 'COMPLETED' && contextualEvents.length === 0 ? (
+                ) : analysisState === 'COMPLETED' && securityEvents.length === 0 ? (
                   <div className="state-empty" style={{ padding: '1rem' }}>
-                    <div className="state-empty-sub">VIDEO COMPLETE — NO RULE EVENTS DETECTED FOR THIS STREAM</div>
+                    <div className="state-empty-sub">VIDEO COMPLETE — NO SECURITY EVENTS DETECTED FOR THIS STREAM</div>
                   </div>
-                ) : contextualEvents.length === 0 && !(liveTelemetry?.tracks?.length > 0) ? (
+                ) : securityEvents.length === 0 ? (
                   <div className="state-loading" style={{ padding: '1rem' }}>
-                    <span>PROCESSING — NO RULE EVENT TRIGGERED YET</span>
+                    <span>PROCESSING — NO VERIFIED SECURITY EVENT YET</span>
                   </div>
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -547,7 +616,7 @@ export default function Dashboard() {
                     </thead>
                     <tbody>
                       {/* Real events from processed video */}
-                      {contextualEvents.map((ev, i) => {
+                      {securityEvents.map((ev, i) => {
                         const parsedEv = parseDecisionReason(ev);
                         const conf = parsedEv?.kind === 'scored'
                           ? `${Math.round(parsedEv.d * 100)}%`
@@ -577,22 +646,6 @@ export default function Dashboard() {
                           </tr>
                         );
                       })}
-                      {/* Live telemetry rows when no decisioned events yet */}
-                      {contextualEvents.length === 0 && liveTelemetry?.tracks?.map((track, i) => (
-                        <tr key={`tel-${track.track_id}-${i}`} style={{ borderBottom: '1px solid rgba(30,48,80,0.4)' }}>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--accent)', padding: '0.3rem 0.5rem' }}>
-                            {liveTelemetry.video_time != null ? `${liveTelemetry.video_time.toFixed(1)}s` : 'LIVE'}
-                          </td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>#{track.track_id ?? '—'}</td>
-                          <td style={{ fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>{track.detection_class || 'object'}</td>
-                          <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent)', padding: '0.3rem 0.5rem' }}>TRACKING</td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>N/A</td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>
-                            {Number.isFinite(track.confidence) ? `${Math.round(track.confidence * 100)}%` : 'N/A'}
-                          </td>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-dim)', padding: '0.3rem 0.5rem' }}>N/A</td>
-                        </tr>
-                      ))}
                     </tbody>
                   </table>
                 )}

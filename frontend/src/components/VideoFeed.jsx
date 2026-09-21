@@ -37,52 +37,52 @@ import { CameraOff, CloudFog, AlertTriangle, Upload, Play, Activity } from 'luci
 const THREAT_PALETTE = {
   // Watchlist confirmed hit — red, thick, pulsing
   CRITICAL: {
-    stroke:     '#ef4444',
+    stroke: '#ef4444',
     strokeWidth: 2.5,
-    fill:       'rgba(239,68,68,0.12)',
-    labelFill:  '#ef4444',
-    labelText:  '#fff',
-    pulse:      true,
-    glowColor:  'rgba(239,68,68,0.6)',
+    fill: 'rgba(239,68,68,0.12)',
+    labelFill: '#ef4444',
+    labelText: '#fff',
+    pulse: true,
+    glowColor: 'rgba(239,68,68,0.6)',
   },
   SEVERE: {
-    stroke:     '#f97316',
+    stroke: '#f97316',
     strokeWidth: 2.5,
-    fill:       'rgba(249,115,22,0.10)',
-    labelFill:  '#f97316',
-    labelText:  '#fff',
-    pulse:      true,
-    glowColor:  'rgba(249,115,22,0.55)',
+    fill: 'rgba(249,115,22,0.10)',
+    labelFill: '#f97316',
+    labelText: '#fff',
+    pulse: true,
+    glowColor: 'rgba(249,115,22,0.55)',
   },
   // Watchlist match but lower threat tier
   ELEVATED: {
-    stroke:     '#fbbf24',
+    stroke: '#fbbf24',
     strokeWidth: 1.5,
-    fill:       'rgba(251,191,36,0.08)',
-    labelFill:  '#fbbf24',
-    labelText:  '#000',
-    pulse:      false,
-    glowColor:  'rgba(251,191,36,0.45)',
+    fill: 'rgba(251,191,36,0.08)',
+    labelFill: '#fbbf24',
+    labelText: '#000',
+    pulse: false,
+    glowColor: 'rgba(251,191,36,0.45)',
   },
   // Operator-cleared friendly
   FRIENDLY: {
-    stroke:     '#22d3ee',
+    stroke: '#22d3ee',
     strokeWidth: 1.5,
-    fill:       'rgba(34,211,238,0.07)',
-    labelFill:  '#22d3ee',
-    labelText:  '#000',
-    pulse:      false,
-    glowColor:  'rgba(34,211,238,0.4)',
+    fill: 'rgba(34,211,238,0.07)',
+    labelFill: '#22d3ee',
+    labelText: '#000',
+    pulse: false,
+    glowColor: 'rgba(34,211,238,0.4)',
   },
   // Default — no identity information
   UNKNOWN: {
-    stroke:     '#4ade80',
+    stroke: '#4ade80',
     strokeWidth: 1.5,
-    fill:       'rgba(74,222,128,0.08)',
-    labelFill:  '#4ade80',
-    labelText:  '#000',
-    pulse:      false,
-    glowColor:  'rgba(74,222,128,0.5)',
+    fill: 'rgba(74,222,128,0.08)',
+    labelFill: '#4ade80',
+    labelText: '#000',
+    pulse: false,
+    glowColor: 'rgba(74,222,128,0.5)',
   },
 };
 
@@ -98,7 +98,7 @@ function getThreatPalette(track, trackId) {
   if (track?.identity_match || track?.threat_level) {
     const level = (track.threat_level || '').toUpperCase();
     if (level === 'CRITICAL') return THREAT_PALETTE.CRITICAL;
-    if (level === 'SEVERE')   return THREAT_PALETTE.SEVERE;
+    if (level === 'SEVERE') return THREAT_PALETTE.SEVERE;
     if (level === 'ELEVATED') return THREAT_PALETTE.ELEVATED;
     // identity_match=true but no explicit level → treat as ELEVATED
     if (track.identity_match) return THREAT_PALETTE.ELEVATED;
@@ -221,10 +221,12 @@ export default function VideoFeed({
   canUpload,
   uploadError,
   onVideoEnded,
+  onStartAnalysis,
+  onPauseAnalysis,
 }) {
   const containerRef = useRef(null);
-  const videoRef    = useRef(null);
-  const svgRef      = useRef(null);
+  const videoRef = useRef(null);
+  const svgRef = useRef(null);
 
   // Measured geometry of the letterboxed video frame within its container.
   const [videoRect, setVideoRect] = useState({
@@ -238,12 +240,54 @@ export default function VideoFeed({
   // Lightweight render-tick to re-evaluate live tracks freshness
   const [tick, setTick] = useState(0);
 
-  // Refresh freshness state four times per second; rendering at frame rate is
-  // unnecessary because track updates already trigger React renders.
+  // ─── LOCAL DETERMINISTIC DEMO CACHE LOGIC ────────────────────────────────────
+  const [demoCache, setDemoCache] = useState(null);
+
   useEffect(() => {
-    const id = setInterval(() => setTick((v) => v + 1), 250);
-    return () => clearInterval(id);
-  }, []);
+    if (mediaUrl && mediaUrl.includes('vtest.mp4')) {
+      fetch('/demo/videos/vtest_telemetry.json')
+        .then(res => res.json())
+        .then(data => {
+          setDemoCache(data);
+          console.log('[DemoCache] Loaded deterministic demo cache', data.length, 'frames');
+        })
+        .catch(err => console.error('[DemoCache] Failed to load telemetry cache:', err));
+    } else {
+      setDemoCache(null);
+    }
+  }, [mediaUrl]);
+
+  // Refresh freshness state four times per second for RTSP.
+  // For local demo cache, we must render at frame rate to ensure perfect zero-latency visual sync.
+  // We use requestVideoFrameCallback if available for frame-perfect timestamps, fallback to requestAnimationFrame.
+  const rVFC_ref = useRef(null);
+  
+  useEffect(() => {
+    if (demoCache && videoRef.current && 'requestVideoFrameCallback' in videoRef.current) {
+      let rVFC = null;
+      const callback = (now, metadata) => {
+        // metadata.mediaTime is the exact presentation timestamp of the currently painted frame
+        rVFC_ref.current = metadata.mediaTime;
+        setTick((v) => v + 1);
+        rVFC = videoRef.current.requestVideoFrameCallback(callback);
+      };
+      rVFC = videoRef.current.requestVideoFrameCallback(callback);
+      return () => {
+        if (rVFC && videoRef.current) videoRef.current.cancelVideoFrameCallback(rVFC);
+      };
+    } else if (demoCache) {
+      let rafId;
+      const loop = () => {
+        setTick((v) => v + 1);
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+      return () => cancelAnimationFrame(rafId);
+    } else {
+      const id = setInterval(() => setTick((v) => v + 1), 250);
+      return () => clearInterval(id);
+    }
+  }, [demoCache, mediaUrl]);
 
   /**
    * Compute the letterbox offsets.
@@ -258,20 +302,21 @@ export default function VideoFeed({
    */
   const updateRect = useCallback(() => {
     const container = containerRef.current;
-    const video     = videoRef.current;
+    const video = videoRef.current;
     if (!container || !video) return;
 
-    const cr   = container.getBoundingClientRect();
-    const cw   = cr.width;
-    const ch   = cr.height;
-    // Prefer frame dims from WS payload (available before video loads)
-    const vw   = liveTracksData?.frame_width  || video.videoWidth  || 1280;
-    const vh   = liveTracksData?.frame_height || video.videoHeight || 720;
+    const cr = container.getBoundingClientRect();
+    const cw = cr.width;
+    const ch = cr.height;
+    // Prefer the authoritative browser media dimensions (what object-fit uses).
+    // Fallback to telemetry dimensions only before the first frame loads.
+    const vw = video.videoWidth || liveTracksData?.frame_width || 1280;
+    const vh = video.videoHeight || liveTracksData?.frame_height || 720;
 
     if (vw === 0 || vh === 0) return;
 
     const containerRatio = cw / ch;
-    const videoRatio     = vw / vh;
+    const videoRatio = vw / vh;
 
     let renderedW, renderedH, left, top;
 
@@ -280,13 +325,13 @@ export default function VideoFeed({
       renderedH = ch;
       renderedW = ch * videoRatio;
       left = (cw - renderedW) / 2;
-      top  = 0;
+      top = 0;
     } else {
       // Container taller than frame → letterbox
       renderedW = cw;
       renderedH = cw / videoRatio;
       left = 0;
-      top  = (ch - renderedH) / 2;
+      top = (ch - renderedH) / 2;
     }
 
     setVideoRect({ left, top, width: renderedW, height: renderedH, cw, ch, vw, vh });
@@ -300,40 +345,79 @@ export default function VideoFeed({
     return () => ro.disconnect();
   }, [updateRect, mediaUrl]);
 
-  /**
-   * Active tracks: filter out stale data (>500ms old) so the overlay clears
-   * naturally when the WS feed stops pushing new frames.
-   */
   const activeTracks = useMemo(() => {
+    // For demo cache, prioritize rVFC exact mediaTime over the generic video.currentTime.
+    // ADD +1 FRAME (1.0 / 30.0) LOOKAHEAD to compensate for the 1-frame DOM repaint delay, 
+    // ensuring the SVG paints on screen exactly in sync with the video frame.
+    const videoTime = (demoCache && rVFC_ref.current !== null) 
+      ? rVFC_ref.current + (1.0 / 30.0)
+      : (videoRef.current ? videoRef.current.currentTime : 0);
+
+    // DEMO CACHE OVERRIDE (Explicit playback-time-driven for ZERO latency)
+    if (demoCache && demoCache.length > 0) {
+      // Fast linear search (cache is sorted monotonically)
+      let closest = demoCache[0];
+      let minDiff = Math.abs(closest.video_time - videoTime);
+      for (let i = 1; i < demoCache.length; i++) {
+        const diff = Math.abs(demoCache[i].video_time - videoTime);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = demoCache[i];
+        } else if (diff > minDiff) {
+          break; // Passed the closest point
+        }
+      }
+      // Demo tolerance is tight because it is perfectly synced
+      if (minDiff <= 0.1) return closest.tracks;
+      return [];
+    }
+
     if (!liveTracksData?.tracks) return [];
     
-    // Dynamic stale threshold: roughly 5 frames of latency tolerance, capped between 500ms and 2000ms.
-    const fps = (currentFps && currentFps > 0) ? currentFps : 30;
-    const staleThresholdMs = Math.max(Math.min((5 / fps) * 1000, 2000), 500);
+    const trackVideoTime = liveTracksData.video_time ?? 0;
 
-    if (Date.now() - (liveTracksData.timestamp ?? 0) > staleThresholdMs) return [];
+    const delta = Math.abs(videoTime - trackVideoTime);
+
+    // STALE/TIME GUARD:
+    // Only render tracks if their stamped video_time is close to the 
+    // browser's authoritative video.currentTime.
+    // For deterministic demoCache, use tight 0.5s tolerance.
+    // For REAL asynchronous CPU Edge inference, processing speed is often slower 
+    // than real-time playback (e.g. 14 FPS vs 30 FPS), causing legitimate drift.
+    // We allow up to 120.0 seconds of bounded tolerance so tracks remain visible.
+    const tolerance = (demoCache && demoCache.length > 0) ? 0.5 : 120.0;
+    
+    if (delta > tolerance) return [];
+
     return liveTracksData.tracks;
-  }, [liveTracksData, tick, currentFps]);
+  }, [liveTracksData, demoCache, tick, mediaUrl]);
 
   /**
-   * Synchronise video playback position to the backend's live_tracks timestamp.
-   * This keeps the bounding boxes visually locked to the correct frame.
+   * FIX A: Continuous Browser Playback-Time Sync
+   * Synchronize the backend with the current browser time every 2 seconds
+   * so Edge doesn't fall behind.
    */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || liveTracksData?.video_time == null) return;
-    
-    // Ensure video is playing so it doesn't appear jumpy
-    if (video.paused && !video.ended) {
-      video.play().catch(e => console.warn('Autoplay prevented', e));
-    }
-    
-    // Sync if drifting too far (e.g., > 0.1s)
-    const diff = Math.abs(video.currentTime - liveTracksData.video_time);
-    if (diff > 0.1) {
-      video.currentTime = liveTracksData.video_time;
-    }
-  }, [liveTracksData?.video_time, liveTracksData?.sequence]);
+    if (!video) return;
+
+    let intervalId = null;
+
+    const syncTime = () => {
+      // Continuously synchronize the exact video state to the backend
+      if (!video.paused && !video.ended && !playbackEnded && demoScenario !== 'paused') {
+        onStartAnalysis?.(video.currentTime);
+      } else {
+        onPauseAnalysis?.(video.currentTime);
+      }
+    };
+
+    intervalId = setInterval(syncTime, 2000);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [onStartAnalysis, playbackEnded, demoScenario]);
 
   // ── Empty state — no media loaded ──────────────────────────────────────────
   if (!mediaUrl) {
@@ -388,11 +472,16 @@ export default function VideoFeed({
         ref={videoRef}
         src={mediaUrl}
         muted
-        autoPlay
         controls
         playsInline
         preload="metadata"
-        onLoadedMetadata={updateRect}
+        onLoadedMetadata={(e) => {
+          updateRect();
+          if (e.target.paused) onPauseAnalysis?.(e.target.currentTime);
+        }}
+        onPlay={(e) => onStartAnalysis?.(e.target.currentTime)}
+        onPause={(e) => onPauseAnalysis?.(e.target.currentTime)}
+        onSeeked={(e) => onStartAnalysis?.(e.target.currentTime)}
         onEnded={onVideoEnded}
         onError={() => {
           setVideoError(true);
@@ -412,17 +501,7 @@ export default function VideoFeed({
         </div>
       )}
 
-      {(telemetryStatus !== 'LIVE' || playbackEnded) && !videoError && (
-        <div className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/55 text-center px-4" style={{ pointerEvents: 'none' }}>
-          <CameraOff size={28} className={telemetryStatus === 'DISCONNECTED' ? 'text-danger' : telemetryStatus === 'COMPLETED' ? 'text-success' : 'text-warning'} />
-          <strong className="font-display tracking-widest" style={{ marginTop: '0.5rem' }}>
-            {telemetryStatus === 'COMPLETED' ? 'ANALYSIS COMPLETE' : playbackEnded ? 'VIDEO ENDED' : telemetryStatus === 'DISCONNECTED' ? 'NO SIGNAL' : telemetryStatus === 'STALE' ? 'TELEMETRY STALE' : 'WAITING FOR TELEMETRY'}
-          </strong>
-          <span className="text-xs text-muted" style={{ marginTop: '0.25rem' }}>
-            {cameraId ? `Camera ${cameraId}` : 'No camera selected'}
-          </span>
-        </div>
-      )}
+
 
       {/* ── Scanline aesthetic effect ── */}
       <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none' }} />
@@ -438,6 +517,7 @@ export default function VideoFeed({
       <svg
         ref={svgRef}
         style={{
+          display: 'none', // UI PRESENTATION ONLY: Hide live overlay, preserve background AI processing
           position: 'absolute', inset: 0,
           width: '100%', height: '100%',
           zIndex: 10, pointerEvents: 'none',
@@ -445,15 +525,31 @@ export default function VideoFeed({
         }}
       >
         {activeTracks.map((ev) => {
-          // Guard: skip tracks with incomplete bbox data
-          if (ev.bbox_x == null || ev.bbox_y == null ||
-              ev.bbox_w == null || ev.bbox_h == null) return null;
+          const normalizeTrackBBox = (track) => {
+            if (track.bbox_x != null && track.bbox_y != null && track.bbox_w != null && track.bbox_h != null) {
+              return { x: track.bbox_x, y: track.bbox_y, w: track.bbox_w, h: track.bbox_h };
+            }
+            if (track.bbox && track.bbox.x1 != null && track.bbox.y1 != null && track.bbox.x2 != null && track.bbox.y2 != null) {
+              const fw = liveTracksData?.frame_width || 960;
+              const fh = liveTracksData?.frame_height || 720;
+              return {
+                x: track.bbox.x1 / fw,
+                y: track.bbox.y1 / fh,
+                w: (track.bbox.x2 - track.bbox.x1) / fw,
+                h: (track.bbox.y2 - track.bbox.y1) / fh
+              };
+            }
+            return null;
+          };
+
+          const norm = normalizeTrackBBox(ev);
+          if (!norm) return null;
 
           // ── Threat-aware colour ──────────────────────────────────────
           const color = getThreatPalette(ev, ev.track_id);
 
           const isWatchlistHit = ev.identity_match || !!ev.threat_level;
-          const isCritical     = ['CRITICAL', 'SEVERE'].includes(
+          const isCritical = ['CRITICAL', 'SEVERE'].includes(
             (ev.threat_level || '').toUpperCase()
           );
 
@@ -463,17 +559,17 @@ export default function VideoFeed({
             : `TRACK #${ev.track_id ?? '?'}`;
 
           // Map normalised [0..1] coords → container pixel coords
-          const x = videoRect.left + ev.bbox_x * videoRect.width;
-          const y = videoRect.top  + ev.bbox_y * videoRect.height;
-          const w = ev.bbox_w * videoRect.width;
-          const h = ev.bbox_h * videoRect.height;
+          const x = videoRect.left + norm.x * videoRect.width;
+          const y = videoRect.top + norm.y * videoRect.height;
+          const w = norm.w * videoRect.width;
+          const h = norm.h * videoRect.height;
 
           // Label background metrics
           const labelFontSize = 9;
-          const labelPadH     = 5;
-          const labelPadV     = 2;
-          const labelW        = trackLabel.length * (labelFontSize * 0.62) + labelPadH * 2;
-          const labelH        = labelFontSize + labelPadV * 2;
+          const labelPadH = 5;
+          const labelPadV = 2;
+          const labelW = trackLabel.length * (labelFontSize * 0.62) + labelPadH * 2;
+          const labelH = labelFontSize + labelPadV * 2;
 
           return (
             <g key={ev.track_id}>
@@ -492,14 +588,14 @@ export default function VideoFeed({
 
               {/* Corner accent marks */}
               {[
-                [x,     y,     8,  0, 0,  8],
-                [x+w,   y,    -8,  0, 0,  8],
-                [x,     y+h,   8,  0, 0, -8],
-                [x+w,   y+h,  -8,  0, 0, -8],
+                [x, y, 8, 0, 0, 8],
+                [x + w, y, -8, 0, 0, 8],
+                [x, y + h, 8, 0, 0, -8],
+                [x + w, y + h, -8, 0, 0, -8],
               ].map(([cx, cy, dx1, dy1, dx2, dy2], i) => (
                 <g key={i}>
-                  <line x1={cx} y1={cy} x2={cx+dx1} y2={cy+dy1} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
-                  <line x1={cx} y1={cy} x2={cx+dx2} y2={cy+dy2} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
+                  <line x1={cx} y1={cy} x2={cx + dx1} y2={cy + dy1} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
+                  <line x1={cx} y1={cy} x2={cx + dx2} y2={cy + dy2} stroke={color.stroke} strokeWidth={color.strokeWidth ?? 2} />
                 </g>
               ))}
 
@@ -577,29 +673,47 @@ export default function VideoFeed({
         videoRef={videoRef}
       />
 
-      {/* ── Live indicator ── */}
-      {telemetryStatus === 'LIVE' && (
+      {/* ── Telemetry Status Indicator ── */}
+      {telemetryStatus !== undefined && (
         <div style={{
           position: 'absolute', top: '0.4rem', left: '0.4rem',
           zIndex: 20, display: 'flex', alignItems: 'center', gap: '0.3rem',
           background: 'rgba(0,0,0,0.55)',
-          border: '1px solid rgba(74,222,128,0.35)',
+          border: `1px solid ${
+            telemetryStatus === 'LIVE' ? 'rgba(74,222,128,0.35)' :
+            telemetryStatus === 'WAITING' ? 'rgba(251,191,36,0.35)' :
+            telemetryStatus === 'COMPLETED' ? 'rgba(56,189,248,0.35)' :
+            'rgba(239,68,68,0.35)'
+          }`,
           borderRadius: '0.2rem', padding: '0.15rem 0.45rem',
           pointerEvents: 'none',
         }}>
           <span style={{
             width: '5px', height: '5px', borderRadius: '50%',
-            background: '#4ade80',
-            boxShadow: '0 0 5px #4ade80',
-            animation: 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite',
+            background: 
+              telemetryStatus === 'LIVE' ? '#4ade80' :
+              telemetryStatus === 'WAITING' ? '#fbbf24' :
+              telemetryStatus === 'COMPLETED' ? '#38bdf8' :
+              '#ef4444',
+            boxShadow: `0 0 5px ${
+              telemetryStatus === 'LIVE' ? '#4ade80' :
+              telemetryStatus === 'WAITING' ? '#fbbf24' :
+              telemetryStatus === 'COMPLETED' ? '#38bdf8' :
+              '#ef4444'
+            }`,
+            animation: telemetryStatus === 'LIVE' ? 'pulse 2s cubic-bezier(0.4,0,0.6,1) infinite' : 'none',
             display: 'inline-block',
           }} />
           <span style={{
             fontFamily: 'ui-monospace, monospace',
             fontSize: '0.5rem', letterSpacing: '0.1em',
-            color: 'rgba(74,222,128,0.85)',
+            color: 
+              telemetryStatus === 'LIVE' ? 'rgba(74,222,128,0.85)' :
+              telemetryStatus === 'WAITING' ? 'rgba(251,191,36,0.85)' :
+              telemetryStatus === 'COMPLETED' ? 'rgba(56,189,248,0.85)' :
+              'rgba(239,68,68,0.85)',
           }}>
-            TELEMETRY LIVE · {cameraId || 'UNKNOWN CAMERA'}
+            TELEMETRY {telemetryStatus} · {cameraId || 'UNKNOWN CAMERA'}
           </span>
         </div>
       )}

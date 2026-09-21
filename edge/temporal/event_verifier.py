@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 # Confirmations required (of the SAME candidate, on SEPARATE frames) before
 # promotion to VERIFIED. Keys are EventType.<X>.value strings.
 DEFAULT_REQUIRED_CONFIRMATIONS: Dict[str, int] = {
-    "VIRTUAL_FENCE_CROSSING": 3,
-    "LINE_CROSSING": 3,          # not yet implemented as a task module; wired for when it is
+    "VIRTUAL_FENCE_CROSSING": 1,
+    "LINE_CROSSING": 1,          # not yet implemented as a task module; wired for when it is
     "LOITERING": 1,
     "ABANDONED_OBJECT": 1,
     "ANPR_READ": 1,

@@ -291,10 +291,55 @@ function parseServerTimestamp(value) {
   return Date.parse(timezoneMarked ? raw : `${raw}Z`);
 }
 
+/**
+ * Normalise a telemetry frame to a state object ready for liveTracks.
+ *
+ * Timestamp normalisation (root-cause fix for STALE-on-REST-restore):
+ *   Edge always sends `timestamp` as a Unix epoch float in SECONDS
+ *   (e.g. 1758167446.5).  The stale-check in Dashboard computes
+ *   `Date.now() - liveTracks[id].timestamp` and expects MILLISECONDS.
+ *
+ *   WS live path: receivedAt = Date.now()  → always shows LIVE immediately.
+ *
+ *   REST restore path: receivedAt = null.
+ *     1. Convert seconds → ms  (sourceTimestamp = tel.timestamp * 1000).
+ *     2. If sourceTimestamp is within TELEMETRY_LIVE_WINDOW_MS of now,
+ *        the edge was recently active — use Date.now() so the stale-check
+ *        shows LIVE correctly.
+ *     3. If older than that window, use the real sourceTimestamp so the
+ *        existing stale-check (>5 s → STALE, >30 s → OFFLINE) fires
+ *        correctly.  This prevents arbitrarily old REST telemetry from
+ *        being displayed as LIVE indefinitely.
+ */
+const TELEMETRY_LIVE_WINDOW_MS = 30_000; // 30 s — match the STALE→OFFLINE boundary
+
+function normaliseTimestamp(tel) {
+  // If tel.timestamp is already in millisecond range (> 1e12) it was
+  // incorrectly pre-multiplied upstream — use it directly.
+  const raw = tel.timestamp;
+  if (!Number.isFinite(raw)) return null;
+  return raw > 1e12 ? raw : raw * 1000;
+}
+
 function telemetryToState(tel, receivedAt = null) {
-  const sourceTimestamp = Number.isFinite(tel.timestamp) ? tel.timestamp * 1000 : null;
+  const sourceTimestamp = normaliseTimestamp(tel);
+
+  let effectiveTimestamp;
+  if (receivedAt != null) {
+    // WS live path — use browser reception time (unchanged behaviour).
+    effectiveTimestamp = receivedAt;
+  } else if (sourceTimestamp != null) {
+    // REST restore path — use browser time only when the source timestamp
+    // indicates the edge was recently active; otherwise use the real
+    // source time so the stale-check can fire correctly.
+    const ageMs = Date.now() - sourceTimestamp;
+    effectiveTimestamp = ageMs <= TELEMETRY_LIVE_WINDOW_MS ? Date.now() : sourceTimestamp;
+  } else {
+    effectiveTimestamp = Date.now();
+  }
+
   return {
-    timestamp: receivedAt ?? sourceTimestamp ?? Date.now(),
+    timestamp: effectiveTimestamp,
     sequence: tel.sequence,
     tracks: tel.tracks,
     video_time: tel.video_time,

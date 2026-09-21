@@ -3,7 +3,7 @@
   "zones": [
     {
       "zone_id": "fence-perimeter-1",
-      "camera_id": "edge-001",
+      "camera_id": "cam-border-01",
       "name": "Perimeter Fence Line — Taped Restricted Area",
       "zone_type": "fence",
       "polygon": {
@@ -18,7 +18,7 @@
     },
     {
       "zone_id": "trip-line-1",
-      "camera_id": "edge-001",
+      "camera_id": "cam-border-01",
       "name": "Trip Line — Lamppost Chokepoint",
       "zone_type": "boundary",
       "polygon": {
@@ -31,7 +31,7 @@
     },
     {
       "zone_id": "checkpoint-1",
-      "camera_id": "edge-001",
+      "camera_id": "cam-border-01",
       "name": "Vehicle Checkpoint — Parking Area",
       "zone_type": "checkpoint",
       "polygon": {
@@ -46,7 +46,7 @@
     },
     {
       "zone_id": "verification-1",
-      "camera_id": "edge-001",
+      "camera_id": "cam-border-01",
       "name": "Personnel Verification — Signpost Pause Point",
       "zone_type": "verification",
       "polygon": {
