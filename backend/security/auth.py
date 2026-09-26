@@ -6,7 +6,6 @@ No private keys exposed to frontend. No credentials hardcoded.
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -195,14 +194,24 @@ def bootstrap_users(db: Session) -> None:
     ]
     for username, password, role in defaults:
         existing = db.query(User).filter(User.username == username).first()
+        
+        if username == settings.ADMIN_USERNAME:
+            import hashlib
+            p_bytes = password.encode("utf-8")
+            logger.info(f"[DIAGNOSTIC] STARTUP - Admin lookup: exists={existing is not None}, is_active={existing.is_active if existing else None}")
+            logger.info(
+                f"CONFIG_PASSWORD:\n"
+                f"  char_length={len(password)}\n"
+                f"  byte_length={len(p_bytes)}\n"
+                f"  sha256={hashlib.sha256(p_bytes).hexdigest()}\n"
+                f"  first_byte={hex(p_bytes[0]) if p_bytes else 'None'}\n"
+                f"  last_byte={hex(p_bytes[-1]) if p_bytes else 'None'}"
+            )
+            
         if existing is None:
             user = User(username=username, hashed_password=hash_password(password), role=role)
             db.add(user)
             logger.info(f"Bootstrap: created user '{username}' with role '{role}'")
-        elif username == settings.ADMIN_USERNAME and os.getenv("ADMIN_PASSWORD_SYNC_ONCE", "false").lower() == "true":
-            if not verify_password(password, existing.hashed_password):
-                existing.hashed_password = hash_password(password)
-                logger.info("Bootstrap: Admin password hash safely synchronized via one-time flag.")
         elif settings.ENV == "development":
             repaired = []
             if not verify_password(password, existing.hashed_password):

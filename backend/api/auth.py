@@ -34,7 +34,26 @@ def login(
     user = db.query(User).filter(
         User.username == form_data.username, User.is_active == True
     ).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    
+    if user:
+        import hashlib
+        req_p_bytes = form_data.password.encode("utf-8")
+        logger.info(f"[DIAGNOSTIC] REQUEST - lookup succeeded. is_active={user.is_active}")
+        logger.info(
+            f"REQUEST_PASSWORD:\n"
+            f"  char_length={len(form_data.password)}\n"
+            f"  byte_length={len(req_p_bytes)}\n"
+            f"  sha256={hashlib.sha256(req_p_bytes).hexdigest()}\n"
+            f"  first_byte={hex(req_p_bytes[0]) if req_p_bytes else 'None'}\n"
+            f"  last_byte={hex(req_p_bytes[-1]) if req_p_bytes else 'None'}"
+        )
+        verified = verify_password(form_data.password, user.hashed_password)
+        logger.info(f"[DIAGNOSTIC] REQUEST - verify_password result: {verified}")
+    else:
+        logger.info(f"[DIAGNOSTIC] REQUEST - lookup failed or inactive. User query returned None.")
+        verified = False
+
+    if not user or not verified:
         audit(db, "LOGIN_FAILED", ip_address=request.client.host,
               detail=f"username={form_data.username}", success=False)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
