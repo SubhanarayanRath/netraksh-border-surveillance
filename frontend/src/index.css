@@ -287,19 +287,8 @@ button {
 /* Layout Grid */
 .app-container {
   display: grid;
-  /* Sidebar widened from 60px — at 60px the logo mark and its "NETRAKSH"
-     caption had no real room and the caption clipped off the viewport
-     edge entirely (see docs/ARCHITECTURE.md). 88px is still a compact
-     icon rail (comparable to Linear/Notion's collapsed sidebars), not a
-     labeled nav — just enough room for both to read clearly. */
-  grid-template-columns: 88px minmax(0, 1fr);
-  /* Was a hard "60px 1fr" — on any viewport narrow enough that the header's
-     "BORDER INTELLIGENCE UNIT" subtitle wraps past one line (real, not
-     hypothetical: confirmed via the rendered h1's own bounding box sitting
-     at top: -6.4px, i.e. genuinely clipped above the visible header), the
-     header's actual content height exceeded the fixed 60px row and got cut
-     off at the top instead of the row growing to fit it. minmax lets the
-     row grow with real content instead of silently clipping it. */
+  /* Sidebar restored to 220px — a full labeled navigation rail so the brand text and nav labels are fully visible without horizontal clipping or overflow. */
+  grid-template-columns: 220px minmax(0, 1fr);
   grid-template-rows: minmax(60px, auto) 1fr;
   height: 100vh;
   width: 100%;
@@ -359,16 +348,11 @@ button {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-@keyframes scanline {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(100%); }
-}
-
-.video-container {
-  position: relative;
-  overflow: hidden;
-  background-color: #000;
-  border: 1px solid var(--border-color);
+@keyframes scanline-anim {
+  0% { top: 0%; opacity: 0; }
+  5% { opacity: 1; }
+  95% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
 }
 
 .scanline {
@@ -378,7 +362,7 @@ button {
   width: 100%;
   height: 20%;
   background: linear-gradient(to bottom, transparent, rgba(74, 222, 128, 0.1), transparent);
-  animation: scanline 4s linear infinite;
+  animation: scanline-anim 4s linear infinite;
   pointer-events: none;
 }
 
@@ -568,25 +552,7 @@ button {
 .flex-wrap { flex-wrap: wrap; }
 
 /* Visual fx */
-.scanline {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 1px;
-  background: rgba(74, 222, 128, 0.2);
-  box-shadow: 0 0 5px rgba(74, 222, 128, 0.3);
-  animation: scanline-anim 8s linear infinite;
-  z-index: 20;
-  pointer-events: none;
-}
 
-@keyframes scanline-anim {
-  0% { top: 0%; opacity: 0; }
-  5% { opacity: 1; }
-  95% { opacity: 1; }
-  100% { top: 100%; opacity: 0; }
-}
 /* COMPONENT RESTORE */
 /* ── Sidebar ── */
 .sidebar-left {
@@ -646,6 +612,9 @@ button {
   letter-spacing: 0.12em;
   color: var(--text-main);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-brand-sub {
@@ -654,6 +623,9 @@ button {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-section {
@@ -766,13 +738,15 @@ button {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .topbar-brand-text {
   display: flex;
   flex-direction: column;
   line-height: 1.1;
+  min-width: 0;
 }
 
 .topbar-title {
@@ -782,6 +756,9 @@ button {
   letter-spacing: 0.12em;
   color: var(--text-main);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-sub {
@@ -790,6 +767,9 @@ button {
   letter-spacing: 0.1em;
   color: var(--text-muted);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-status-strip {
@@ -934,6 +914,9 @@ button {
   letter-spacing: 0.12em;
   color: var(--text-muted);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Stat Cards ── */
@@ -959,6 +942,9 @@ button {
   letter-spacing: 0.14em;
   color: var(--text-muted);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-card-value {
@@ -1061,6 +1047,9 @@ button {
   letter-spacing: 0.1em;
   color: var(--text-main);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .video-hud-status {

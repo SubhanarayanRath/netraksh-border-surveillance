@@ -85,11 +85,22 @@ export default function Alerts() {
 
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
-  // Real alerts only — deduped by alert_id from REST + WS
   const realAlerts = useMemo(() => {
     const byId = new Map();
     for (const a of restAlerts) byId.set(a.alert_id, a);
-    for (const a of wsAlerts) byId.set(a.alert_id, { ...byId.get(a.alert_id), ...a });
+    for (const a of wsAlerts) {
+      const existing = byId.get(a.alert_id);
+      const merged = { ...existing, ...a };
+      // Preserve acknowledged_at from restAlerts if wsAlerts is stale
+      if (existing?.acknowledged_at && !a.acknowledged_at) {
+        merged.acknowledged_at = existing.acknowledged_at;
+        merged.acknowledged_by = existing.acknowledged_by;
+      }
+      if (existing?.closed_at && !a.closed_at) {
+        merged.closed_at = existing.closed_at;
+      }
+      byId.set(a.alert_id, merged);
+    }
     return [...byId.values()].sort((a, b) =>
       (parseUtc(b.timestamp || b.created_at) || new Date(0)) - (parseUtc(a.timestamp || a.created_at) || new Date(0))
     );

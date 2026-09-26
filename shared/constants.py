@@ -35,6 +35,7 @@ class DecisionState(str, Enum):
     DETECTED = "DETECTED"
     UNCERTAIN = "UNCERTAIN"
     ABSTAIN = "ABSTAIN"
+    ALERTED = "ALERTED"
 
 
 class EventState(str, Enum):

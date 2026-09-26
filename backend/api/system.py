@@ -140,13 +140,13 @@ async def sync_status(
         .order_by(desc(PipelineMetricsSnapshot.timestamp))
         .first()
     )
-    
+
     edge_queued = 0
     if latest_metrics and latest_metrics.events_json and "queue_depth" in latest_metrics.events_json:
         edge_queued = latest_metrics.events_json["queue_depth"]
 
-    # For 'synced' and 'failed', we can either use the metrics or keep using the backend DB 
-    # to show the overall backend-to-chain status as well, but the instruction specifically 
+    # For 'synced' and 'failed', we can either use the metrics or keep using the backend DB
+    # to show the overall backend-to-chain status as well, but the instruction specifically
     # said: "Propagate the true edge queue depth... UI must show the edge's actual outbound queue size."
     return {
         "queued": edge_queued,
@@ -161,20 +161,35 @@ async def verify_chain(
     db: Session = Depends(get_db),
     _user = Depends(require_any_role),
 ):
-    from backend.models.orm import EvidencePackage
-    evidence_list = db.query(EvidencePackage).order_by(EvidencePackage.id).all()
-    if not evidence_list:
-        return {"is_valid": True, "message": "No evidence on chain yet."}
-    
-    invalid_count = sum(1 for ev in evidence_list if ev.chain_status == 'INVALID')
-    pending_count = sum(1 for ev in evidence_list if ev.chain_status == 'PENDING')
-    
-    if invalid_count > 0:
-        return {"is_valid": False, "message": f"{invalid_count} block(s) failed integrity verification. Chain compromised."}
-    elif pending_count > 0:
-        return {"is_valid": True, "message": f"Verified {len(evidence_list) - pending_count} blocks. {pending_count} blocks pending chain sync."}
+    from backend.models.orm import EvidencePackage, Event
+    from sqlalchemy import desc
+
+    latest_event = db.query(Event).order_by(desc(Event.created_at)).first()
+    current_stream_id = latest_event.stream_id if latest_event else None
+
+    if current_stream_id:
+        current_evidence = db.query(EvidencePackage).join(Event).filter(Event.stream_id == current_stream_id).all()
+        historical_evidence = db.query(EvidencePackage).join(Event).filter(Event.stream_id != current_stream_id).all()
     else:
-        return {"is_valid": True, "message": f"Successfully verified {len(evidence_list)} blocks across all edge hash chains."}
+        current_evidence = []
+        historical_evidence = db.query(EvidencePackage).all()
+
+    if not current_evidence and not historical_evidence:
+        return {"is_valid": True, "message": "No evidence on chain yet."}
+
+    cur_invalid = sum(1 for ev in current_evidence if ev.chain_status == 'INVALID')
+    hist_invalid = sum(1 for ev in historical_evidence if ev.chain_status == 'INVALID')
+    cur_pending = sum(1 for ev in current_evidence if ev.chain_status == 'PENDING')
+
+    if cur_invalid > 0:
+        return {"is_valid": False, "message": f"CURRENT SESSION COMPROMISED: {cur_invalid} block(s) failed integrity."}
+    elif hist_invalid > 0:
+        return {"is_valid": True, "message": f"Current Session Verified. ({hist_invalid} historical blocks failed)."}
+    elif cur_pending > 0:
+        return {"is_valid": True, "message": f"Verified {len(current_evidence) - cur_pending} blocks. {cur_pending} blocks pending chain sync."}
+    else:
+        total = len(current_evidence) + len(historical_evidence)
+        return {"is_valid": True, "message": f"Successfully verified {total} blocks across all edge hash chains."}
 
 
 _telemetry_requests = 0
@@ -200,7 +215,7 @@ async def post_telemetry(
     _telemetry_requests += 1
     if _telemetry_requests % 100 == 0:
         logger.info(f"[Telemetry] Received {_telemetry_requests} payloads from edge")
-        
+
     telemetry = payload.model_dump()
     _latest_telemetry[payload.camera_id] = telemetry
     # Keep one durable latest snapshot per camera/session. This is intentionally
@@ -382,7 +397,7 @@ async def nodes_health(
     """
     cameras = db.query(Camera).filter(Camera.is_active == True).all()
     results = []
-    
+
     for cam in cameras:
         # Get latest health record
         latest_health = (
@@ -391,8 +406,8 @@ async def nodes_health(
             .order_by(desc(CameraHealth.timestamp))
             .first()
         )
-        
-        # Get latest metrics snapshot matching this camera's edge_device_id. 
+
+        # Get latest metrics snapshot matching this camera's edge_device_id.
         # (Assuming edge_device_id maps 1:1 to camera_id for this demo, or we can just fetch metrics by camera_id if they are the same)
         # The schema uses edge_device_id. For demo, edge_device_id == camera_id typically.
         latest_metrics = (
@@ -401,7 +416,7 @@ async def nodes_health(
             .order_by(desc(PipelineMetricsSnapshot.timestamp))
             .first()
         )
-        
+
         results.append({
             "camera_id": cam.id,
             "name": cam.name,
@@ -413,5 +428,5 @@ async def nodes_health(
             "fps": latest_metrics.fps if latest_metrics else None,
             "last_ping": (latest_metrics.timestamp.isoformat() + "Z") if latest_metrics else ((latest_health.timestamp.isoformat() + "Z") if latest_health else None),
         })
-        
+
     return results

@@ -219,7 +219,7 @@ class EdgePipeline:
         # _report_metrics). A failed sync leaves an untrained-but-real
         # recognizer -- FaceDetectionModule still runs real detection, just
         # with zero real matches possible until a later sync succeeds.
-        self._backend_url = config.get("backend_url", os.environ.get("BACKEND_URL", "http://localhost:8443"))
+        self._backend_url = config.get("backend_url", os.environ.get("BACKEND_URL", "http://127.0.0.1:8000"))
         self._edge_auth_token = config.get("auth_token", os.environ.get("EDGE_AUTH_TOKEN", ""))
         self.face_recognizer = sync_from_backend(self._backend_url, auth_token=self._edge_auth_token)
         self.face_module = FaceDetectionModule(self.zones, recognizer=self.face_recognizer)
@@ -246,7 +246,7 @@ class EdgePipeline:
         # Layer 7: Sync
         self.sync_client = SyncClient(
             edge_device_id=self.camera_id,
-            backend_url=config.get("backend_url", "http://localhost:8443"),
+            backend_url=config.get("backend_url", "http://127.0.0.1:8000"),
             db_path=config.get("sync_db_path", f"edge/data/sync_{self.camera_id}.db"),
             auth_token=self._edge_auth_token,
             ca_cert_path=config.get("ca_cert_path"),
@@ -796,6 +796,16 @@ class EdgePipeline:
                 reliability.decision_state == DecisionState.DETECTED,
             )
             if verified_payload is not None:
+                if _state is not None:
+                    try:
+                        state_val = _state.value if hasattr(_state, "value") else str(_state)
+                        # We cannot assign ALERTED to DecisionState enum if it's not defined there.
+                        # Wait, what if we just set it as a string for the payload?
+                        # Actually, evidence_packages has decision_state TEXT.
+                        reliability.decision_state = state_val
+                    except Exception:
+                        pass
+
                 verified_payload["severity"] = determine_severity(verified_payload, reliability).value
                 self._emit_event(track, reliability, health, condition,
                                  zone_id=verified_payload.get("zone_id", self._default_zone_id),
@@ -1069,8 +1079,16 @@ class EdgePipeline:
         # failed POST here must never interrupt the frame loop, and this is
         # NOT routed through the offline sync queue — it's a heartbeat, not
         # evidence.
-        summary["events"]["queue_depth"] = self.sync_client.get_queue_depth() if hasattr(self, "sync_client") and self.sync_client else 0
-        
+        if hasattr(self, "sync_client") and self.sync_client:
+            diag = self.sync_client.get_diagnostics()
+            summary["events"]["queue_depth"] = diag["queued_count"]
+            summary["events"]["sent"] = {"count": diag["synced_count"]}
+            summary["events"]["failed"] = {"count": diag["failed_count"]}
+        else:
+            summary["events"]["queue_depth"] = 0
+            summary["events"]["sent"] = {"count": 0}
+            summary["events"]["failed"] = {"count": 0}
+
         try:
             import httpx
             verify: object = self.sync_client._ca_cert if self.sync_client._ca_cert else True
@@ -1128,7 +1146,7 @@ def run_edge(config_path: Optional[str] = None) -> None:
         config = {
             "camera_id": camera_id,
             "video_source": os.environ.get("VIDEO_SOURCE", "demo/videos/vtest.mp4"),
-            "backend_url": os.environ.get("BACKEND_URL", "http://localhost:8443"),
+            "backend_url": os.environ.get("BACKEND_URL", "http://127.0.0.1:8000"),
             "auth_token": os.environ.get("EDGE_AUTH_TOKEN", ""),
             "simulate_frozen": os.environ.get("SIMULATE_FROZEN_CAMERA", "").lower() == "true",
             "simulate_night": os.environ.get("SIMULATE_NIGHT_CONDITION", "").lower() == "true",

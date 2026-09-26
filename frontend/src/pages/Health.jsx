@@ -109,7 +109,12 @@ export default function Health() {
           <div className="text-xs font-display text-muted uppercase" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', rowGap: '1rem', columnGap: '0.5rem' }}>
             <div className="flex-col">
               <span>FPS {cam.fps_declared ? `(of ${cam.fps_declared})` : ''}</span>
-              <span className="text-main mt-1 block">{cam.fps_actual != null ? cam.fps_actual.toFixed(1) : '-'}</span>
+              <span className="text-main mt-1 flex items-baseline">
+                {cam.fps_actual != null ? cam.fps_actual.toFixed(1) : '-'}
+                {cam.fps_actual != null && cam.fps_declared && (cam.fps_actual / cam.fps_declared < 0.5) && (
+                  <span className="text-muted ml-2" style={{ fontSize: '0.55rem' }} title="Demo CPU inference throughput limits processing speed, marking health degraded.">(COMPUTE BOUND)</span>
+                )}
+              </span>
             </div>
             <div className="flex-col">
               <span>BLUR INDEX {cam.health_state === 'DEGRADED' ? '(FOG)' : ''}</span>

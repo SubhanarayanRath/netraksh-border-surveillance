@@ -102,14 +102,14 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
                         f"[DemoRunner] Scenario changed: {_scenario['current']} → {new_scenario}"
                     )
                     _scenario["current"] = new_scenario
-                
+
                 if new_video_time is not None:
                     _scenario["video_time"] = float(new_video_time)
                 if "video_time_updated_at" in data:
                     _scenario["video_time_updated_at"] = float(data["video_time_updated_at"])
                 elif new_video_time is not None:
                     _scenario["video_time_updated_at"] = time.time()
-                
+
                 # If a new video source is provided, and it's different, trigger restart
                 if new_source and (
                     new_source != _scenario.get("video_source")
@@ -156,7 +156,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        
+
         self._vtest_cache = None
         self._cache_cursor = 0
         if "vtest.mp4" in config.get("video_source", ""):
@@ -167,7 +167,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
                     with open(cache_path, "r") as f:
                         self._vtest_cache = json.load(f)
                     logger.info(f"[DemoRunner] Loaded {len(self._vtest_cache)} frames of deterministic telemetry for vtest.mp4")
-                    
+
                     # self._original_detect = self.detector.detect_and_track
                     # def _mock_detect(frame, condition, confidence_threshold, existing_trajectories=None):
                     #     return self._get_cached_tracks()
@@ -179,19 +179,19 @@ class DemoAwareEdgePipeline(EdgePipeline):
         browser_time = _scenario.get("video_time", 0.0)
         browser_updated = _scenario.get("video_time_updated_at", time.time())
         is_paused = _scenario.get("current") == "paused"
-        
+
         if is_paused:
             video_time = browser_time
         else:
             video_time = browser_time + (time.time() - browser_updated)
-        
+
         if not self._vtest_cache:
             return []
-            
+
         # Fast linear search from cursor since time moves forward monotonically mostly
         closest = self._vtest_cache[self._cache_cursor]
         min_diff = abs(closest["video_time"] - video_time)
-        
+
         for i in range(self._cache_cursor, len(self._vtest_cache)):
             diff = abs(self._vtest_cache[i]["video_time"] - video_time)
             if diff < min_diff:
@@ -201,36 +201,36 @@ class DemoAwareEdgePipeline(EdgePipeline):
             elif diff > min_diff:
                 # Diff is increasing, we passed the minimum
                 break
-                
+
         # If time wrapped around (seek backwards), reset cursor
         if video_time < closest["video_time"] - 1.0:
             self._cache_cursor = 0
-            
+
         from shared.schemas import TrackData, BoundingBox
         from shared.constants import DetectionClass
-        
+
         tracks = []
         for t in closest["tracks"]:
             cls_map = {"person": DetectionClass.PERSON, "vehicle": DetectionClass.VEHICLE}
             det_class = cls_map.get(t["detection_class"], DetectionClass.UNKNOWN)
-            
+
             w = getattr(self, "_last_frame_width", 768)
             h = getattr(self, "_last_frame_height", 576)
-            
+
             bbox = BoundingBox(
                 x1=t["bbox_x"] * w,
                 y1=t["bbox_y"] * h,
                 x2=(t["bbox_x"] + t["bbox_w"]) * w,
                 y2=(t["bbox_y"] + t["bbox_h"]) * h
             )
-            
+
             traj = []
             if hasattr(self, "_trajectories") and t["track_id"] in self._trajectories:
                 traj = list(self._trajectories[t["track_id"]])
             traj.append(bbox.centroid)
             if len(traj) > 50:
                 traj = traj[-50:]
-            
+
             tracks.append(TrackData(
                 track_id=t["track_id"],
                 detection_class=det_class,
@@ -238,7 +238,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
                 confidence=t["confidence"],
                 trajectory=traj
             ))
-            
+
         return tracks
 
     def _notify_backend_normal(self) -> None:
@@ -280,7 +280,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
             current_time = browser_time
         else:
             current_time = browser_time + (time.time() - browser_updated)
-        
+
         meta.video_time_seconds = current_time
 
         if scenario == "failure":
@@ -291,7 +291,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
                     "[DemoRunner] scenario=failure — injecting frozen grey frames "
                     "for ~60s so CameraHealthMonitor detects FAILED"
                 )
-            
+
             if now > _failure_until:
                 logger.info("[DemoRunner] Auto-resetting failure scenario to normal after 60s")
                 _scenario["current"] = "normal"
@@ -347,36 +347,33 @@ class DemoAwareEdgePipeline(EdgePipeline):
                 if s != last:
                     want_offline = (s == "offline")
                     try:
-                        logger.info("PAUSE_DIAG: entering set_simulate_offline")
                         self.sync_client.set_simulate_offline(want_offline)
-                        logger.info("PAUSE_DIAG: set_simulate_offline completed")
                         if hasattr(self, 'adapter'):
-                            logger.info("PAUSE_DIAG: about to set adapter.paused")
                             self.adapter.paused = (s == "paused")
-                            logger.info(f"PAUSE_DIAG: adapter.paused set successfully, value={self.adapter.paused}")
                         logger.info(
                             f"[DemoRunner] sync_client.simulate_offline → {want_offline}, adapter.paused → {s == 'paused'}"
                         )
                     except Exception as exc:
                         logger.error(f"[DemoRunner] offline watcher error during scenario={s}: {exc}", exc_info=True)
                     last = s
-                
+
                 # If paused, do not seek or advance time
                 if s == "paused":
                     time.sleep(1.0)
                     continue
 
-                # Check for explicit seek requests
-                logger.info("PAUSE_DIAG: entering seek section")
                 target_time = _scenario.get("video_time")
                 target_updated = _scenario.get("video_time_updated_at", time.time())
-                
+
                 if target_time is not None and hasattr(self, 'adapter'):
                     if s == "paused":
                         extrapolated_target = target_time
                     else:
-                        extrapolated_target = target_time + (time.time() - target_updated)
-                        
+                        if target_updated == 0.0:
+                            extrapolated_target = target_time
+                        else:
+                            extrapolated_target = target_time + (time.time() - target_updated)
+
                     # Only seek if the difference is significant (> 2.0s) to avoid micro-stutters
                     current_edge_time = getattr(self.adapter, "_last_video_time", 0.0)
                     drift = extrapolated_target - current_edge_time
@@ -405,7 +402,7 @@ class DemoAwareEdgePipeline(EdgePipeline):
                 if not getattr(self, "_running", False):
                     break
                 time.sleep(1.0)
-        
+
         t_restart = threading.Thread(target=_restart_watcher, daemon=True, name="restart-watcher")
         t_restart.start()
 
@@ -452,7 +449,7 @@ def run_demo_pipeline(
 
     while True:
         current_source = _scenario["video_source"]
-        
+
         current_session = _scenario.get("video_session_id")
         session_suffix = f"_{current_session}" if current_session else ""
         config = {
@@ -482,10 +479,12 @@ def run_demo_pipeline(
 
         logger.info(f"[DemoRunner] Instantiating pipeline with source {current_source}")
         pipeline = DemoAwareEdgePipeline(config)
-        
+
         # start() blocks until the pipeline stops (e.g. video ends, interrupted, or restarted)
         pipeline.start()
-        
+
+        pipeline_exit_time = time.time()
+
         if _scenario.get("should_restart"):
             # The pipeline was stopped by the restart watcher, continue loop to recreate
             logger.info("[DemoRunner] Pipeline stopped for restart. Recreating...")
@@ -501,8 +500,10 @@ def run_demo_pipeline(
                 while not _scenario.get("should_restart"):
                     # Only restart if scenario is normal AND video_time explicitly returns to 0 (replay)
                     if _scenario.get("current") == "normal" and _scenario.get("video_time", -1) == 0:
-                        logger.info("[DemoRunner] Resume requested on a completed session. Restarting pipeline to replay...")
-                        break
+                        updated_at = _scenario.get("video_time_updated_at", 0)
+                        if updated_at > pipeline_exit_time:
+                            logger.info("[DemoRunner] Resume requested on a completed session. Restarting pipeline to replay...")
+                            break
                     time.sleep(0.25)
                 _scenario["should_restart"] = False
                 continue
@@ -529,7 +530,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--backend-url",
-        default=os.environ.get("BACKEND_URL", "http://localhost:8443"),
+        default=os.environ.get("BACKEND_URL", "http://127.0.0.1:8000"),
         help="NETRAKSH backend URL",
     )
     parser.add_argument(

@@ -65,7 +65,7 @@ class EdgeKeyManager:
             if not allow_generate:
                 raise FileNotFoundError(f"Private key not found: {self.private_key_path}. Silently generating an unintended identity is prohibited in production.")
             self._generate()
-            
+
         self._derive_kid()
 
     def _derive_kid(self) -> None:
@@ -412,8 +412,12 @@ class EvidencePackager:
             clip_ref = self._save_snapshot(frame)
         _t1 = time.perf_counter()
 
+        event_id = overrides.get("event_id") if overrides else None
+        if not event_id:
+            event_id = str(uuid.uuid4())
+
         ep = EvidencePackage(
-            event_id=str(uuid.uuid4()),
+            event_id=event_id,
             camera_id=self.camera_id,
             stream_id=self.stream_id,
             video_time=overrides.get("video_time"),
@@ -449,10 +453,10 @@ class EvidencePackager:
             face_match_person_name=overrides.get("face_match_person_name"),
             face_match_confidence=overrides.get("face_match_confidence"),
         )
-        
+
         # Inject the key ID so the backend can verify the signature properly
         ep.kid = self.key_manager.kid
-        
+
         if track and hasattr(track, "bbox"):
             if frame is not None and hasattr(frame, 'shape'):
                 h, w = frame.shape[:2]
@@ -465,7 +469,7 @@ class EvidencePackager:
                 ep.bbox_y = float(track.bbox.y1)
                 ep.bbox_w = float(track.bbox.width)
                 ep.bbox_h = float(track.bbox.height)
-                
+
         ep.score_d = reliability.score_d
         ep.score_t = reliability.score_t
         ep.score_s = reliability.score_s

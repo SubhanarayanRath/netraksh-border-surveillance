@@ -130,9 +130,12 @@ class EventVerifier:
         existing = self._pending.get(key)
 
         if existing is None:
+            import uuid
+            event_id = str(uuid.uuid4())
+            payload["event_id"] = event_id
             existing = _PendingCandidate(event_type=event_type, payload=payload)
             self._pending[key] = existing
-            logger.debug(f"[Verifier] {key}: OBSERVED -> CANDIDATE (requires {required} confirmation(s))")
+            logger.debug(f"[Verifier] {key}: OBSERVED -> CANDIDATE (requires {required} confirmation(s)) [event_id={event_id}]")
 
         existing.last_seen_frame = frame_count
 
@@ -145,8 +148,12 @@ class EventVerifier:
             existing.state = EventState.CANDIDATE.value
             existing.confirm_count = 0
             existing.alerted_at = None
+            import uuid
+            existing.payload["event_id"] = str(uuid.uuid4())
             logger.debug(f"[Verifier] {key}: cooldown elapsed, reopened as fresh CANDIDATE")
 
+        if "event_id" in existing.payload:
+            payload["event_id"] = existing.payload["event_id"]
         existing.payload = payload  # always keep the freshest evidence-relevant payload
 
         if not reliability_is_detected:

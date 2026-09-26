@@ -107,14 +107,83 @@ class TestExposureCheckRealFrame:
 
 
 class TestFrozenFrameDetection:
-    def test_identical_consecutive_frames_are_frozen(self):
-        monitor = CameraHealthMonitor(camera_id="cam-frozen", fps_declared=25.0)
+    def test_one_low_variance_pair_is_not_failed(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-1", fps_declared=25.0)
         frame = _frame(noise=15)
         last = None
+        # Provide 2 frames (1 pair).
+        for _ in range(2):
+            last = monitor.update(frame, time.time())
+        assert last.health_state != CameraHealthState.FAILED
+        assert last.health_reason != "frozen_stream"
+
+    def test_four_consecutive_low_variance_pairs_is_not_failed(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-4", fps_declared=25.0)
+        frame = _frame(noise=15)
+        last = None
+        # 1st frame + 4 duplicates = 5 frames = 4 low-variance pairs.
+        for _ in range(5):
+            last = monitor.update(frame, time.time())
+        assert last.health_state != CameraHealthState.FAILED
+        assert last.health_reason != "frozen_stream"
+
+    def test_five_consecutive_low_variance_pairs_is_failed(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-5", fps_declared=25.0)
+        frame = _frame(noise=15)
+        last = None
+        # 1st frame + 5 duplicates = 6 frames = 5 low-variance pairs.
         for _ in range(6):
             last = monitor.update(frame, time.time())
         assert last.health_state == CameraHealthState.FAILED
         assert last.health_reason == "frozen_stream"
+
+    def test_low_variance_pair_followed_by_normal_frame_resets_counter(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-reset", fps_declared=25.0)
+        frame_static = _frame(noise=15)
+        # 4 identical frames (3 pairs) -> counter should be 3
+        for _ in range(4):
+            monitor.update(frame_static, time.time())
+
+        # 1 different frame -> counter should reset to 0
+        frame_diff = _frame(noise=100)
+        monitor.update(frame_diff, time.time())
+
+        # 4 more identical frames (3 pairs) -> counter should be 3, total pairs 6 but not consecutive
+        last = None
+        for _ in range(4):
+            last = monitor.update(frame_static, time.time())
+
+        assert last.health_state != CameraHealthState.FAILED
+        assert last.health_reason != "frozen_stream"
+
+    def test_reset_clears_counter(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-reset-method", fps_declared=25.0)
+        frame = _frame(noise=15)
+        for _ in range(5):
+            monitor.update(frame, time.time())
+
+        # Counter is now at least 4. Reset it.
+        monitor.reset()
+
+        last = None
+        for _ in range(2):
+            last = monitor.update(frame, time.time())
+        assert last.health_state != CameraHealthState.FAILED
+
+    def test_pause_does_not_increment_counter(self):
+        monitor = CameraHealthMonitor(camera_id="cam-frozen-pause", fps_declared=25.0)
+        frame = _frame(noise=15)
+        for _ in range(4):
+            monitor.update(frame, time.time())
+
+        # Pause: update with frame=None
+        from shared.constants import StreamState
+        last = None
+        for _ in range(5):
+            last = monitor.update(None, time.time(), stream_state=StreamState.CONNECTED)
+
+        assert last.health_state != CameraHealthState.FAILED
+        assert last.health_reason != "frozen_stream"
 
     def test_changing_frames_are_not_frozen(self):
         monitor = CameraHealthMonitor(camera_id="cam-moving", fps_declared=25.0)

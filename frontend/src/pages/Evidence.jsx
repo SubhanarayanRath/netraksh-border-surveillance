@@ -298,6 +298,7 @@ export default function Evidence() {
   const [selectedEvent, setSelectedEvent]   = useState(null);
   const [verifyStatus, setVerifyStatus]     = useState(null); // 'verifying'|'verified'|'failed'
   const [verifyData, setVerifyData]         = useState(null);
+  const [localVerifyCache, setLocalVerifyCache] = useState({});
   const [searchQuery, setSearchQuery]       = useState('');
   const [decisionFilter, setDecisionFilter] = useState('ALL');
   const [typeFilter, setTypeFilter]         = useState('ALL');
@@ -405,15 +406,25 @@ export default function Evidence() {
     setVerifyStatus('verifying');
     try {
       const res = await authFetch(`/events/${selectedEvent.event_id}/verify`, { method: 'POST' });
-      if (res.status === 403) { setTimeout(() => setVerifyStatus('failed'), 1500); return; }
+      if (res.status === 403) { setTimeout(() => setVerifyStatus('invalid'), 1500); return; }
       const data = await res.json();
       const allValid = res.ok && data.hash_valid && data.signature_valid && data.chain_valid;
       setTimeout(() => {
-        setVerifyStatus(allValid ? 'verified' : 'failed');
+        const cryptoValid = res.ok && data.hash_valid && data.signature_valid;
+        if (!cryptoValid) {
+          setVerifyStatus('invalid');
+        } else if (data.chain_status === 'PENDING') {
+          setVerifyStatus('pending');
+        } else if (data.chain_status === 'LEGACY' || !data.chain_status) {
+          setVerifyStatus('legacy');
+        } else {
+          setVerifyStatus(data.chain_valid ? 'verified' : 'invalid');
+        }
         setVerifyData(data);
+        setLocalVerifyCache(prev => ({ ...prev, [selectedEvent.event_id]: data }));
       }, 1500);
     } catch {
-      setTimeout(() => setVerifyStatus('failed'), 1500);
+      setTimeout(() => setVerifyStatus('invalid'), 1500);
     }
   };
 
@@ -451,10 +462,10 @@ export default function Evidence() {
         </button>
       </div>
 
-      <div className="flex gap-4" style={{ height: 'calc(100% - 40px)' }}>
+      <div className="flex-grow flex gap-4 overflow-hidden">
 
         {/* ── Left: Evidence Vault list ── */}
-        <div className="card h-full" style={{ width: '300px' }}>
+        <div className="card flex flex-col h-full" style={{ width: '300px' }}>
           <div className="card-header border-b border-color" style={{ paddingBottom: '0.75rem' }}>
             <div className="flex items-center gap-2">
               <Shield size={16} className="text-ok" />
@@ -512,18 +523,28 @@ export default function Evidence() {
                     }`}
                   >
                     <div className="flex justify-between items-center mb-1">
-                      <span className="font-display text-main" style={{ fontSize: '0.75rem' }}>
-                        #{ev.event_id.split('-')[0]}
+                      <span className="font-display font-bold text-main" style={{ fontSize: '0.7rem' }}>
+                        {ev.event_type ? ev.event_type.replace(/_/g, ' ') : (ev.decision_state || 'UNKNOWN')}
                       </span>
                       <span className={`text-[9px] px-1 font-display border rounded text-${badgeColor} border-${badgeColor}`}>
-                        {ev.signature ? 'SIGNED' : 'UNSIGNED'}
+                        {(() => {
+                          const localVerify = localVerifyCache[ev.event_id];
+                          if (!ev.signature) return 'UNSIGNED';
+                          if (localVerify) {
+                            return localVerify.signature_valid ? 'SIGNATURE VERIFIED' : 'SIGNATURE INVALID';
+                          }
+                          return ev.verified_ok === true ? 'SIGNATURE VERIFIED' : 'SIGNED';
+                        })()}
                       </span>
                     </div>
-                    <div className="font-body text-main mb-1 truncate" style={{ fontSize: '0.7rem' }}>
-                      {ev.event_type || ev.decision_state}
+                    <div className="font-body text-muted mb-1" style={{ fontSize: '0.65rem' }}>
+                      Track #{ev.track_id || ev.event_id.split('-')[0]}
                     </div>
-                    <div className="text-muted font-body" style={{ fontSize: '0.6rem' }}>
-                      {parseUtc(ev.timestamp).toISOString().substring(11, 19)} UTC • {ev.zone_id}
+                    <div className="font-body text-main truncate" style={{ fontSize: '0.65rem' }}>
+                      Zone: {ev.zone_id || 'Global'}
+                    </div>
+                    <div className="text-muted font-body mt-1" style={{ fontSize: '0.55rem' }}>
+                      {parseUtc(ev.timestamp).toISOString().substring(11, 19)} UTC
                     </div>
                   </div>
                 );
@@ -533,7 +554,7 @@ export default function Evidence() {
         </div>
 
         {/* ── Center: Details + Media ── */}
-        <div className="flex-grow flex flex-col gap-4">
+        <div className="flex-grow flex flex-col gap-4 overflow-y-auto custom-scrollbar pr-2">
           <div className="flex gap-4">
 
             {/* Metadata card */}
@@ -688,10 +709,17 @@ export default function Evidence() {
                 <button
                   onClick={handleVerify}
                   disabled={verifyStatus === 'verifying'}
-                  className="btn btn-primary w-full flex items-center justify-center gap-2"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded transition-colors font-display tracking-widest text-xs font-bold uppercase cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: 'rgba(0, 240, 255, 0.05)',
+                    border: '1px solid rgba(0, 240, 255, 0.4)',
+                    color: '#00f0ff'
+                  }}
+                  onMouseEnter={(e) => { if (verifyStatus !== 'verifying') e.currentTarget.style.backgroundColor = 'rgba(0, 240, 255, 0.15)' }}
+                  onMouseLeave={(e) => { if (verifyStatus !== 'verifying') e.currentTarget.style.backgroundColor = 'rgba(0, 240, 255, 0.05)' }}
                 >
                   <GitBranch size={16} />
-                  {verifyStatus === 'verifying' ? 'Verifying Chain…' : 'Verify Netraksh Integrity Chain'}
+                  {verifyStatus === 'verifying' ? 'VERIFYING CHAIN...' : 'VERIFY NETRAKSH INTEGRITY CHAIN'}
                 </button>
               </div>
             </div>
@@ -785,9 +813,9 @@ export default function Evidence() {
                   <div className="flex justify-between items-center">
                     <span className="font-display text-muted uppercase" style={{ fontSize: '0.65rem' }}>Hash Chain</span>
                     <span className={`font-body font-bold ml-4 text-right ${
-                      verifyData.chain_valid ? 'text-ok' : 'text-danger'
+                      verifyData.chain_valid ? 'text-ok' : (verifyData.chain_status === 'PENDING' ? 'text-warning' : 'text-danger')
                     }`} style={{ fontSize: '0.7rem' }}>
-                      {verifyData.chain_valid ? '✓ VALID' : '✗ BROKEN'}
+                      {verifyData.chain_valid ? '✓ VALID' : (verifyData.chain_status === 'PENDING' ? '○ PENDING' : '✗ BROKEN')}
                     </span>
                   </div>
                   {selectedEvent?.blockchain_tx_id && (
@@ -810,9 +838,17 @@ export default function Evidence() {
                     <div className="text-ok font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
                       <CheckCircle size={14} /> INTEGRITY VERIFIED
                     </div>
-                  ) : (
+                  ) : verifyStatus === 'invalid' ? (
                     <div className="text-danger font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
                       INTEGRITY FAILURE
+                    </div>
+                  ) : verifyStatus === 'pending' ? (
+                    <div className="text-warning font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
+                      VERIFICATION PENDING
+                    </div>
+                  ) : (
+                    <div className="text-muted font-display text-xs uppercase text-center mt-2 flex items-center justify-center gap-1">
+                      LEGACY / NOT CHAIN-VERIFIED
                     </div>
                   )}
                 </div>

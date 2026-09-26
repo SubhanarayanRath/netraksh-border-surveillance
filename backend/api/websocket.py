@@ -304,6 +304,7 @@ _camera_command_cache: Dict[str, str] = {}
 def get_camera_command(camera_id: str) -> Optional[str]:
     if camera_id in _camera_command_cache:
         return _camera_command_cache[camera_id]
+    db = None
     try:
         from backend.database.session import SessionLocal
         from backend.models.orm import Camera
@@ -312,9 +313,11 @@ def get_camera_command(camera_id: str) -> Optional[str]:
         if cam:
             _camera_command_cache[camera_id] = cam.owning_command_id
             return cam.owning_command_id
-        db.close()
     except Exception:
         pass
+    finally:
+        if db:
+            db.close()
     return None
 
 

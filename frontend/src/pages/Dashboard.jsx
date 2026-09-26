@@ -13,7 +13,7 @@ function parseDecisionReason(ev) {
   if (ev.decision_state === 'ABSTAIN') {
     return { kind: 'abstain', healthReason: ev.decision_reason || 'unknown' };
   }
-  
+
   // If the event doesn't have structured scores yet (legacy data), fallback to string parsing
   if (ev.score_r == null && ev.decision_reason) {
     const rMatch = ev.decision_reason.match(/R=([\d.]+)\s*[<>]=?\s*([\d.]+)/);
@@ -43,7 +43,7 @@ function parseDecisionReason(ev) {
     kind: 'scored',
     r: ev.score_r ?? 0,
     threshold: threshold,
-    aboveThreshold: ev.decision_state === 'DETECTED',
+    aboveThreshold: (ev.score_r ?? 0) >= threshold && ev.camera_health_state !== 'FAILED',
     degraded: ev.camera_health_state === 'DEGRADED',
     d: ev.score_d ?? 0,
     t: ev.score_t ?? 0,
@@ -61,6 +61,7 @@ const SCENE_CONDITION_LABELS = {
 
 const DECISION_META = {
   DETECTED: { label: 'DETECTED', icon: ShieldCheck, colorClass: 'text-ok border-ok bg-[rgba(74,222,128,0.1)] glow-ok' },
+  ALERTED: { label: 'ALERTED', icon: ShieldCheck, colorClass: 'text-ok border-ok bg-[rgba(74,222,128,0.1)] glow-ok' },
   UNCERTAIN: { label: 'UNCERTAIN', icon: HelpCircle, colorClass: 'text-warning border-warning bg-[rgba(251,191,36,0.1)]' },
   ABSTAIN: { label: 'ABSTAIN', icon: ShieldAlert, colorClass: 'text-danger border-danger bg-[rgba(248,113,113,0.1)]' },
 };
@@ -93,7 +94,7 @@ export default function Dashboard() {
     connectionStatus, resetRealtimeState, refreshEventsForContext, refreshTelemetryForContext,
   } = useWebSocket(WS_URL);
   const { scenario: demoScenario } = useDemoScenario();
-  const [latestEvent, setLatestEvent] = useState(null);
+  // latestEvent is derived directly from displayEvents to prevent sync issues
   const [showWhy, setShowWhy] = useState(false);
   const { role } = useAuth();
   const canUpload = role && (role.toUpperCase() === 'ADMIN' || role.toUpperCase() === 'OPERATOR');
@@ -111,6 +112,11 @@ export default function Dashboard() {
   const [playbackEnded, setPlaybackEnded] = useState(false);
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const [now, setNow] = useState(Date.now());
+
+  // Reset selected camera when a new video session starts to avoid stale selection
+  useEffect(() => {
+    setSelectedCameraId('');
+  }, [videoSessionId]);
   const [backendStatus, setBackendStatus] = useState('CHECKING');
   const fileInputRef = useRef(null);
 
@@ -195,7 +201,7 @@ export default function Dashboard() {
     : telemetryAgeMs > 5000 ? 'STALE'
     : 'LIVE';
   const activeMetrics = activeCameraId ? metrics[activeCameraId] : null;
-  const metricTimestampMs = activeMetrics?.timestamp ? Date.parse(activeMetrics.timestamp) : NaN;
+  const metricTimestampMs = activeMetrics?.timestamp ? Date.parse(activeMetrics.timestamp + (activeMetrics.timestamp.endsWith('Z') ? '' : 'Z')) : NaN;
   const metricsFresh = Number.isFinite(metricTimestampMs) && now - metricTimestampMs < 30000;
 
   const eventTimestampMs = (value) => {
@@ -267,7 +273,7 @@ export default function Dashboard() {
     setUploadError(null);
     setPlaybackEnded(false);
     setSessionStartTime(Date.now());
-    setLatestEvent(null);
+    // setLatestEvent is derived
     const nextUrl = URL.createObjectURL(file);
     if (mediaUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaUrl);
     // Avoid presenting a known-incompatible AVI/DivX blob while the backend
@@ -287,7 +293,7 @@ export default function Dashboard() {
         throw new Error(detail);
       }
       const uploaded = await res.json();
-      
+
       if (uploaded.session_id && uploaded.source_name) {
         try {
           const analyzeRes = await authFetch('/api/dashboard/video/analyze', {
@@ -343,7 +349,7 @@ export default function Dashboard() {
   }, [mediaUrl]);
 
   const [fleetHealth, setFleetHealth] = useState([]);
-  
+
   useEffect(() => {
     const fetchHealth = async () => {
       try {
@@ -360,42 +366,58 @@ export default function Dashboard() {
 
   const triggerUpload = () => fileInputRef.current?.click();
 
+  // Deduce the actual camera ID for the video session if active
+  let sessionCameraId = null;
+  if (videoSessionId) {
+    const sessionEvent = events.find(e => e.stream_id === videoSessionId);
+    if (sessionEvent) {
+      sessionCameraId = sessionEvent.camera_id;
+    } else {
+      const sessionTrack = Object.values(liveTracks).find(t => t.stream_id === videoSessionId);
+      if (sessionTrack) sessionCameraId = sessionTrack.camera_id;
+    }
+  }
+
+  // Ensure activeCameraId follows the video session if one is playing
+  const effectiveActiveCameraId = videoSessionId ? (sessionCameraId || activeCameraId) : activeCameraId;
+
   // Events for the selected camera and active uploaded-video context.
   const contextualEvents = [];
   const _seenIds = new Set();
   events.forEach(e => {
-    if (activeCameraId && e.camera_id !== activeCameraId) return;
-    // Prefer the exact stream contract. A camera/time fallback is allowed
-    // only for genuinely legacy events that have no stream_id and only while
-    // this browser has a known upload start time.
-    if (videoSessionId && e.stream_id && e.stream_id !== videoSessionId) return;
-    if (videoSessionId && !e.stream_id) {
+    if (effectiveActiveCameraId && e.camera_id !== effectiveActiveCameraId) return;
+
+    // Prefer the exact stream contract.
+    if (videoSessionId) {
+      if (e.stream_id && e.stream_id !== videoSessionId) return;
+      if (!e.stream_id) {
+        const timestamp = eventTimestampMs(e.timestamp);
+        if (!sessionStartTime || !Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
+      }
+    } else {
+      // In live mode, ensure we do NOT accidentally pull in events from a past/stale video session
+      if (e.stream_id) return;
+      // Legacy fallback: reject events older than the dashboard session
       const timestamp = eventTimestampMs(e.timestamp);
-      if (!sessionStartTime || !Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
+      if (!Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
     }
-    
+
     // Deduplication
     const id = e.event_id || e.id;
     if (id) {
       if (_seenIds.has(id)) return;
       _seenIds.add(id);
     }
-    
-    // Legacy fallback applies only when no session contract is available.
-    if (!videoSessionId) {
-      const timestamp = eventTimestampMs(e.timestamp);
-      if (!Number.isFinite(timestamp) || timestamp < sessionStartTime) return;
-    }
+
     contextualEvents.push(e);
   });
 
-  useEffect(() => {
-    if (mediaUrl && contextualEvents.length > 0) {
-      setLatestEvent(contextualEvents[0]);
-    }
-  }, [contextualEvents.length, contextualEvents[0]?.event_id, contextualEvents[0]?.id, mediaUrl]);
+  const displayEvents = contextualEvents.filter(ev =>
+    (ev.event_type && String(ev.event_type).toLowerCase() !== 'unknown') ||
+    ev.decision_state === 'ABSTAIN' || ev.decision === 'ABSTAIN'
+  );
 
-  const securityEvents = contextualEvents.filter(ev => ev.event_type && String(ev.event_type).toLowerCase() !== 'unknown');
+  const latestEvent = displayEvents.length > 0 ? displayEvents[0] : null;
 
   const parsed = latestEvent ? parseDecisionReason(latestEvent) : null;
   // Reliability factors and Gate 1 must describe the same event snapshot.
@@ -405,7 +427,7 @@ export default function Dashboard() {
   const sceneCondition = latestEvent?.scene_condition;
   const decisionMeta = DECISION_META[latestEvent?.decision_state] || null;
   const whyExplanation = explainDecision(parsed);
-  let liveTelemetry = !activeCameraId ? null : liveTracks[activeCameraId];
+  let liveTelemetry = !effectiveActiveCameraId ? null : liveTracks[effectiveActiveCameraId];
   if (liveTelemetry && videoSessionId && liveTelemetry.stream_id && liveTelemetry.stream_id !== videoSessionId) {
     liveTelemetry = null;
   }
@@ -413,7 +435,7 @@ export default function Dashboard() {
   const StatusPill = ({ title, desc, type, active }) => {
     let colors = '';
     let icon = null;
-    
+
     if (type === 'detected') {
       colors = active ? 'bg-ok text-black' : 'badge-outline';
       icon = <CheckCircle size={16} />;
@@ -448,7 +470,7 @@ export default function Dashboard() {
           {stats}
         </div>
       </div>
-      
+
       {num < 3 && <div className="absolute left-6 top-8 h-12 bg-border-color -z-10" style={{ width: '1px' }}></div>}
     </div>
   );
@@ -467,7 +489,7 @@ export default function Dashboard() {
               value={activeCameraId || ''}
               onChange={(event) => {
                 setSelectedCameraId(event.target.value);
-                setLatestEvent(null);
+                // setLatestEvent is derived
                 setPlaybackEnded(false);
               }}
               disabled={cameraIds.length === 0}
@@ -493,7 +515,7 @@ export default function Dashboard() {
       <div className="dashboard-live-strip">
         <div><span>CAMERA</span><strong title={activeCamera?.displayId}>{activeCamera?.friendlyName || 'Not configured'}</strong></div>
         <div><span>CAMERA HEALTH</span><strong>{health[activeCameraId]?.health_state || 'UNKNOWN'}</strong></div>
-        <div><span>FPS</span><strong>{metricsFresh && Number.isFinite(activeMetrics?.fps) ? activeMetrics.fps.toFixed(2) : 'N/A'}</strong></div>
+        <div><span>FPS</span><strong>{Number.isFinite(health[activeCameraId]?.fps_actual) ? health[activeCameraId].fps_actual.toFixed(1) : (metricsFresh && Number.isFinite(activeMetrics?.fps) ? activeMetrics.fps.toFixed(1) : 'N/A')}</strong></div>
         <div><span>LIVE TRACKS</span><strong>{telemetryStatus === 'LIVE' ? (liveTracks[activeCameraId]?.tracks?.length ?? 0) : 'N/A'}</strong></div>
         <div><span>FRAME</span><strong>{telemetryStatus === 'LIVE' && liveTracks[activeCameraId]?.frame_width ? `${liveTracks[activeCameraId].frame_width}×${liveTracks[activeCameraId].frame_height}` : 'N/A'}</strong></div>
         <div><span>LAST TELEMETRY</span><strong>{telemetryAgeMs == null ? 'Never' : `${Math.max(0, telemetryAgeMs / 1000).toFixed(1)}s ago`}</strong></div>
@@ -540,7 +562,7 @@ export default function Dashboard() {
                 if (playbackEnded) {
                   // Reuse the same videoSessionId to preserve the active session and events
                   // Do NOT generate a new crypto.randomUUID() for a loop of the same video.
-                  
+
                   // Fire POST before clearing playbackEnded state
                   authFetch('/api/dashboard/video/scenario', {
                     method: 'POST',
@@ -551,7 +573,7 @@ export default function Dashboard() {
                   // Keep the existing videoSessionId
                   setSessionStartTime(Date.now());
                   setPlaybackEnded(false);
-                  setLatestEvent(null);
+                  // setLatestEvent is derived
                 } else {
                   authFetch('/api/dashboard/video/scenario', {
                     method: 'POST',
@@ -581,7 +603,7 @@ export default function Dashboard() {
                 WHY THIS ALERT?
               </button>
             </div>
-            
+
             <div className="flex flex-col" style={{ padding: '0.75rem', gap: '0.5rem', overflowY: 'auto' }}>
               {showWhy && (
                 <div className="text-xs font-body text-main border border-color rounded mb-2" style={{ padding: '0.5rem', background: 'var(--bg-base)' }}>
@@ -589,15 +611,15 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex flex-col gap-2 flex-grow pr-2">
-                {!mediaUrl && securityEvents.length === 0 ? (
+                {!mediaUrl && displayEvents.length === 0 ? (
                   <div className="state-empty" style={{ padding: '1rem' }}>
                     <div className="state-empty-sub">No verified security events recorded for this camera yet</div>
                   </div>
-                ) : analysisState === 'COMPLETED' && securityEvents.length === 0 ? (
+                ) : analysisState === 'COMPLETED' && displayEvents.length === 0 ? (
                   <div className="state-empty" style={{ padding: '1rem' }}>
                     <div className="state-empty-sub">VIDEO COMPLETE — NO SECURITY EVENTS DETECTED FOR THIS STREAM</div>
                   </div>
-                ) : securityEvents.length === 0 ? (
+                ) : displayEvents.length === 0 ? (
                   <div className="state-loading" style={{ padding: '1rem' }}>
                     <span>PROCESSING — NO VERIFIED SECURITY EVENT YET</span>
                   </div>
@@ -605,7 +627,7 @@ export default function Dashboard() {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                        {['TIME','TRACK','TYPE','DECISION','SEVERITY','CONF','VERIFIED'].map(h => (
+                        {['TIME','TRACK','EVENT','ZONE','DECISION','SEVERITY','CONF','VERIFIED'].map(h => (
                           <th key={h} style={{
                             fontFamily: 'var(--font-display)', fontSize: '0.75rem',
                             fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
@@ -617,7 +639,7 @@ export default function Dashboard() {
                     </thead>
                     <tbody>
                       {/* Real events from processed video */}
-                      {securityEvents.map((ev, i) => {
+                      {displayEvents.map((ev, i) => {
                         const parsedEv = parseDecisionReason(ev);
                         const conf = parsedEv?.kind === 'scored'
                           ? `${Math.round(parsedEv.d * 100)}%`
@@ -627,23 +649,31 @@ export default function Dashboard() {
                           ? tsDate.toISOString().substring(11, 19)
                           : 'N/A';
                         const decColor =
-                          ev.decision_state === 'DETECTED'  ? 'var(--color-ok)'      :
+                          (ev.decision_state === 'DETECTED' || ev.decision_state === 'ALERTED' || ev.decision_state === 'VERIFIED') ? 'var(--color-ok)'      :
                           ev.decision_state === 'UNCERTAIN' ? 'var(--color-warning)'  :
                           ev.decision_state === 'ABSTAIN'   ? 'var(--color-danger)'   :
                                                               'var(--text-muted)';
-                        const typeLabel = ev.event_type
+                        let typeLabel = ev.event_type
                           ? ev.event_type.replace(/_/g, ' ')
                           : (ev.detection_class || 'N/A');
+
+                        if (ev.decision_state === 'ABSTAIN' && (!ev.event_type || String(ev.event_type).toLowerCase() === 'unknown')) {
+                          typeLabel = ev.decision_reason ? `SYSTEM ABSTAIN: ${ev.decision_reason}` : 'SYSTEM ABSTAIN';
+                        }
+
+                        const isEventVerified = (ev.decision_state === 'DETECTED' || ev.decision_state === 'ALERTED' || ev.decision_state === 'VERIFIED');
+
                         return (
                           <tr key={ev.event_id || ev.id || `${ev.timestamp}-${ev.track_id||''}-${i}`}
                               style={{ borderBottom: '1px solid rgba(30,48,80,0.4)' }}>
                             <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--accent)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{tsStr}</td>
                             <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem' }}>#{ev.track_id ?? 'N/A'}</td>
                             <td style={{ fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={typeLabel}>{typeLabel}</td>
+                            <td style={{ fontSize: '0.875rem', color: 'var(--text-main)', padding: '0.3rem 0.5rem', maxWidth: '8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ev.zone_id || 'Global'}>{ev.zone_id || 'Global'}</td>
                             <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.8rem', fontWeight: 700, color: decColor, padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.decision_state || 'N/A'}</td>
                             <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.75rem', color: ev.severity === 'HIGH' || ev.severity === 'CRITICAL' ? 'var(--color-danger)' : 'var(--text-muted)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.severity || 'N/A'}</td>
                             <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'var(--text-muted)', padding: '0.3rem 0.5rem' }}>{conf}</td>
-                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: ev.verified_ok === true ? 'var(--color-ok)' : 'var(--text-muted)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{ev.verified_ok == null ? 'N/A' : ev.verified_ok ? 'YES' : 'NO'}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: isEventVerified ? 'var(--color-ok)' : 'var(--text-muted)', padding: '0.3rem 0.5rem', whiteSpace: 'nowrap' }}>{isEventVerified ? 'YES' : 'NO'}</td>
                           </tr>
                         );
                       })}
@@ -793,9 +823,9 @@ export default function Dashboard() {
                 did. Changed to a <div role="status"> — same visual
                 treatment, honestly non-interactive. */}
             <div className="mt-auto" style={{ marginTop: 'auto', padding: '0 0.75rem 0.75rem' }}>
-              {decisionMeta ? (
-                <div role="status" className={`w-full border rounded font-display tracking-widest flex items-center justify-center ${decisionMeta.colorClass}`} style={{ padding: '0.5rem 0', gap: '0.5rem', fontSize: '0.75rem' }}>
-                  <decisionMeta.icon size={14} /> [{decisionMeta.label}]
+              {latestEvent ? (
+                <div role="status" className={`w-full border rounded font-display tracking-widest flex items-center justify-center ${decisionMeta?.colorClass || 'text-ok border-ok bg-[rgba(74,222,128,0.1)] glow-ok'}`} style={{ padding: '0.5rem 0', gap: '0.5rem', fontSize: '0.75rem' }}>
+                  {decisionMeta ? <decisionMeta.icon size={14} /> : <ShieldCheck size={14} />} [{decisionMeta?.label || latestEvent.decision_state || 'DETECTED'}]
                 </div>
               ) : (
                 <div role="status" className="w-full border border-color text-muted rounded font-display tracking-widest flex items-center justify-center opacity-60" style={{ padding: '0.5rem 0', gap: '0.5rem', fontSize: '0.75rem' }}>
@@ -807,17 +837,17 @@ export default function Dashboard() {
 
           {/* Not `grid grid-cols-3` — inert class, see docs/LIMITATIONS.md */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
-            <StatusPill 
-              title="DETECTED" desc="Reliable detection confirmed" 
-              type="detected" active={latestEvent?.decision_state === 'DETECTED'} />
-            <StatusPill 
-              title="UNCERTAIN" desc="Confidence < Threshold" 
-              type="uncertain" active={latestEvent?.decision_state === 'UNCERTAIN'} />
-            <StatusPill 
-              title="ABSTAIN" desc="System Unreliable" 
-              type="abstain" active={latestEvent?.decision_state === 'ABSTAIN'} />
+            <StatusPill
+              title="DETECTED" desc="Reliable detection confirmed"
+              type="detected" active={parsed?.aboveThreshold === true} />
+            <StatusPill
+              title="UNCERTAIN" desc="Confidence < Threshold"
+              type="uncertain" active={parsed?.kind === 'scored' && !parsed?.aboveThreshold} />
+            <StatusPill
+              title="ABSTAIN" desc="System Unreliable"
+              type="abstain" active={parsed?.kind === 'abstain'} />
           </div>
-          
+
           {/* System Fleet Health Widget */}
           <div className="dashboard-fleet-card card flex-grow">
              <div className="card-header">
@@ -847,7 +877,7 @@ export default function Dashboard() {
                        <span className={`font-display ${color}`} style={{ fontSize: '0.5rem' }}>{nodeState}</span>
                      </div>
                      <div className="flex justify-between text-muted" style={{ fontSize: '0.55rem', fontFamily: 'var(--font-mono)' }}>
-                       <span>FPS: {nodeFresh && Number.isFinite(node.fps) ? node.fps.toFixed(1) : 'N/A'}</span>
+                       <span title="Processed FPS vs Source FPS">FPS: {nodeFresh && Number.isFinite(node.fps) ? `${node.fps.toFixed(1)} / 30 (Src)` : 'N/A'}</span>
                        <span>CPU: {nodeFresh && Number.isFinite(node.cpu_percent) ? `${node.cpu_percent.toFixed(1)}%` : 'N/A'}</span>
                        <span>Uptime: {nodeFresh && Number.isFinite(node.uptime_seconds) ? `${Math.floor(node.uptime_seconds / 3600)}h` : 'N/A'}</span>
                      </div>

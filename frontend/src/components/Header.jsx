@@ -314,8 +314,8 @@ export default function Header() {
             { label: 'System',    val: systemStatus,   col: systemColor },
             { label: 'Edge',      val: edgeStatus,     col: edgeColor   },
             { label: 'Sync',      val: syncStatus_val, col: syncColor   },
-            { label: 'Buffered',  val: syncStatus.queued,  col: syncBuffering ? 'var(--color-warning)' : 'var(--text-main)' },
-            { label: 'Synced',    val: syncStatus.synced,  col: 'var(--color-ok)' },
+            { label: 'Buffered',  val: edgeStatus === 'ONLINE' ? syncStatus.queued : '--',  col: syncBuffering && edgeStatus === 'ONLINE' ? 'var(--color-warning)' : 'var(--text-main)' },
+            { label: 'Synced',    val: edgeStatus === 'ONLINE' ? syncStatus.synced : '--',  col: edgeStatus === 'ONLINE' ? 'var(--color-ok)' : 'var(--text-main)' },
           ].map(({ label, val, col }) => (
             <div key={label} className="flex justify-between" style={{ fontSize: '0.8rem', fontFamily: 'var(--font-body)' }}>
               <span className="text-muted">{label}:</span>

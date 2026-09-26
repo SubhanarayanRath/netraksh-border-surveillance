@@ -33,7 +33,7 @@ if (!backendUrl) {
   if (import.meta.env.PROD) {
     throw new Error("VITE_BACKEND_URL must be configured in production.");
   }
-  backendUrl = 'http://localhost:8000';
+  backendUrl = 'http://127.0.0.1:8000';
 }
 export const BACKEND_URL = backendUrl;
 

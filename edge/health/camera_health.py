@@ -59,17 +59,26 @@ class CameraHealthMonitor:
         self._frame_times: Deque[float] = deque(maxlen=window_size)
         self._last_report_time: float = 0.0
         self._report_interval: float = 2.0  # seconds between health reports
+        self._consecutive_frozen_frames: int = 0
+
+    def reset(self) -> None:
+        """Reset the monitor's state, e.g., on loop boundaries."""
+        self._recent_frames.clear()
+        self._frame_times.clear()
+        self._consecutive_frozen_frames = 0
 
     def update(self, frame: Optional[np.ndarray], frame_timestamp: float, stream_state: Optional[StreamState] = None) -> CameraHealthReport:
         """
         Process one frame (if available) and return a health report.
         If frame is None, the stream_state is used to determine health.
         """
+        new_frame_added = False
         if frame is not None:
             self._recent_frames.append(frame.copy())
             self._frame_times.append(frame_timestamp)
+            new_frame_added = True
 
-        state, reason, metrics = self._evaluate(stream_state)
+        state, reason, metrics = self._evaluate(stream_state, new_frame_added)
 
         return CameraHealthReport(
             camera_id=self.camera_id,
@@ -84,7 +93,7 @@ class CameraHealthMonitor:
             frame_variance=metrics.get("frame_variance"),
         )
 
-    def _evaluate(self, stream_state: Optional[StreamState] = None) -> Tuple[CameraHealthState, HealthReason, dict]:
+    def _evaluate(self, stream_state: Optional[StreamState] = None, new_frame_added: bool = True) -> Tuple[CameraHealthState, HealthReason, dict]:
         metrics: dict = {}
 
         # --- Check 1: Stream state (WP-4.1 integration) ---
@@ -109,8 +118,15 @@ class CameraHealthMonitor:
             )
             variance = float(np.var(diff))
             metrics["frame_variance"] = variance
-            if variance < FROZEN_FRAME_VARIANCE_THRESHOLD:
-                logger.warning(f"[Health] Camera {self.camera_id}: FROZEN (variance={variance:.2f})")
+
+            if new_frame_added:
+                if variance < FROZEN_FRAME_VARIANCE_THRESHOLD:
+                    self._consecutive_frozen_frames += 1
+                else:
+                    self._consecutive_frozen_frames = 0
+
+            if self._consecutive_frozen_frames >= 5:
+                logger.warning(f"[Health] Camera {self.camera_id}: FROZEN (variance={variance:.2f}, count={self._consecutive_frozen_frames})")
                 return CameraHealthState.FAILED, HealthReason.FROZEN_STREAM, metrics
 
         # --- Check 3: Blur / defocus (Laplacian variance) ---

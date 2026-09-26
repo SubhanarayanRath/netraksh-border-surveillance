@@ -271,7 +271,7 @@ export default function Analytics() {
         <div>
           <div className="section-title">Command Analytics</div>
           <div className="section-sub">
-            Real data from database · {summary ? `${summary.window.since.slice(0, 16)} → ${summary.window.until.slice(0, 16)}` : 'Loading…'}
+            Historical & Active Data from database · {summary ? `${summary.window.since.slice(0, 16)} → ${summary.window.until.slice(0, 16)}` : 'Loading…'}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -392,7 +392,7 @@ export default function Analytics() {
             <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
               <div className="card-header">
                 <span className="card-title">Temporal Incident Frequency</span>
-                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Real Data</span>
+                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Historical & Active Data</span>
               </div>
               {tsData.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-muted text-sm">
@@ -407,10 +407,10 @@ export default function Analytics() {
                       <YAxis stroke="#4d6080" fontSize={10} allowDecimals={false} />
                       <Tooltip contentStyle={{ backgroundColor: '#111d30', borderColor: '#1e3050', color: '#e8eef8', fontSize: '0.75rem' }} />
                       <Legend wrapperStyle={{ fontSize: '10px', color: '#5d7a9e' }} />
-                      <Bar dataKey="person" name="Person" fill="#4d6080" radius={[2, 2, 0, 0]} stackId="a" />
-                      <Bar dataKey="vehicle" name="Vehicle" fill="#00b4d8" radius={[2, 2, 0, 0]} stackId="a" />
-                      <Bar dataKey="intrusion" name="Intrusion" fill="#f59e0b" radius={[2, 2, 0, 0]} stackId="a" />
-                      <Bar dataKey="watchlist" name="Watchlist" fill="#ef4444" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="person" name="Person Events" fill="#4d6080" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="vehicle" name="Vehicle Events" fill="#00b4d8" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="intrusion" name="Intrusion Events" fill="#f59e0b" radius={[2, 2, 0, 0]} stackId="a" />
+                      <Bar dataKey="watchlist" name="Watchlist Events" fill="#ef4444" radius={[2, 2, 0, 0]} stackId="a" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -421,7 +421,7 @@ export default function Analytics() {
             <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
               <div className="card-header">
                 <span className="card-title">Severity Distribution</span>
-                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Real Data</span>
+                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Historical & Active Data</span>
               </div>
               {severityPieData.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-muted text-sm">
@@ -458,7 +458,7 @@ export default function Analytics() {
             <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
               <div className="card-header">
                 <span className="card-title">By Event Type</span>
-                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Real Data</span>
+                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Historical & Active Data</span>
               </div>
               {typeBarData.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-muted text-sm">No events</div>
@@ -485,7 +485,7 @@ export default function Analytics() {
             <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
               <div className="card-header">
                 <span className="card-title">By Camera</span>
-                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Real Data</span>
+                <span className="badge badge-ok" style={{ fontSize: '0.5rem' }}>Historical & Active Data</span>
               </div>
               {(byCamera?.by_camera ?? []).length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-muted text-sm">No events</div>

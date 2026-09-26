@@ -219,14 +219,30 @@ def verify_chain_continuity(
         # First event in chain — no previous to check
         return True, "VALID"
 
+    # First, try to find the exact predecessor that matches the expected hash
+    # (this handles multiple sessions from the same device gracefully).
     prev_chain = (
         db.query(EvidenceChain)
         .filter(
             EvidenceChain.edge_device_id == edge_device_id,
             EvidenceChain.sequence_number == sequence_number - 1,
+            EvidenceChain.current_hash == previous_hash,
         )
         .first()
     )
+
+    # If not found by exact hash, fall back to the most recent predecessor
+    # to evaluate if we have a gap or an invalid state.
+    if prev_chain is None:
+        prev_chain = (
+            db.query(EvidenceChain)
+            .filter(
+                EvidenceChain.edge_device_id == edge_device_id,
+                EvidenceChain.sequence_number == sequence_number - 1,
+            )
+            .order_by(EvidenceChain.verified_at.desc())
+            .first()
+        )
     if prev_chain is None:
         logger.warning(
             f"Chain gap: expected sequence {sequence_number - 1} for device {edge_device_id}, "
@@ -282,6 +298,7 @@ def verify_event_integrity(
         .filter(
             EvidenceChain.edge_device_id == edge_device_id,
             EvidenceChain.sequence_number == sequence_number,
+            EvidenceChain.event_id == evidence_package.event_id,
         )
         .first()
     )

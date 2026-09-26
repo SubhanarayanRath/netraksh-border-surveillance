@@ -478,12 +478,11 @@ export default function VideoFeed({
         ref={videoRef}
         src={mediaUrl}
         muted
-        controls
+        autoPlay
         playsInline
         preload="metadata"
         onLoadedMetadata={(e) => {
           updateRect();
-          if (e.target.paused && !e.target.ended) onPauseAnalysis?.(e.target.currentTime);
         }}
         onPlay={(e) => {
           setIsVideoPlaying(true);
@@ -521,7 +520,7 @@ export default function VideoFeed({
 
 
       {/* ── Scanline aesthetic effect ── */}
-      <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none', animationPlayState: isVideoPlaying ? 'running' : 'paused' }} />
+      <div className="scanline" style={{ zIndex: 5, pointerEvents: 'none', animationPlayState: (telemetryStatus === 'LIVE') ? 'running' : 'paused' }} />
 
       {/* ── SVG bounding-box overlay ──────────────────────────────────────────
           The SVG is sized to the full container (100%×100%) but all drawing
