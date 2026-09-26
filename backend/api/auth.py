@@ -31,6 +31,18 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
+    import hashlib
+    u_bytes = form_data.username.encode("utf-8")
+    logger.info(
+        f"[DIAGNOSTIC] REQUEST_USERNAME:\n"
+        f"repr={repr(form_data.username)}\n"
+        f"char_length={len(form_data.username)}\n"
+        f"byte_length={len(u_bytes)}\n"
+        f"sha256={hashlib.sha256(u_bytes).hexdigest()}\n"
+        f"first_codepoint={hex(ord(form_data.username[0])) if form_data.username else 'None'}\n"
+        f"last_codepoint={hex(ord(form_data.username[-1])) if form_data.username else 'None'}"
+    )
+
     user = db.query(User).filter(
         User.username == form_data.username, User.is_active == True
     ).first()
