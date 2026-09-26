@@ -32,20 +32,22 @@ def login(
     db: Session = Depends(get_db),
 ):
     import hashlib
-    u_bytes = form_data.username.encode("utf-8")
-    logger.info(
-        f"[DIAGNOSTIC] REQUEST_USERNAME:\n"
-        f"repr={repr(form_data.username)}\n"
-        f"char_length={len(form_data.username)}\n"
-        f"byte_length={len(u_bytes)}\n"
-        f"sha256={hashlib.sha256(u_bytes).hexdigest()}\n"
-        f"first_codepoint={hex(ord(form_data.username[0])) if form_data.username else 'None'}\n"
-        f"last_codepoint={hex(ord(form_data.username[-1])) if form_data.username else 'None'}"
+    print(
+        f"[DIAGNOSTIC] REQUEST_USERNAME "
+        f"repr={form_data.username!r} "
+        f"char_length={len(form_data.username)} "
+        f"byte_length={len(form_data.username.encode('utf-8'))} "
+        f"sha256={hashlib.sha256(form_data.username.encode('utf-8')).hexdigest()} "
+        f"first_codepoint={hex(ord(form_data.username[0])) if form_data.username else 'None'} "
+        f"last_codepoint={hex(ord(form_data.username[-1])) if form_data.username else 'None'}",
+        flush=True,
     )
 
+    print("[DIAGNOSTIC] BEFORE_USER_LOOKUP", flush=True)
     user = db.query(User).filter(
         User.username == form_data.username, User.is_active == True
     ).first()
+    print(f"[DIAGNOSTIC] AFTER_USER_LOOKUP exists={user is not None}", flush=True)
     
     if user:
         import hashlib
