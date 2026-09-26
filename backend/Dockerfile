@@ -18,8 +18,6 @@ RUN pip install --no-cache-dir -r requirements-backend.txt
 # Copy backend and shared folders
 COPY backend/ /app/backend/
 COPY shared/ /app/shared/
-COPY certs/ca/ /app/certs/ca/
-COPY certs/server/ /app/certs/server/
 
 # Set correct ownership for the non-root user
 RUN chown -R netraksh:netraksh /app
