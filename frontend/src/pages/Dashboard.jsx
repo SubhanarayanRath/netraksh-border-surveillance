@@ -217,6 +217,8 @@ export default function Dashboard() {
   }, [activeCameraId, videoSessionId, refreshEventsForContext, refreshTelemetryForContext]);
 
 
+  const checkExistingAbortController = useRef(null);
+
   // On mount: check if the server already has a browser-playable video
   // from a previous session.  This avoids the empty-feed state after a
   // page refresh when the edge runner is still processing the last upload.
@@ -231,8 +233,11 @@ export default function Dashboard() {
   // telemetry is silently dropped even when the edge is running correctly.
   useEffect(() => {
     const checkExistingVideo = async () => {
+      checkExistingAbortController.current = new AbortController();
       try {
-        const res = await authFetch('/api/dashboard/video/current');
+        const res = await authFetch('/api/dashboard/video/current', {
+          signal: checkExistingAbortController.current.signal
+        });
         if (!res.ok) return;
         const data = await res.json();
         if (data.preview_url) {
@@ -247,7 +252,9 @@ export default function Dashboard() {
             // DemoRunner unnecessarily.  The backend already has the correct
             // state; we are just synchronising the browser to it.
           }
-          const mediaRes = await authFetch(data.preview_url);
+          const mediaRes = await authFetch(data.preview_url, {
+            signal: checkExistingAbortController.current.signal
+          });
           if (mediaRes.ok) {
             const blob = await mediaRes.blob();
             const blobUrl = URL.createObjectURL(blob);
@@ -261,6 +268,9 @@ export default function Dashboard() {
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFileUpload = async (e) => {
+    if (checkExistingAbortController.current) {
+      checkExistingAbortController.current.abort();
+    }
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -278,7 +288,8 @@ export default function Dashboard() {
     if (mediaUrl?.startsWith('blob:')) URL.revokeObjectURL(mediaUrl);
     // Avoid presenting a known-incompatible AVI/DivX blob while the backend
     // creates the browser preview. Native MP4 files can still render instantly.
-    setMediaUrl(file.type === 'video/mp4' ? nextUrl : null);
+    const isMp4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4');
+    setMediaUrl(isMp4 ? nextUrl : null);
     setMediaType('video');
     setIsUploading(true);
     setVideoSessionId(null);
@@ -334,7 +345,7 @@ export default function Dashboard() {
         //
         // When the original file is already MP4, nextUrl (the local blob from
         // the user's file picker) is already browser-playable — use it directly.
-        const needsServerPreview = uploaded.ffmpeg_available && file.type !== 'video/mp4';
+        const needsServerPreview = uploaded.ffmpeg_available && !isMp4;
         if (needsServerPreview) {
           const mediaRes = await authFetch(uploaded.preview_url);
           if (mediaRes.ok) {
