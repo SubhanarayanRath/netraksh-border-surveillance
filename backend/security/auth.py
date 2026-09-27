@@ -6,6 +6,7 @@ No private keys exposed to frontend. No credentials hardcoded.
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -212,6 +213,10 @@ def bootstrap_users(db: Session) -> None:
             user = User(username=username, hashed_password=hash_password(password), role=role)
             db.add(user)
             logger.info(f"Bootstrap: created user '{username}' with role '{role}'")
+        elif username == settings.ADMIN_USERNAME and os.getenv("ADMIN_PASSWORD_SYNC_ONCE", "false").lower() == "true":
+            if not verify_password(password, existing.hashed_password):
+                existing.hashed_password = hash_password(password)
+                logger.info("Bootstrap: Admin password hash safely synchronized via one-time flag.")
         elif settings.ENV == "development":
             repaired = []
             if not verify_password(password, existing.hashed_password):
