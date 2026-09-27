@@ -303,6 +303,29 @@ def _migrate_add_missing_columns(test_engine=None) -> None:
                     logger.info(f"[DB] Adding column: webhook_subscriptions.{col_name} {col_type}")
                     conn.execute(text(f"ALTER TABLE webhook_subscriptions ADD COLUMN {col_name} {col_type}"))
 
+    # watchlist_persons — schema update for new columns
+    if "watchlist_persons" in inspector.get_table_names():
+        existing_wp_cols = {col["name"] for col in inspector.get_columns("watchlist_persons")}
+        expected_wp_columns = {
+            "aliases": "VARCHAR(512)",
+            "threat_level": "VARCHAR(16) DEFAULT 'ELEVATED'",
+            "category": "VARCHAR(64)",
+            "last_known_location": "VARCHAR(256)",
+            "last_seen_at": "TIMESTAMP",
+            "last_seen_camera_id": "VARCHAR(64)",
+        }
+        missing_wp = [
+            (col, typ) for col, typ in expected_wp_columns.items()
+            if col not in existing_wp_cols
+        ]
+        if missing_wp:
+            logger.info(f"[DB] Migrating watchlist_persons table: adding {len(missing_wp)} missing columns")
+            with active_engine.begin() as conn:
+                for col_name, col_type in missing_wp:
+                    logger.info(f"[DB] Adding column: watchlist_persons.{col_name} {col_type}")
+                    if active_engine.url.drivername == "sqlite" and "DEFAULT" in col_type.upper():
+                        col_type = col_type.split("DEFAULT")[0].strip()
+                    conn.execute(text(f"ALTER TABLE watchlist_persons ADD COLUMN {col_name} {col_type}"))
 def init_db() -> None:
     """Create all tables if they don't exist. Used for dev/test without migrations."""
     Base.metadata.create_all(bind=engine)
