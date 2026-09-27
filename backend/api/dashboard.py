@@ -34,7 +34,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
-from backend.security.auth import require_operator_or_admin
+from backend.security.auth import require_operator_or_admin, require_edge_auth
 
 # Import the shared in-memory state from the demo module.  This is a plain
 # module-level dict — the same object across all imports — so writing here
@@ -254,6 +254,30 @@ async def get_current_video_media(_user=Depends(require_operator_or_admin)):
 
     raise HTTPException(status_code=404, detail="Media file not found")
 
+
+# ---------------------------------------------------------------------------
+# GET /api/dashboard/video/edge-download
+# ---------------------------------------------------------------------------
+
+@router.get("/video/edge-download")
+async def get_video_edge_download(_edge=Depends(require_edge_auth)):
+    """
+    Securely serve the current dashboard video to the remote edge worker.
+    """
+    source: str | None = _demo_state.get("video_source")
+    if not source:
+        raise HTTPException(status_code=404, detail="No video available")
+
+    source_path = Path(source)
+    abs_source = (
+        Path(os.getcwd()) / source_path
+        if not source_path.is_absolute()
+        else source_path
+    )
+    if abs_source.exists() and abs_source.stat().st_size > 0:
+        return FileResponse(abs_source, media_type="application/octet-stream", headers={"Accept-Ranges": "bytes"})
+
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 
 # ---------------------------------------------------------------------------

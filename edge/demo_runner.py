@@ -111,16 +111,62 @@ def _poll_scenario(backend_url: str, interval: float = 5.0) -> None:
                     _scenario["video_time_updated_at"] = time.time()
 
                 # If a new video source is provided, and it's different, trigger restart
+                current_canonical = _scenario.get("canonical_source", _scenario.get("video_source"))
                 if new_source and (
-                    new_source != _scenario.get("video_source")
+                    new_source != current_canonical
                     or (new_session_id and new_session_id != _scenario.get("video_session_id"))
                 ):
+                    local_source = new_source
+                    
+                    if not Path(new_source).exists() and not new_source.startswith("http"):
+                        # Remote download case
+                        try:
+                            auth_token = os.environ.get("EDGE_AUTH_TOKEN", "")
+                            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+                            download_url = f"{backend_url}/api/dashboard/video/edge-download"
+                            
+                            clips_dir = Path("edge/data/clips")
+                            clips_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Safe cleanup: Delete obsolete remote videos, but DO NOT delete the
+                            # currently active video (OpenCV is still reading it in the main thread).
+                            # It will be cleaned up on the *next* download cycle.
+                            current_active = _scenario.get("video_source")
+                            for old_file in clips_dir.glob("remote_*"):
+                                if str(old_file) != current_active and old_file.name != f"remote_{Path(new_source).name}":
+                                    try:
+                                        os.remove(old_file)
+                                    except Exception as e:
+                                        logger.debug(f"[DemoRunner] Cleanup deferred for {old_file.name}: {e}")
+
+                            target_path = clips_dir / f"remote_{Path(new_source).name}"
+                            logger.info(f"[DemoRunner] Downloading remote video to {target_path}...")
+                            
+                            with httpx.stream("GET", download_url, headers=headers, timeout=120.0) as r:
+                                if r.status_code != 200:
+                                    raise ValueError(f"HTTP {r.status_code}")
+                                with open(target_path, "wb") as f:
+                                    for chunk in r.iter_bytes(chunk_size=8192):
+                                        f.write(chunk)
+                                        
+                            if target_path.exists() and target_path.stat().st_size > 0:
+                                local_source = str(target_path)
+                                logger.info(f"[DemoRunner] Download complete: {local_source}")
+                            else:
+                                raise ValueError("Downloaded file is empty")
+                        except Exception as e:
+                            logger.error(f"[DemoRunner] Failed to download remote video: {e}")
+                            # Skip this poll to retry later
+                            time.sleep(interval)
+                            continue
+
                     # Only trigger restart if we already had a source/session OR if the backend
                     # explicitly gives us a new session ID when we didn't have one initialized.
-                    if _scenario["video_source"] is not None:
+                    if _scenario.get("video_source") is not None:
                         logger.info(f"[DemoRunner] Video source/session changed to {new_source} ({new_session_id}), triggering restart...")
                         _scenario["should_restart"] = True
-                    _scenario["video_source"] = new_source
+                    _scenario["canonical_source"] = new_source
+                    _scenario["video_source"] = local_source
                 if new_session_id:
                     _scenario["video_session_id"] = new_session_id
                 _scenario["initialized"] = True
