@@ -48,7 +48,7 @@ services:
         # separately deployed edge device; never commit it.
         fromEnv: EDGE_AUTH_TOKEN
       - key: CORS_ORIGINS
-        value: "https://netraksh.vercel.app,https://netraksh-35030.web.app"
+        value: "https://netraksh.vercel.app,https://netraksh-35030.web.app,https://netraksh-border-surveillance-gziq1q48o-netraksh.vercel.app"
       - key: FRONTEND_ORIGIN
         value: "https://netraksh-35030.web.app"
       - key: VIDEO_SOURCE
