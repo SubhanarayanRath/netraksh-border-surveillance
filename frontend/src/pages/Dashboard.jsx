@@ -302,7 +302,10 @@ export default function Dashboard() {
             body: JSON.stringify({
               session_id: uploaded.session_id,
               source_name: uploaded.source_name,
-              preview_name: uploaded.preview_url ? `uploaded_${uploaded.session_id}_preview.mp4` : null
+              // Only pass preview_name when ffmpeg actually created a converted file
+              preview_name: (uploaded.ffmpeg_available && uploaded.preview_url)
+                ? `uploaded_${uploaded.session_id}_preview.mp4`
+                : null
             })
           });
           if (!analyzeRes.ok) {
@@ -322,14 +325,29 @@ export default function Dashboard() {
       }
       if (uploaded.session_id) setVideoSessionId(uploaded.session_id);
       if (uploaded.preview_url) {
-        const mediaRes = await authFetch(uploaded.preview_url);
-        if (mediaRes.ok) {
+        // Only fetch the server preview when ffmpeg actually created a converted
+        // file (non-MP4 uploaded, ffmpeg_available=true). For direct MP4 uploads
+        // on a remote backend without ffmpeg, the server preview_url points at
+        // the same raw file — re-downloading it as a blob keeps the HTTP request
+        // open for the entire video duration, which hits Render's 30s proxy
+        // timeout and holds isUploading=true indefinitely.
+        //
+        // When the original file is already MP4, nextUrl (the local blob from
+        // the user's file picker) is already browser-playable — use it directly.
+        const needsServerPreview = uploaded.ffmpeg_available && file.type !== 'video/mp4';
+        if (needsServerPreview) {
+          const mediaRes = await authFetch(uploaded.preview_url);
+          if (mediaRes.ok) {
             const blob = await mediaRes.blob();
             const blobUrl = URL.createObjectURL(blob);
             if (nextUrl !== mediaUrl) URL.revokeObjectURL(nextUrl);
             setMediaUrl(blobUrl);
-        } else {
+          } else {
             throw new Error('Failed to load video media.');
+          }
+        } else {
+          // MP4 already set as mediaUrl from local blob — nothing to do.
+          // nextUrl stays as the active mediaUrl (set at line ~281 above).
         }
       } else if (file.type !== 'video/mp4') {
         throw new Error('This video needs an H.264 MP4 preview, but the server could not create one.');
