@@ -27,7 +27,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.api.rate_limit import limiter
 from backend.database.session import get_db
@@ -146,7 +146,7 @@ async def list_watchlist(
 
     Optional query param `?threat_level=CRITICAL` for filtered views.
     """
-    q = db.query(WatchlistPerson).filter(WatchlistPerson.is_active == True)
+    q = db.query(WatchlistPerson).options(selectinload(WatchlistPerson.face_images)).filter(WatchlistPerson.is_active == True)
     if threat_level:
         q = q.filter(WatchlistPerson.threat_level == threat_level.upper())
     persons = q.all()
